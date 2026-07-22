@@ -1,0 +1,102 @@
+name: Windows Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Sets up cl.exe / MSVC environment variables for this job's shell.
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # NOTE: arch string must match a Qt build actually published for the
+      # requested version. win64_msvc2022_64 is current as of Qt 6.5+; if
+      # this job fails on "no such arch", check the install-qt-action repo's
+      # README for the current valid values against the qt-version below.
+      - name: Install Qt6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.7.*'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2022_64'
+          modules: ''
+
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      # vcpkg ships as a submodule-free bootstrap here rather than pinning a
+      # specific commit, so the exact libssh2 version isn't locked. Fine for
+      # a first working build; pin it once the workflow is proven out.
+      - name: Set up vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: 'a42af01b72c28a8e1d7b48107b33e4f286a55ef6'
+
+      - name: Install libssh2 (vcpkg)
+        run: |
+          ${{ env.VCPKG_ROOT }}\vcpkg.exe install libssh2:x64-windows
+        shell: pwsh
+
+      - name: Configure
+        run: >
+          cmake -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE=${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=x64-windows
+        shell: pwsh
+
+      - name: Build
+        run: cmake --build build --config Release --target commander-transfer
+        shell: pwsh
+
+      # windeployqt bundles the Qt DLLs the exe needs; libssh2's DLL from
+      # vcpkg still needs to be copied in separately since windeployqt only
+      # knows about Qt's own dependencies.
+      - name: Assemble deployable folder
+        run: |
+          mkdir dist
+          copy build\commander-transfer.exe dist\
+          windeployqt --release --no-translations dist\commander-transfer.exe
+          copy "${{ env.VCPKG_ROOT }}\installed\x64-windows\bin\libssh2.dll" dist\
+        shell: pwsh
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: commander-transfer-windows-x64
+          path: dist/
+          if-no-files-found: error
+
+  # Only runs on version tags (v1.0.0 etc.) — attaches the same build as a
+  # zipped asset on a GitHub Release, matching the Phat32 pipeline pattern.
+  release:
+    needs: build-windows
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: commander-transfer-windows-x64
+          path: dist
+
+      - name: Zip release asset
+        run: Compress-Archive -Path dist\* -DestinationPath commander-transfer-windows-x64.zip
+        shell: pwsh
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: commander-transfer-windows-x64.zip
