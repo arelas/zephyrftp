@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(CommanderTransfer VERSION 0.1.0 LANGUAGES CXX)
+project(ZephyrFTP VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -50,11 +50,11 @@ set(HEADERS
     src/transfer/TransferManager.h
 )
 
-qt_add_executable(commander-transfer ${SOURCES} ${HEADERS})
+qt_add_executable(zephyrftp ${SOURCES} ${HEADERS})
 
-target_include_directories(commander-transfer PRIVATE src)
+target_include_directories(zephyrftp PRIVATE src)
 
-target_link_libraries(commander-transfer PRIVATE
+target_link_libraries(zephyrftp PRIVATE
     Qt6::Widgets
     Qt6::Network
     Qt6::Concurrent

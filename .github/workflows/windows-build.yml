@@ -59,7 +59,7 @@ jobs:
         shell: pwsh
 
       - name: Build
-        run: cmake --build build --config Release --target commander-transfer
+        run: cmake --build build --config Release --target zephyrftp
         shell: pwsh
 
       # windeployqt bundles the Qt DLLs the exe needs; libssh2's DLL from
@@ -68,15 +68,15 @@ jobs:
       - name: Assemble deployable folder
         run: |
           mkdir dist
-          copy build\commander-transfer.exe dist\
-          windeployqt --release --no-translations dist\commander-transfer.exe
+          copy build\zephyrftp.exe dist\
+          windeployqt --release --no-translations dist\zephyrftp.exe
           copy "${{ env.VCPKG_ROOT }}\installed\x64-windows\bin\libssh2.dll" dist\
         shell: pwsh
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: commander-transfer-windows-x64
+          name: zephyrftp-windows-x64
           path: dist/
           if-no-files-found: error
 
@@ -89,14 +89,14 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: commander-transfer-windows-x64
+          name: zephyrftp-windows-x64
           path: dist
 
       - name: Zip release asset
-        run: Compress-Archive -Path dist\* -DestinationPath commander-transfer-windows-x64.zip
+        run: Compress-Archive -Path dist\* -DestinationPath zephyrftp-windows-x64.zip
         shell: pwsh
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: commander-transfer-windows-x64.zip
+          files: zephyrftp-windows-x64.zip

@@ -4,7 +4,7 @@
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
-    QApplication::setApplicationName("Commander Transfer");
+    QApplication::setApplicationName("ZephyrFTP");
     QApplication::setOrganizationName("Bad Cluster");
 
     MainWindow window;

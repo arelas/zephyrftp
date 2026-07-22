@@ -17,7 +17,7 @@
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
-    setWindowTitle(tr("Commander Transfer"));
+    setWindowTitle(tr("ZephyrFTP"));
     resize(1100, 650);
 
     m_transferManager = new TransferManager(this);

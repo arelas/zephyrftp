@@ -1,4 +1,4 @@
-# Commander Transfer (working title)
+# ZephyrFTP
 
 Dual-pane, Qt6-based file transfer client. Local <-> SFTP for now, FTP/FTPS
 backend to follow using the same `RemoteBackend` interface.
