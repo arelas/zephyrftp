@@ -117,6 +117,22 @@ Dependencies (Debian/Ubuntu): `cmake build-essential qt6-base-dev libssh2-1-dev`
   destination; `TransferManager::transferSucceeded` triggers a refresh of
   both panes' listings.
 
+## Windows builds (CI)
+
+`.github/workflows/windows-build.yml` builds this on GitHub's
+`windows-latest` runner: MSVC + Qt6 (via `jurplel/install-qt-action`) +
+libssh2 (via vcpkg) + Ninja, then `windeployqt` to bundle the Qt DLLs.
+Runs on every push to `main` and on `v*` tags; tag pushes also attach the
+build as a zipped GitHub Release asset.
+
+**UNVERIFIED — has not run yet.** The YAML syntax is valid (checked with
+`yaml.safe_load`), and `CMakeLists.txt` now branches on `WIN32` to use
+vcpkg's `Libssh2::libssh2` CMake target instead of pkg-config, but nothing
+about the actual Windows build — the Qt arch string, the vcpkg commit pin,
+whether `windeployqt` picks up everything needed — has been proven against
+a real Windows runner. First push to GitHub will be the first real test;
+check the Actions tab for the initial run.
+
 ## Known gaps (flagged, not fixed)
 
 - **No host-key verification.** `SftpBackend::ensureSession()` skips
