@@ -52,6 +52,15 @@ set(HEADERS
 
 qt_add_executable(zephyrftp ${SOURCES} ${HEADERS})
 
+# Without this, the linked exe defaults to the console subsystem on
+# Windows — qt_add_executable() doesn't set it automatically — and every
+# launch pops a blank terminal window alongside the actual Qt UI. Only
+# applies to the shipped app: the test targets below stay console apps on
+# purpose so their qDebug()/diagnostic output is visible when run
+# (they're Linux-only in this repo's actual CI usage anyway, so it's moot
+# there, but no reason to change it).
+set_target_properties(zephyrftp PROPERTIES WIN32_EXECUTABLE ON)
+
 target_include_directories(zephyrftp PRIVATE src)
 
 target_link_libraries(zephyrftp PRIVATE
