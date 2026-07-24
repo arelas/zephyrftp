@@ -131,17 +131,21 @@ void SftpBackend::listDirectory(const QString &path)
 
         // Render permission bits the same way `ls -l` does — decode once
         // here rather than pushing raw octal up into the model/view.
+        // Literal octal masks instead of sys/stat.h's S_IRUSR-style macros:
+        // those are POSIX-only (don't exist on MSVC), but the bits
+        // themselves are a fixed SFTP wire-protocol format, not tied to
+        // the host OS's stat.h.
         char perms[10] = "---------";
-        mode_t m = attrs.permissions;
-        if (m & S_IRUSR) perms[0] = 'r';
-        if (m & S_IWUSR) perms[1] = 'w';
-        if (m & S_IXUSR) perms[2] = 'x';
-        if (m & S_IRGRP) perms[3] = 'r';
-        if (m & S_IWGRP) perms[4] = 'w';
-        if (m & S_IXGRP) perms[5] = 'x';
-        if (m & S_IROTH) perms[6] = 'r';
-        if (m & S_IWOTH) perms[7] = 'w';
-        if (m & S_IXOTH) perms[8] = 'x';
+        const quint32 m = attrs.permissions;
+        if (m & 0400) perms[0] = 'r';
+        if (m & 0200) perms[1] = 'w';
+        if (m & 0100) perms[2] = 'x';
+        if (m & 0040) perms[3] = 'r';
+        if (m & 0020) perms[4] = 'w';
+        if (m & 0010) perms[5] = 'x';
+        if (m & 0004) perms[6] = 'r';
+        if (m & 0002) perms[7] = 'w';
+        if (m & 0001) perms[8] = 'x';
         e.permissions = QString::fromLatin1(perms, 9);
 
         entries.append(e);
