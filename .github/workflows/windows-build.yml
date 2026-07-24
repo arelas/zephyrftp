@@ -42,17 +42,14 @@ jobs:
       - name: Install CMake + Ninja
         uses: lukka/get-cmake@latest
 
-      # Previous pin (a42af01b...) was an arbitrary old commit whose openssl
-      # port referenced an MSYS2 pkgconf package that's since been pruned
-      # from every mirror (404 on all of them — confirmed from the actual
-      # CI failure, not a guess). Pinning to a named, immutable vcpkg
-      # release tag instead of a bare commit hash going forward, so it's
-      # obvious what's being tracked and easy to bump deliberately later
-      # rather than silently going stale again.
+      # run-vcpkg requires the FULL 40-character commit SHA — confirmed by
+      # its own error message after a tag name was rejected ("must be a
+      # full SHA1 hash (40 hex digits)"). This is the full hash behind the
+      # 2026.06.24 release tag.
       - name: Set up vcpkg
         uses: lukka/run-vcpkg@v11
         with:
-          vcpkgGitCommitId: '2026.06.24'
+          vcpkgGitCommitId: 'cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3'
 
       - name: Install libssh2 (vcpkg)
         # VCPKG_BINARY_SOURCES=clear disables vcpkg's build cache entirely.
