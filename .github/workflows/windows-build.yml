@@ -76,8 +76,30 @@ jobs:
           -DVCPKG_TARGET_TRIPLET=x64-windows
         shell: pwsh
 
+      # Diagnostic: the last run showed Configure and Build both apparently
+      # succeeding (job reached Assemble instead of stopping), but Assemble
+      # then couldn't find build\ at all — not just the exe, the whole
+      # directory. That's inconsistent with normal step-to-step state on a
+      # GitHub-hosted runner (nothing in this workflow deletes it), so
+      # rather than guess at why, confirming directly here whether it
+      # exists and what LASTEXITCODE actually was.
+      - name: Verify Configure output
+        run: |
+          Write-Host "LASTEXITCODE after Configure step: $LASTEXITCODE"
+          Write-Host "Current directory: $(Get-Location)"
+          Write-Host "Does build\ exist? $(Test-Path build)"
+          if (Test-Path build) { Get-ChildItem build\ | Select-Object Name }
+        shell: pwsh
+
       - name: Build
         run: cmake --build build --config Release --target zephyrftp
+        shell: pwsh
+
+      - name: Verify Build output
+        run: |
+          Write-Host "LASTEXITCODE after Build step: $LASTEXITCODE"
+          Write-Host "Does build\ exist? $(Test-Path build)"
+          if (Test-Path build) { Get-ChildItem -Recurse build\ | Select-Object FullName }
         shell: pwsh
 
       # windeployqt bundles the Qt DLLs the exe needs; libssh2's DLL from
