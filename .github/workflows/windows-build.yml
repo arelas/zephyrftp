@@ -83,10 +83,28 @@ jobs:
       # windeployqt bundles the Qt DLLs the exe needs; libssh2's DLL from
       # vcpkg still needs to be copied in separately since windeployqt only
       # knows about Qt's own dependencies.
+      #
+      # Previous version assumed the exe lands flat at build\zephyrftp.exe
+      # (true for a single-config Ninja generator on Linux/most setups) —
+      # that assumption was wrong here (copy failed, path didn't exist) and
+      # I have no way to verify the actual CMake/Ninja/Qt6 output layout on
+      # Windows from this environment. Searching for the exe instead of
+      # guessing its path, and printing the whole build\ tree first so the
+      # log is self-diagnosing if this still doesn't find it.
       - name: Assemble deployable folder
         run: |
+          Write-Host "Full build\ directory tree:"
+          Get-ChildItem -Recurse build\ | Select-Object FullName
+
+          $exe = Get-ChildItem -Recurse -Filter "zephyrftp.exe" -Path build\ | Select-Object -First 1
+          if (-not $exe) {
+            Write-Error "zephyrftp.exe not found anywhere under build\ — see tree above."
+            exit 1
+          }
+          Write-Host "Found exe at: $($exe.FullName)"
+
           mkdir dist
-          copy build\zephyrftp.exe dist\
+          Copy-Item $exe.FullName dist\
           windeployqt --release --no-translations dist\zephyrftp.exe
           copy "${{ env.VCPKG_ROOT }}\installed\x64-windows\bin\libssh2.dll" dist\
         shell: pwsh
