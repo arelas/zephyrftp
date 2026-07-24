@@ -4,6 +4,8 @@
 #include <QTableWidget>
 #include <QHeaderView>
 #include <QVBoxLayout>
+#include <QMenu>
+#include <QAction>
 
 namespace {
 constexpr int ColName = 0;
@@ -16,6 +18,7 @@ constexpr int IdRole = Qt::UserRole;
 TransferQueueWidget::TransferQueueWidget(TransferManager *manager, QWidget *parent)
     : QWidget(parent)
     , m_table(new QTableWidget(this))
+    , m_manager(manager)
 {
     m_table->setColumnCount(4);
     m_table->setHorizontalHeaderLabels({tr("File"), tr("Direction"), tr("Status"), tr("Progress")});
@@ -23,6 +26,9 @@ TransferQueueWidget::TransferQueueWidget(TransferManager *manager, QWidget *pare
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionMode(QAbstractItemView::NoSelection);
     m_table->verticalHeader()->setVisible(false);
+    m_table->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_table, &QTableWidget::customContextMenuRequested,
+            this, &TransferQueueWidget::showContextMenu);
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -62,6 +68,7 @@ QString TransferQueueWidget::statusText(const TransferItem &item)
     case TransferStatus::Failed:      return item.errorMessage.isEmpty()
                                               ? tr("Failed")
                                               : tr("Failed: %1").arg(item.errorMessage);
+    case TransferStatus::Cancelled:   return tr("Cancelled");
     }
     return {};
 }
@@ -95,4 +102,43 @@ void TransferQueueWidget::onItemUpdated(const TransferItem &item)
         progressText = tr("100%");
     }
     m_table->item(row, ColProgress)->setText(progressText);
+}
+
+void TransferQueueWidget::showContextMenu(const QPoint &pos)
+{
+    const int row = m_table->rowAt(pos.y());
+    if (row < 0)
+        return;
+
+    auto *nameItem = m_table->item(row, ColName);
+    if (!nameItem)
+        return;
+    const int id = nameItem->data(IdRole).toInt();
+
+    // Look up the item's current status from the manager rather than
+    // trusting the table's displayed text — the manager is the source of
+    // truth, the table is just a mirror of it.
+    TransferStatus status = TransferStatus::Queued;
+    bool found = false;
+    for (const TransferItem &item : m_manager->items()) {
+        if (item.id == id) {
+            status = item.status;
+            found = true;
+            break;
+        }
+    }
+    if (!found)
+        return;
+
+    QMenu menu(this);
+    QAction *cancelAction = menu.addAction(tr("Cancel"));
+    cancelAction->setEnabled(status == TransferStatus::Queued || status == TransferStatus::InProgress);
+    QAction *retryAction = menu.addAction(tr("Retry"));
+    retryAction->setEnabled(status == TransferStatus::Failed || status == TransferStatus::Cancelled);
+
+    QAction *chosen = menu.exec(m_table->viewport()->mapToGlobal(pos));
+    if (chosen == cancelAction)
+        m_manager->cancelItem(id);
+    else if (chosen == retryAction)
+        m_manager->retryItem(id);
 }

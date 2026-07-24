@@ -22,6 +22,19 @@ public:
     // immediately if nothing else is currently running.
     void enqueue(FilePaneWidget *sourcePane, FilePaneWidget *destPane, const QString &fileName);
 
+    // Cancels by id. If the item is Queued (hasn't started), just marks it
+    // Cancelled directly — nothing to interrupt. If it's the currently
+    // InProgress item, calls the executing backend's requestCancel() and
+    // remembers that the resulting transferFailed (if any) should be
+    // reported as Cancelled rather than Failed — see m_activeItemCancelled.
+    // No-op for ids that are already Done/Failed/Cancelled, or don't exist.
+    void cancelItem(int id);
+
+    // Resets a Failed or Cancelled item back to Queued (clearing its error
+    // message and progress) and starts processing if idle. No-op for ids
+    // in any other state, or that don't exist.
+    void retryItem(int id);
+
     const QList<TransferItem> &items() const { return m_items; }
 
 signals:
@@ -43,4 +56,10 @@ private:
     int m_nextId = 1;
     int m_activeIndex = -1;          // index into m_items currently running, -1 if idle
     RemoteBackend *m_currentBackend = nullptr;   // whichever backend is executing the active item
+    // Set by cancelItem() when it cancels the currently-InProgress item;
+    // onBackendFailed() checks this to report Cancelled instead of Failed,
+    // then clears it. There's no other way to distinguish "the user asked
+    // for this to stop" from "it genuinely errored" once both surface as
+    // the same transferFailed signal from the backend.
+    bool m_activeItemCancelled = false;
 };

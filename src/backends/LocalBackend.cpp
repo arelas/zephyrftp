@@ -58,6 +58,17 @@ void LocalBackend::downloadFile(const QString &remotePath, const QString &localP
     const qint64 size = info.size();
     emit transferProgress(remotePath, 0, size);
 
+    // QFile::copy() specifically refuses to overwrite an existing
+    // destination (unlike QFile::open(WriteOnly), which truncates) — found
+    // via the transfer-queue-test's retry phase failing on a second copy
+    // of the same file. Remove any existing destination first so this
+    // matches SftpBackend's overwrite behavior (LIBSSH2_FXF_TRUNC on
+    // upload; QFile::open(WriteOnly) truncates on download).
+    if (QFile::exists(localPath) && !QFile::remove(localPath)) {
+        emit transferFailed(remotePath, QStringLiteral("Could not overwrite existing file: %1").arg(localPath));
+        return;
+    }
+
     QFile src(remotePath);
     if (!src.copy(localPath)) {
         emit transferFailed(remotePath, src.errorString());
@@ -72,6 +83,12 @@ void LocalBackend::uploadFile(const QString &localPath, const QString &remotePat
     QFileInfo info(localPath);
     const qint64 size = info.size();
     emit transferProgress(localPath, 0, size);
+
+    // See the matching comment in downloadFile() above — same fix, same reason.
+    if (QFile::exists(remotePath) && !QFile::remove(remotePath)) {
+        emit transferFailed(localPath, QStringLiteral("Could not overwrite existing file: %1").arg(remotePath));
+        return;
+    }
 
     QFile src(localPath);
     if (!src.copy(remotePath)) {

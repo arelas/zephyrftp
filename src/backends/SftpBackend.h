@@ -4,6 +4,7 @@
 #include "SftpCredentials.h"
 #include <libssh2.h>
 #include <libssh2_sftp.h>
+#include <QAtomicInteger>
 
 class QTcpSocket;
 class HostKeyVerifier;
@@ -46,6 +47,14 @@ public:
     QString currentPath() const override;
     bool isLocalFilesystem() const override { return false; }
 
+    // Thread-safe: just flips m_cancelRequested. Called directly from the
+    // GUI thread while downloadFile()/uploadFile()'s read/write loop (on
+    // the worker thread) polls the same flag each iteration — QAtomicInteger
+    // handles the cross-thread visibility, no signal/slot marshaling needed
+    // or possible here (see RemoteBackend::requestCancel's doc comment for
+    // why a queued signal wouldn't work for this).
+    void requestCancel() override;
+
 private:
     bool ensureSession();   // lazy TCP + libssh2 handshake + host-key check + auth
     void teardown();
@@ -69,4 +78,11 @@ private:
     QTcpSocket *m_socket = nullptr;
     LIBSSH2_SESSION *m_session = nullptr;
     LIBSSH2_SFTP *m_sftp = nullptr;
+
+    // Set from the GUI thread via requestCancel(), polled from the worker
+    // thread inside downloadFile()/uploadFile()'s read/write loops.
+    // QAtomicInteger<bool> (not a plain bool) specifically for the
+    // cross-thread memory visibility guarantee — a plain bool has no such
+    // guarantee and could be cached/reordered incorrectly across threads.
+    QAtomicInteger<bool> m_cancelRequested{false};
 };

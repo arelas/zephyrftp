@@ -15,7 +15,8 @@ enum class TransferStatus {
     Queued,
     InProgress,
     Done,
-    Failed
+    Failed,
+    Cancelled
 };
 
 // One row in the transfer queue. Holds the source/dest pane pointers

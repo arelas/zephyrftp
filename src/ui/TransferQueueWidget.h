@@ -1,14 +1,16 @@
 #pragma once
 
 #include <QWidget>
+#include <QPoint>
 #include "../transfer/TransferItem.h"
 
 class QTableWidget;
 class TransferManager;
 
-// Read-only table showing the transfer queue: filename, direction, status,
-// progress. Purely a view — all state lives in TransferManager, this just
-// mirrors it.
+// Table showing the transfer queue: filename, direction, status, progress.
+// Mostly a view mirroring TransferManager, but also the entry point for
+// per-item actions (right-click Cancel/Retry) — those just call back into
+// the manager, which owns all the actual state.
 class TransferQueueWidget : public QWidget {
     Q_OBJECT
 public:
@@ -17,6 +19,7 @@ public:
 private slots:
     void onItemAdded(const TransferItem &item);
     void onItemUpdated(const TransferItem &item);
+    void showContextMenu(const QPoint &pos);
 
 private:
     int rowForId(int id) const;
@@ -24,4 +27,5 @@ private:
     static QString statusText(const TransferItem &item);
 
     QTableWidget *m_table;
+    TransferManager *m_manager;
 };

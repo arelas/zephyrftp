@@ -2,9 +2,11 @@
 
 #include <QWidget>
 #include <QStandardItemModel>
+#include <QPoint>
+#include <QStringList>
 #include "../backends/RemoteBackend.h"
 
-class QTreeView;
+class FileTreeView;
 class QLineEdit;
 class QLabel;
 class QThread;
@@ -21,6 +23,13 @@ public:
     RemoteBackend *backend() const { return m_backend; }
     QString selectedEntryName() const;
     QString currentDirectory() const { return m_backend->currentPath(); }
+
+    // Selected rows that are files (not directories). Public because
+    // FileTreeView (a different class, not a subwidget with special
+    // access) calls this directly when starting a drag — see
+    // FileTreeView::startDrag(). Also used internally by the context
+    // menu's "Transfer Selected" action.
+    QStringList selectedFileNames() const;
 
     void navigateTo(const QString &path);
 
@@ -40,17 +49,33 @@ signals:
     // this to "transfer to the other pane".
     void fileActivated(const QString &name);
 
+    // Emitted from the right-click "Transfer Selected" context-menu action
+    // — covers multi-select, unlike double-click which only ever acts on
+    // the single row under the cursor. Directories are skipped (recursive
+    // directory transfer isn't implemented); if the selection was only
+    // directories, this fires with an empty list and MainWindow's handler
+    // treats that as a no-op.
+    void filesActivated(const QStringList &names);
+
+    // Files dropped ONTO this pane FROM a different pane — forwarded
+    // straight through from FileTreeView::filesDroppedFrom. MainWindow
+    // connects both panes' filesDropped signals to one slot, using
+    // sender() to identify which pane received the drop (the destination)
+    // since sourcePane is already carried in the signal itself.
+    void filesDropped(FilePaneWidget *sourcePane, const QStringList &names);
+
 private slots:
     void onDirectoryListed(const QString &path, const QList<RemoteEntry> &entries);
     void onRowDoubleClicked(const QModelIndex &index);
     void onPathBarReturnPressed();
+    void showContextMenu(const QPoint &pos);
 
 private:
     void buildUi();
 
     RemoteBackend *m_backend;
     QThread *m_backendThread = nullptr;   // null when backend has no thread of its own (e.g. LocalBackend)
-    QTreeView *m_view;
+    FileTreeView *m_view;
     QLineEdit *m_pathBar;
     QLabel *m_statusLabel;
     QStandardItemModel *m_model;

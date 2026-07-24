@@ -22,6 +22,17 @@ public:
     // of backend types. True only for LocalBackend.
     virtual bool isLocalFilesystem() const = 0;
 
+    // Asks the currently-running download/upload to stop as soon as it can
+    // safely check. Deliberately NOT a slot needing queued dispatch —
+    // implementations must make this safe to call directly from any thread
+    // (a thread-safe flag set here, polled inside the transfer loop there),
+    // since the whole point is interrupting a blocking libssh2 call that's
+    // already in progress on the worker thread; a queued signal wouldn't be
+    // processed until that blocking call returns on its own, which defeats
+    // the purpose. No-op for backends with nothing worth interrupting
+    // (LocalBackend's QFile::copy is a single un-interruptible OS call).
+    virtual void requestCancel() = 0;
+
     // Declared as slots (not just virtual methods) so QMetaObject::invokeMethod
     // can reach them by name via a queued connection when the backend lives on
     // a worker thread. Qt's "virtual slot" pattern: the base class's moc-generated

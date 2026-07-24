@@ -19,6 +19,9 @@ public:
 private slots:
     void onLeftFileActivated(const QString &name);
     void onRightFileActivated(const QString &name);
+    void onLeftFilesActivated(const QStringList &names);
+    void onRightFilesActivated(const QStringList &names);
+    void onFilesDropped(FilePaneWidget *sourcePane, const QStringList &names);
     void onConnectTriggered();
     void onDisconnectTriggered();
     void onTransferSucceeded();

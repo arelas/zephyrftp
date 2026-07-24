@@ -1,6 +1,6 @@
 #include "FilePaneWidget.h"
+#include "FileTreeView.h"
 
-#include <QTreeView>
 #include <QLineEdit>
 #include <QLabel>
 #include <QVBoxLayout>
@@ -8,6 +8,8 @@
 #include <QDir>
 #include <QThread>
 #include <QMetaObject>
+#include <QMenu>
+#include <QAction>
 
 namespace {
 constexpr int ColName = 0;
@@ -88,7 +90,7 @@ void FilePaneWidget::buildUi()
 
     m_model->setHorizontalHeaderLabels({tr("Name"), tr("Size"), tr("Modified"), tr("Permissions")});
 
-    m_view = new QTreeView(this);
+    m_view = new FileTreeView(this, this);
     m_view->setModel(m_model);
     m_view->setRootIsDecorated(false);
     m_view->setAlternatingRowColors(true);
@@ -96,6 +98,9 @@ void FilePaneWidget::buildUi()
     m_view->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_view->header()->setSectionResizeMode(ColName, QHeaderView::Stretch);
     connect(m_view, &QTreeView::doubleClicked, this, &FilePaneWidget::onRowDoubleClicked);
+    m_view->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_view, &QTreeView::customContextMenuRequested, this, &FilePaneWidget::showContextMenu);
+    connect(m_view, &FileTreeView::filesDroppedFrom, this, &FilePaneWidget::filesDropped);
     layout->addWidget(m_view);
 
     m_statusLabel = new QLabel(this);
@@ -153,4 +158,34 @@ QString FilePaneWidget::selectedEntryName() const
     if (row < 0 || row >= m_currentEntries.size())
         return {};
     return m_currentEntries.at(row).name;
+}
+
+QStringList FilePaneWidget::selectedFileNames() const
+{
+    QStringList names;
+    const auto selected = m_view->selectionModel()->selectedRows(ColName);
+    for (const QModelIndex &index : selected) {
+        const int row = index.row();
+        if (row < 0 || row >= m_currentEntries.size())
+            continue;
+        const RemoteEntry &entry = m_currentEntries.at(row);
+        if (!entry.isDir)   // directories skipped — see filesActivated's doc comment
+            names.append(entry.name);
+    }
+    return names;
+}
+
+void FilePaneWidget::showContextMenu(const QPoint &pos)
+{
+    const QStringList names = selectedFileNames();
+
+    QMenu menu(this);
+    QAction *transferAction = menu.addAction(
+        names.size() > 1 ? tr("Transfer %1 Files to Other Pane").arg(names.size())
+                          : tr("Transfer to Other Pane"));
+    transferAction->setEnabled(!names.isEmpty());
+
+    QAction *chosen = menu.exec(m_view->viewport()->mapToGlobal(pos));
+    if (chosen == transferAction)
+        emit filesActivated(names);
 }

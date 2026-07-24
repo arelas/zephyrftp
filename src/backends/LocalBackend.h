@@ -19,6 +19,11 @@ public:
     QString currentPath() const override;
     bool isLocalFilesystem() const override { return true; }
 
+    // No-op: QFile::copy() is a single OS-level call with no loop of ours
+    // to check a flag inside — there's nothing to interrupt mid-transfer.
+    // Local copies are fast enough in practice that this hasn't mattered.
+    void requestCancel() override {}
+
 private:
     QString m_currentPath;
 };

@@ -66,6 +66,10 @@ void MainWindow::buildLayout()
 
     connect(m_leftPane, &FilePaneWidget::fileActivated, this, &MainWindow::onLeftFileActivated);
     connect(m_rightPane, &FilePaneWidget::fileActivated, this, &MainWindow::onRightFileActivated);
+    connect(m_leftPane, &FilePaneWidget::filesActivated, this, &MainWindow::onLeftFilesActivated);
+    connect(m_rightPane, &FilePaneWidget::filesActivated, this, &MainWindow::onRightFilesActivated);
+    connect(m_leftPane, &FilePaneWidget::filesDropped, this, &MainWindow::onFilesDropped);
+    connect(m_rightPane, &FilePaneWidget::filesDropped, this, &MainWindow::onFilesDropped);
 }
 
 void MainWindow::buildTransferQueue()
@@ -86,6 +90,37 @@ void MainWindow::onLeftFileActivated(const QString &name)
 void MainWindow::onRightFileActivated(const QString &name)
 {
     m_transferManager->enqueue(m_rightPane, m_leftPane, name);
+}
+
+void MainWindow::onLeftFilesActivated(const QStringList &names)
+{
+    // One enqueue() call per file — TransferManager's queue is already
+    // designed to hold many items and process them serially, so a
+    // multi-select "Transfer Selected" is just several single-file
+    // enqueues in a row, not a new code path.
+    for (const QString &name : names)
+        m_transferManager->enqueue(m_leftPane, m_rightPane, name);
+}
+
+void MainWindow::onRightFilesActivated(const QStringList &names)
+{
+    for (const QString &name : names)
+        m_transferManager->enqueue(m_rightPane, m_leftPane, name);
+}
+
+void MainWindow::onFilesDropped(FilePaneWidget *sourcePane, const QStringList &names)
+{
+    // sourcePane is carried explicitly in the signal (the drag's origin);
+    // the destination is whichever pane actually received the drop, which
+    // is the object that emitted this signal — filesDropped is forwarded
+    // straight through from FileTreeView on the receiving side, so
+    // sender() here is reliably the destination FilePaneWidget.
+    auto *destPane = qobject_cast<FilePaneWidget *>(sender());
+    if (!destPane || destPane == sourcePane)
+        return;
+
+    for (const QString &name : names)
+        m_transferManager->enqueue(sourcePane, destPane, name);
 }
 
 void MainWindow::onTransferSucceeded()

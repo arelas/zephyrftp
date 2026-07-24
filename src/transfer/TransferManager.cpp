@@ -122,6 +122,52 @@ void TransferManager::startNext()
     m_activeIndex = -1;
 }
 
+void TransferManager::cancelItem(int id)
+{
+    const int idx = indexById(id);
+    if (idx < 0)
+        return;
+
+    TransferItem &item = m_items[idx];
+
+    if (idx == m_activeIndex) {
+        // Currently running — ask the executing backend to stop, and
+        // remember to report the resulting transferFailed as Cancelled
+        // rather than Failed once it arrives.
+        if (m_currentBackend) {
+            m_activeItemCancelled = true;
+            m_currentBackend->requestCancel();
+        }
+        return;
+    }
+
+    if (item.status == TransferStatus::Queued) {
+        // Hasn't started yet — nothing to interrupt, just mark it done.
+        item.status = TransferStatus::Cancelled;
+        emit itemUpdated(item);
+    }
+    // Done/Failed/Cancelled items: no-op, nothing meaningful to cancel.
+}
+
+void TransferManager::retryItem(int id)
+{
+    const int idx = indexById(id);
+    if (idx < 0)
+        return;
+
+    TransferItem &item = m_items[idx];
+    if (item.status != TransferStatus::Failed && item.status != TransferStatus::Cancelled)
+        return;
+
+    item.status = TransferStatus::Queued;
+    item.bytesDone = 0;
+    item.bytesTotal = 0;
+    item.errorMessage.clear();
+    emit itemUpdated(item);
+
+    startNext();
+}
+
 void TransferManager::connectToBackend(RemoteBackend *backend)
 {
     if (m_currentBackend)
@@ -155,6 +201,7 @@ void TransferManager::onBackendFinished(const QString &fileName)
     TransferItem &item = m_items[m_activeIndex];
     item.status = TransferStatus::Done;
     item.bytesDone = item.bytesTotal > 0 ? item.bytesTotal : item.bytesDone;
+    m_activeItemCancelled = false;   // in case cancelItem() was called just as this finished anyway
     emit itemUpdated(item);
     emit transferSucceeded();
 
@@ -169,8 +216,9 @@ void TransferManager::onBackendFailed(const QString &fileName, const QString &re
         return;
 
     TransferItem &item = m_items[m_activeIndex];
-    item.status = TransferStatus::Failed;
-    item.errorMessage = reason;
+    item.status = m_activeItemCancelled ? TransferStatus::Cancelled : TransferStatus::Failed;
+    item.errorMessage = m_activeItemCancelled ? QString() : reason;
+    m_activeItemCancelled = false;
     emit itemUpdated(item);
 
     m_activeIndex = -1;

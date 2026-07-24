@@ -29,19 +29,28 @@ backend to follow using the same `RemoteBackend` interface.
   QT_QPA_PLATFORM=offscreen ./build/smoke-test
   ```
 
-- **The transfer queue actually moves files, verified byte-for-byte.**
+- **The transfer queue actually moves files, verified byte-for-byte —
+  and now covers cancel/retry too, not just the happy path.**
   `src/transfer_queue_test.cpp` (built via the `transfer-queue-test` CMake
-  target) creates two real `FilePaneWidget`s on real `LocalBackend`s
-  pointed at real temp directories, writes a 500KB random test file,
-  enqueues a transfer through the real `TransferManager`, and confirms:
-  the destination file exists, its MD5 hash matches the source exactly,
-  the queue reported `Queued -> InProgress -> Done`, and the progress
-  numbers reported along the way were plausible (`0/500000` ->
-  `500000/500000`). This test is also what caught a real gap during
-  development — `LocalBackend`'s copy methods weren't emitting
-  `transferProgress` at all, which would have left the queue's progress
-  column blank for local transfers; fixed before this note was written,
-  not after. Run it with:
+  target) runs three phases against real `FilePaneWidget`s on real
+  `LocalBackend`s: (1) a full transfer — destination file exists, MD5
+  matches source exactly, `Queued -> InProgress -> Done` with plausible
+  progress numbers; (2) cancelling a `Queued` (not-yet-started) item —
+  exploits a real, deterministic property of `TransferManager` (two
+  `enqueue()` calls back-to-back synchronously produce one `InProgress`
+  and one still-`Queued` item, no timing race needed) and confirms the
+  cancelled item is never actually processed; (3) retrying a `Failed`
+  item — points at a nonexistent source so both the original attempt and
+  the retry fail deterministically, proving `retryItem()` genuinely
+  re-runs the transfer rather than just resetting a status field.
+  This test is also what caught two real bugs during development, both
+  fixed before this note was written: `LocalBackend`'s copy methods
+  weren't emitting `transferProgress` at all (blank progress column for
+  local transfers), and — found by phase 2/3's back-to-back transfers —
+  `QFile::copy()` specifically refuses to overwrite an existing
+  destination file (unlike `QFile::open(WriteOnly)`, which truncates),
+  so any re-transfer of a file already present at the destination was
+  silently failing. Run it with:
   ```
   cmake --build build --target transfer-queue-test
   mkdir -p /tmp/transfer_test/src_dir /tmp/transfer_test/dst_dir
@@ -111,7 +120,19 @@ Dependencies (Debian/Ubuntu): `cmake build-essential qt6-base-dev libssh2-1-dev`
   its lifetime manually — `deleteLater()` on the backend (runs on its own
   thread's queue) followed by `thread->quit()` + `thread->wait()`. Passing
   `thread=nullptr` (e.g. for `LocalBackend`) falls back to normal
-  parent-child ownership.
+  parent-child ownership. Right-click on selected rows offers "Transfer
+  Selected" (multi-select, via `filesActivated`), on top of the original
+  double-click-one-file behavior (`fileActivated`).
+- `FileTreeView` — thin `QTreeView` subclass adding cross-pane
+  drag-and-drop. Qt's built-in item-view DnD pulls its `QMimeData` from
+  the *model* (`QAbstractItemView::startDrag()` calls
+  `model()->mimeData(...)`), which is built for reordering within one
+  model — it doesn't fit "drag from one pane's tree onto a different
+  pane's tree", so drag start (`startDrag()`) and drop handling
+  (`dragEnterEvent`/`dropEvent`) are both overridden here instead. The
+  dragged `QMimeData` carries the source `FilePaneWidget*` as a raw
+  `quintptr` — same-process-only, never meant to leave this app, a
+  legitimate technique for internal Qt drag-and-drop.
 - `TransferManager` — owns the transfer queue, processes it **serially**
   (one item at a time — SftpBackend holds a single libssh2 session, and
   concurrent transfers on the same session aren't safe without more
@@ -123,9 +144,19 @@ Dependencies (Debian/Ubuntu): `cmake build-essential qt6-base-dev libssh2-1-dev`
   backend is executing the current item — `RemoteBackend` objects persist
   across multiple transfers, so `connectToBackend()` explicitly disconnects
   the previous backend before wiring up the next to avoid stacking
-  duplicate connections.
-- `TransferQueueWidget` — dumb table view mirroring `TransferManager`'s
-  `itemAdded`/`itemUpdated` signals. All state lives in the manager.
+  duplicate connections. `cancelItem()`/`retryItem()` (right-click in
+  `TransferQueueWidget`) round out the queue: cancelling a not-yet-started
+  item just marks it `Cancelled` directly; cancelling the active one calls
+  `RemoteBackend::requestCancel()` — a plain thread-safe method (not a
+  queued slot, since a queued signal wouldn't be processed until the
+  blocking transfer loop it's meant to interrupt already returned on its
+  own) — and a flag (`m_activeItemCancelled`) distinguishes the resulting
+  `transferFailed` as "cancelled" vs. "genuinely failed" once it arrives.
+- `TransferQueueWidget` — table view mirroring `TransferManager`'s
+  `itemAdded`/`itemUpdated` signals, plus a right-click context menu
+  (Cancel/Retry, enabled based on the item's current status) that calls
+  straight back into the manager. All state still lives in the manager —
+  this is a view, not a second source of truth.
 - `MainWindow` — two `FilePaneWidget`s in a `QSplitter`, plus a
   `QDockWidget` at the bottom holding the transfer queue. Left pane is
   always `LocalBackend`. Right pane starts on `LocalBackend` and the
@@ -181,8 +212,17 @@ ever needs touching again:
   `TransferManager::enqueue()` marks them `Failed` immediately with an
   explanatory message. Would need a stage-through-a-local-temp-file
   fallback (download then upload) to support.
-- **No drag-and-drop, no multi-select transfers, no cancel/retry.**
-  Double-click one file at a time is the whole interaction model right now.
+- **Recursive directory transfer isn't implemented.** Multi-select and
+  drag-and-drop both skip directories entirely (files only) — dragging or
+  selecting a folder does nothing, silently, rather than erroring. Would
+  need real recursive traversal + a nested queue structure to support.
+- **Cancel is implemented but only automated-tested against `LocalBackend`,
+  where it's a documented no-op** (`QFile::copy()` can't be interrupted
+  mid-call). `SftpBackend`'s actual mid-transfer interruption — the cancel
+  flag checked inside the libssh2 read/write loops — compiles and follows
+  the same pattern proven correct elsewhere in this codebase, but has no
+  real-server test confirming it actually stops a transfer partway
+  through. Needs a slow enough real transfer to verify by hand.
 - **Queue item execution is bound to whatever backend is on the pane when
   its turn comes up**, not when it was enqueued. If you queue a transfer,
   then hit Disconnect before it starts, it'll run against whatever backend

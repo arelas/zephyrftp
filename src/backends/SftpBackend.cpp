@@ -341,6 +341,8 @@ void SftpBackend::downloadFile(const QString &remotePath, const QString &localPa
     if (!ensureSession())
         return;
 
+    m_cancelRequested.storeRelaxed(false);   // reset — backend persists across transfers
+
     LIBSSH2_SFTP_HANDLE *handle =
         libssh2_sftp_open(m_sftp, remotePath.toUtf8().constData(), LIBSSH2_FXF_READ, 0);
     if (!handle) {
@@ -359,6 +361,7 @@ void SftpBackend::downloadFile(const QString &remotePath, const QString &localPa
     libssh2_sftp_fstat(handle, &attrs);
     const qint64 totalSize = static_cast<qint64>(attrs.filesize);
     qint64 done = 0;
+    bool cancelled = false;
 
     char buf[32 * 1024];
     ssize_t n = 0;
@@ -366,12 +369,19 @@ void SftpBackend::downloadFile(const QString &remotePath, const QString &localPa
         out.write(buf, n);
         done += n;
         emit transferProgress(remotePath, done, totalSize);
+
+        if (m_cancelRequested.loadRelaxed()) {
+            cancelled = true;
+            break;
+        }
     }
 
     out.close();
     libssh2_sftp_close(handle);
 
-    if (n < 0)
+    if (cancelled)
+        emit transferFailed(remotePath, QStringLiteral("Cancelled"));
+    else if (n < 0)
         emit transferFailed(remotePath, QStringLiteral("Read error during transfer"));
     else
         emit transferFinished(remotePath);
@@ -381,6 +391,8 @@ void SftpBackend::uploadFile(const QString &localPath, const QString &remotePath
 {
     if (!ensureSession())
         return;
+
+    m_cancelRequested.storeRelaxed(false);   // reset — backend persists across transfers
 
     QFile in(localPath);
     if (!in.open(QIODevice::ReadOnly)) {
@@ -400,6 +412,7 @@ void SftpBackend::uploadFile(const QString &localPath, const QString &remotePath
     const qint64 totalSize = in.size();
     qint64 done = 0;
     char buf[32 * 1024];
+    bool cancelled = false;
 
     while (!in.atEnd()) {
         qint64 n = in.read(buf, sizeof(buf));
@@ -418,10 +431,24 @@ void SftpBackend::uploadFile(const QString &localPath, const QString &remotePath
         }
         done += n;
         emit transferProgress(localPath, done, totalSize);
+
+        if (m_cancelRequested.loadRelaxed()) {
+            cancelled = true;
+            break;
+        }
     }
 
     libssh2_sftp_close(handle);
-    emit transferFinished(localPath);
+
+    if (cancelled)
+        emit transferFailed(localPath, QStringLiteral("Cancelled"));
+    else
+        emit transferFinished(localPath);
+}
+
+void SftpBackend::requestCancel()
+{
+    m_cancelRequested.storeRelaxed(true);
 }
 
 QString SftpBackend::currentPath() const

@@ -30,6 +30,7 @@ set(SOURCES
     src/main.cpp
     src/ui/MainWindow.cpp
     src/ui/FilePaneWidget.cpp
+    src/ui/FileTreeView.cpp
     src/ui/ConnectionDialog.cpp
     src/ui/TransferQueueWidget.cpp
     src/ui/HostKeyVerifier.cpp
@@ -41,6 +42,7 @@ set(SOURCES
 set(HEADERS
     src/ui/MainWindow.h
     src/ui/FilePaneWidget.h
+    src/ui/FileTreeView.h
     src/ui/ConnectionDialog.h
     src/ui/TransferQueueWidget.h
     src/ui/HostKeyVerifier.h
@@ -78,6 +80,7 @@ qt_add_executable(smoke-test EXCLUDE_FROM_ALL
     src/smoke_test.cpp
     src/ui/MainWindow.cpp
     src/ui/FilePaneWidget.cpp
+    src/ui/FileTreeView.cpp
     src/ui/ConnectionDialog.cpp
     src/ui/TransferQueueWidget.cpp
     src/ui/HostKeyVerifier.cpp
@@ -96,6 +99,7 @@ qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
     src/transfer_queue_test.cpp
     src/ui/MainWindow.cpp
     src/ui/FilePaneWidget.cpp
+    src/ui/FileTreeView.cpp
     src/ui/ConnectionDialog.cpp
     src/ui/TransferQueueWidget.cpp
     src/ui/HostKeyVerifier.cpp
