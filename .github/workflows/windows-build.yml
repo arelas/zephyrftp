@@ -13,7 +13,7 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Sets up cl.exe / MSVC environment variables for this job's shell.
       - name: Set up MSVC environment
@@ -35,8 +35,12 @@ jobs:
           arch: 'win64_msvc2022_64'
           modules: ''
 
-      - name: Install Ninja
-        uses: seanmiddleditch/gha-setup-ninja@v5
+      # seanmiddleditch/gha-setup-ninja was archived (no longer maintained) —
+      # replaced with lukka/get-cmake, which installs both a current CMake
+      # and Ninja together and is from the same maintainer as run-vcpkg
+      # below, so this workflow isn't depending on a dead action.
+      - name: Install CMake + Ninja
+        uses: lukka/get-cmake@latest
 
       # vcpkg ships as a submodule-free bootstrap here rather than pinning a
       # specific commit, so the exact libssh2 version isn't locked. Fine for
@@ -75,7 +79,7 @@ jobs:
         shell: pwsh
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: zephyrftp-windows-x64
           path: dist/
@@ -88,7 +92,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: zephyrftp-windows-x64
           path: dist
@@ -98,6 +102,6 @@ jobs:
         shell: pwsh
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: zephyrftp-windows-x64.zip
