@@ -1,5 +1,10 @@
 # Contributing to ZephyrFTP
 
+Looking for how to *use* ZephyrFTP? See [README.md](README.md) instead.
+This document is for building, testing, and modifying it.
+[ARCHITECTURE.md](ARCHITECTURE.md) has the full technical picture —
+verification status, component design, and known gaps in detail.
+
 ## Building
 
 ```
@@ -11,7 +16,7 @@ make -j$(nproc)
 Dependencies (Debian/Ubuntu): `cmake build-essential qt6-base-dev qt6-svg-dev libssh2-1-dev`
 
 Windows builds run via GitHub Actions (`.github/workflows/windows-build.yml`) —
-see the README's "Windows builds (CI)" section for what that pipeline
+see ARCHITECTURE.md's "Windows builds (CI)" section for what that pipeline
 does and the real, sometimes non-obvious bugs it surfaced along the way.
 
 ## Running the test suites
@@ -32,7 +37,7 @@ QT_QPA_PLATFORM=offscreen ./build/transfer-queue-test
 ```
 
 Both need to actually pass — not just build — before a change is
-considered done. See the README's "Verified in this pass" section for
+considered done. See ARCHITECTURE.md's "Verification status" section for
 what each test actually proves and why it exists.
 
 ## The core discipline this codebase runs on
@@ -66,8 +71,9 @@ lifecycle), test it for real rather than trusting that it compiles.
 When something genuinely can't be verified in the environment at hand —
 this codebase has largely been developed without a live SFTP server or a
 real display available — say so explicitly rather than letting it read
-as proven. The README's "Known gaps" and "Still not verified" sections
-exist for exactly this, and are meant to stay accurate, not aspirational.
+as proven. ARCHITECTURE.md's "Known gaps" and "Still not verified"
+sections exist for exactly this, and are meant to stay accurate, not
+aspirational.
 
 ## Code conventions
 
@@ -80,6 +86,6 @@ exist for exactly this, and are meant to stay accurate, not aspirational.
   know or care which concrete backend it's talking to.
 - Icon/color choices follow `ICON-MAP.md` from the design package (not
   currently vendored into this repo's history as a standalone file —
-  see the README's "Design system" section for where the mapping
+  see ARCHITECTURE.md's "Design system" section for where the mapping
   actually lives in code: `FilePaneWidget::iconForEntry()` and
   `TransferQueueWidget::statusIcon()`).
