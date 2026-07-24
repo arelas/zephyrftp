@@ -21,14 +21,15 @@ jobs:
         with:
           arch: x64
 
-      # NOTE: arch string must match a Qt build actually published for the
-      # requested version. win64_msvc2022_64 is current as of Qt 6.5+; if
-      # this job fails on "no such arch", check the install-qt-action repo's
-      # README for the current valid values against the qt-version below.
+      # win64_msvc2022_64 requires Qt >= 6.8 (confirmed against
+      # install-qt-action's own version/arch table after the first CI run
+      # failed on this exact mismatch — Qt 6.7.x needs win64_msvc2019_64
+      # instead). Pinning to 6.8 to stay paired with the MSVC 2022 toolchain
+      # ilammy/msvc-dev-cmd sets up above.
       - name: Install Qt6
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.7.*'
+          version: '6.8.*'
           host: 'windows'
           target: 'desktop'
           arch: 'win64_msvc2022_64'
