@@ -8,6 +8,7 @@
 #include <QPixmap>
 #include <QPainter>
 #include <QPainterPath>
+#include <QLinearGradient>
 #include <QFile>
 #include <QByteArray>
 
@@ -23,7 +24,17 @@ QPixmap renderIconAtSize(int size)
     const qreal margin = size * 0.016;
     const qreal radius = size * 0.22;
     badgePath.addRoundedRect(margin, margin, size - margin * 2, size - margin * 2, radius, radius);
-    painter.fillPath(badgePath, QColor(0x5b, 0x8d, 0xef));
+
+    // Night-sky indigo-to-violet gradient, replacing the original flat
+    // daytime blue (#5b8def) — deliberately distinct from
+    // IconTheme::Blue, which is a separate in-app semantic color
+    // (navigation/download) with its own reason for staying bright and
+    // legible against the app's own dark UI; the app icon badge has no
+    // such constraint and can read as "dark" on its own.
+    QLinearGradient badgeGradient(margin, margin, size - margin, size - margin);
+    badgeGradient.setColorAt(0.0, QColor(0x1e, 0x1b, 0x4b));   // deep midnight indigo
+    badgeGradient.setColorAt(1.0, QColor(0x43, 0x38, 0x84));   // muted royal blue-violet
+    painter.fillPath(badgePath, badgeGradient);
 
     // Small icons get a thicker relative stroke and a bigger glyph
     // fraction — thin strokes and small margins that look fine at 256px
