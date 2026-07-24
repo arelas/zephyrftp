@@ -128,7 +128,13 @@ jobs:
           mkdir dist
           Copy-Item $exe.FullName dist\
           windeployqt --release --no-translations dist\zephyrftp.exe
-          copy "${{ env.VCPKG_ROOT }}\installed\x64-windows\bin\libssh2.dll" dist\
+          # Copy every vcpkg-built DLL rather than cherry-picking libssh2.dll
+          # by name — that missed its own runtime dependencies (OpenSSL's
+          # libcrypto-3-x64.dll, zlib's z.dll), confirmed by two separate
+          # "code execution cannot proceed, DLL not found" errors on a real
+          # Windows run. windeployqt only knows about Qt's dependencies, not
+          # libssh2's transitive ones, so this can't be delegated to it.
+          Copy-Item "${{ env.VCPKG_ROOT }}\installed\x64-windows\bin\*.dll" dist\
         shell: pwsh
 
       - name: Upload build artifact
