@@ -293,3 +293,18 @@ ever needs touching again:
   `ensureSession()` rather than once globally at app startup — harmless
   today (libssh2 tolerates repeat init calls) but worth moving to
   `main()` if multiple simultaneous SFTP connections are ever supported.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) — build/test instructions, and the
+verification discipline this codebase has actually been built with (worth
+reading before assuming something works because it compiles).
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+The vendored icon set (`resources/icons/`) is [Tabler Icons](https://tabler.io/icons),
+also MIT-licensed; its license text is included separately at
+`resources/icons/LICENSE-tabler-icons.txt` since it's a distinct
+copyright holder from this project.

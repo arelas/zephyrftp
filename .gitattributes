@@ -1,0 +1,17 @@
+# Normalize all text files to LF in the repository; let Git handle the
+# checkout-side conversion per-platform. This project builds on both
+# Linux (development) and Windows (CI) — worth being deliberate about
+# line endings rather than leaving it to each contributor's local Git
+# config, which is how mixed-EOL diffs happen.
+* text=auto eol=lf
+
+# Batch/PowerShell scripts, if any get added later, should stay CRLF —
+# not currently present, but a reasonable default to have in place ahead
+# of that, since native line endings occasionally matter for cmd.exe.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary/generated — never touch these.
+*.png binary
+*.ico binary
+*.svg -text
