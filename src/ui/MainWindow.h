@@ -4,6 +4,7 @@
 
 class FilePaneWidget;
 class TransferManager;
+class HostKeyVerifier;
 
 // Top-level window: two FilePaneWidgets side by side (commander style),
 // a docked transfer queue along the bottom, and a toolbar for
@@ -30,4 +31,8 @@ private:
     FilePaneWidget *m_leftPane = nullptr;   // local, by default
     FilePaneWidget *m_rightPane = nullptr;  // remote, once connected
     TransferManager *m_transferManager = nullptr;
+    // Lives on the GUI thread for the app's whole lifetime; SftpBackend
+    // instances (on their own worker threads) call into this one via a
+    // blocking cross-thread call to get a real host-key trust decision.
+    HostKeyVerifier *m_hostKeyVerifier = nullptr;
 };

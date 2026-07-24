@@ -8,7 +8,9 @@
 #include <QDebug>
 #include "ui/MainWindow.h"
 #include "ui/FilePaneWidget.h"
+#include "ui/HostKeyVerifier.h"
 #include "backends/SftpBackend.h"
+#include "backends/SftpCredentials.h"
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
@@ -18,8 +20,19 @@ int main(int argc, char *argv[]) {
     bool failureSignalReceived = false;
 
     // Port 1 on localhost: nothing listens there, so connect() fails almost
-    // instantly with ECONNREFUSED instead of timing out.
-    auto *backend = new SftpBackend("127.0.0.1", 1, "testuser", "testpass");
+    // instantly with ECONNREFUSED instead of timing out. Never reaches
+    // host-key verification or auth, so a real HostKeyVerifier is
+    // constructed here mainly to match production wiring, not because
+    // this test exercises it.
+    auto *hostKeyVerifier = new HostKeyVerifier(&window);
+    SftpCredentials creds;
+    creds.host = "127.0.0.1";
+    creds.port = 1;
+    creds.username = "testuser";
+    creds.authMethod = SftpAuthMethod::Password;
+    creds.password = "testpass";
+
+    auto *backend = new SftpBackend(creds, hostKeyVerifier);
     auto *thread = new QThread(&window);
     backend->moveToThread(thread);
 

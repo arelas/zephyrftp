@@ -32,6 +32,7 @@ set(SOURCES
     src/ui/FilePaneWidget.cpp
     src/ui/ConnectionDialog.cpp
     src/ui/TransferQueueWidget.cpp
+    src/ui/HostKeyVerifier.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
     src/transfer/TransferManager.cpp
@@ -42,10 +43,12 @@ set(HEADERS
     src/ui/FilePaneWidget.h
     src/ui/ConnectionDialog.h
     src/ui/TransferQueueWidget.h
+    src/ui/HostKeyVerifier.h
     src/backends/RemoteBackend.h
     src/backends/RemoteEntry.h
     src/backends/LocalBackend.h
     src/backends/SftpBackend.h
+    src/backends/SftpCredentials.h
     src/transfer/TransferItem.h
     src/transfer/TransferManager.h
 )
@@ -77,6 +80,7 @@ qt_add_executable(smoke-test EXCLUDE_FROM_ALL
     src/ui/FilePaneWidget.cpp
     src/ui/ConnectionDialog.cpp
     src/ui/TransferQueueWidget.cpp
+    src/ui/HostKeyVerifier.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
     src/transfer/TransferManager.cpp
@@ -94,6 +98,7 @@ qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
     src/ui/FilePaneWidget.cpp
     src/ui/ConnectionDialog.cpp
     src/ui/TransferQueueWidget.cpp
+    src/ui/HostKeyVerifier.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
     src/transfer/TransferManager.cpp

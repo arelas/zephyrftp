@@ -2,6 +2,7 @@
 #include "FilePaneWidget.h"
 #include "ConnectionDialog.h"
 #include "TransferQueueWidget.h"
+#include "HostKeyVerifier.h"
 #include "../backends/LocalBackend.h"
 #include "../backends/SftpBackend.h"
 #include "../transfer/TransferManager.h"
@@ -21,6 +22,7 @@ MainWindow::MainWindow(QWidget *parent)
     resize(1100, 650);
 
     m_transferManager = new TransferManager(this);
+    m_hostKeyVerifier = new HostKeyVerifier(this);
 
     buildToolbar();
     buildLayout();
@@ -102,8 +104,14 @@ void MainWindow::onConnectTriggered()
     if (dialog.exec() != QDialog::Accepted)
         return;
 
-    if (dialog.host().isEmpty()) {
+    const SftpCredentials creds = dialog.credentials();
+
+    if (creds.host.isEmpty()) {
         QMessageBox::warning(this, tr("Connect"), tr("Host cannot be empty."));
+        return;
+    }
+    if (creds.authMethod == SftpAuthMethod::PublicKey && creds.privateKeyPath.isEmpty()) {
+        QMessageBox::warning(this, tr("Connect"), tr("Select a private key file."));
         return;
     }
 
@@ -111,14 +119,13 @@ void MainWindow::onConnectTriggered()
     // Qt refuses to reparent an object across thread boundaries. FilePaneWidget
     // owns its lifetime manually from here via setBackend()'s deleteLater +
     // quit()/wait() teardown path instead of the usual QObject parent-child chain.
-    auto *backend = new SftpBackend(dialog.host(), dialog.port(),
-                                     dialog.username(), dialog.password());
+    auto *backend = new SftpBackend(creds, m_hostKeyVerifier);
     auto *thread = new QThread(this);   // the QThread *controller* object is fine
                                          // to parent normally — it's backend that
                                          // can't be, since IT is what moves.
     backend->moveToThread(thread);
 
-    statusBar()->showMessage(tr("Connecting to %1...").arg(dialog.host()));
+    statusBar()->showMessage(tr("Connecting to %1...").arg(creds.host));
     m_rightPane->setBackend(backend, thread);
 }
 

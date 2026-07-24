@@ -1,10 +1,12 @@
 #pragma once
 
 #include "RemoteBackend.h"
+#include "SftpCredentials.h"
 #include <libssh2.h>
 #include <libssh2_sftp.h>
 
 class QTcpSocket;
+class HostKeyVerifier;
 
 // SFTP backend built directly on libssh2. All calls here are BLOCKING
 // (that's how libssh2's sync API works) — this object must live on a
@@ -18,14 +20,21 @@ class QTcpSocket;
 // (QTcpSocket::socketDescriptor()) once the TCP connection is up; it
 // doesn't care how that connection was established.
 //
-// UNVERIFIED: auth is password-only below. Key-based auth
-// (libssh2_userauth_publickey_fromfile) and known_hosts verification are
-// both required before this is safe to point at a real server — neither
-// is implemented yet, flagged here rather than silently skipped.
+// Host-key verification: a real trust-on-first-use (TOFU) model against a
+// persistent known_hosts file, backed by libssh2's knownhost API. Unknown
+// or changed host keys are NOT silently accepted or silently rejected —
+// they're routed to hostKeyVerifier (a GUI-thread object) via a blocking
+// cross-thread call, so a real person makes that call, same as any other
+// SSH client. See HostKeyVerifier.h for how that cross-thread call works.
+//
+// UNVERIFIED: none of this — host-key verification or public-key auth —
+// has been exercised against a real SFTP server from this environment.
+// Password auth against a real server has been confirmed working
+// (separately, by the person building this); these paths haven't.
 class SftpBackend : public RemoteBackend {
     Q_OBJECT
 public:
-    SftpBackend(QString host, int port, QString username, QString password,
+    SftpBackend(SftpCredentials credentials, HostKeyVerifier *hostKeyVerifier,
                 QObject *parent = nullptr);
     ~SftpBackend() override;
 
@@ -38,13 +47,23 @@ public:
     bool isLocalFilesystem() const override { return false; }
 
 private:
-    bool ensureSession();   // lazy TCP + libssh2 handshake + auth
+    bool ensureSession();   // lazy TCP + libssh2 handshake + host-key check + auth
     void teardown();
 
-    QString m_host;
-    int m_port;
-    QString m_username;
-    QString m_password;
+    // Checks the server's host key against our known_hosts store. On a
+    // first-seen or changed key, blocks (via m_hostKeyVerifier) for a real
+    // user decision rather than assuming either "always trust" or "always
+    // reject". Returns false (and emits connectionFailed) if the key is
+    // rejected, unverifiable, or no verifier is wired up to ask.
+    bool verifyHostKey();
+
+    // Marshals a confirmHostKey() call onto the GUI thread and blocks
+    // until it returns. Returns false if m_hostKeyVerifier is null (fails
+    // safe rather than silently trusting an unaskable host).
+    bool askUserToTrustHostKey(const QString &fingerprint, bool isMismatch);
+
+    SftpCredentials m_credentials;
+    HostKeyVerifier *m_hostKeyVerifier = nullptr;   // GUI-thread object, not owned
     QString m_currentPath = QStringLiteral("/");
 
     QTcpSocket *m_socket = nullptr;
