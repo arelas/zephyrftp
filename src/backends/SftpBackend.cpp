@@ -2,13 +2,7 @@
 
 #include <QFile>
 #include <QFileInfo>
-
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <unistd.h>
-#include <cstring>
+#include <QTcpSocket>
 
 SftpBackend::SftpBackend(QString host, int port, QString username, QString password,
                           QObject *parent)
@@ -36,9 +30,10 @@ void SftpBackend::teardown()
         libssh2_session_free(m_session);
         m_session = nullptr;
     }
-    if (m_socket >= 0) {
-        ::close(m_socket);
-        m_socket = -1;
+    if (m_socket) {
+        m_socket->disconnectFromHost();
+        delete m_socket;
+        m_socket = nullptr;
     }
 }
 
@@ -52,31 +47,22 @@ bool SftpBackend::ensureSession()
         return false;
     }
 
-    m_socket = socket(AF_INET, SOCK_STREAM, 0);
-    if (m_socket < 0) {
-        emit connectionFailed(QStringLiteral("Could not create socket"));
+    // QTcpSocket handles DNS resolution and connection setup portably —
+    // this replaced a hand-rolled getaddrinfo()/socket()/connect() block
+    // that only ever compiled on POSIX (used sys/socket.h, netinet/in.h,
+    // etc., none of which exist on MSVC). libssh2 just needs the native
+    // socket descriptor once the connection is up.
+    m_socket = new QTcpSocket();
+    m_socket->connectToHost(m_host, static_cast<quint16>(m_port));
+    if (!m_socket->waitForConnected(10000)) {
+        emit connectionFailed(QStringLiteral("TCP connect to %1:%2 failed: %3")
+                               .arg(m_host).arg(m_port).arg(m_socket->errorString()));
+        delete m_socket;
+        m_socket = nullptr;
         return false;
     }
 
-    struct addrinfo hints{};
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    struct addrinfo *result = nullptr;
-    const QByteArray hostUtf8 = m_host.toUtf8();
-    const QByteArray portUtf8 = QByteArray::number(m_port);
-
-    if (getaddrinfo(hostUtf8.constData(), portUtf8.constData(), &hints, &result) != 0) {
-        emit connectionFailed(QStringLiteral("DNS resolution failed for %1").arg(m_host));
-        return false;
-    }
-
-    bool connectedOk = (::connect(m_socket, result->ai_addr, result->ai_addrlen) == 0);
-    freeaddrinfo(result);
-
-    if (!connectedOk) {
-        emit connectionFailed(QStringLiteral("TCP connect to %1:%2 failed").arg(m_host).arg(m_port));
-        return false;
-    }
+    const libssh2_socket_t sock = static_cast<libssh2_socket_t>(m_socket->socketDescriptor());
 
     m_session = libssh2_session_init();
     if (!m_session) {
@@ -84,7 +70,7 @@ bool SftpBackend::ensureSession()
         return false;
     }
 
-    if (libssh2_session_handshake(m_session, m_socket) != 0) {
+    if (libssh2_session_handshake(m_session, sock) != 0) {
         emit connectionFailed(QStringLiteral("SSH handshake failed"));
         return false;
     }

@@ -4,11 +4,19 @@
 #include <libssh2.h>
 #include <libssh2_sftp.h>
 
+class QTcpSocket;
+
 // SFTP backend built directly on libssh2. All calls here are BLOCKING
 // (that's how libssh2's sync API works) — this object must live on a
 // QThread of its own, never the GUI thread. MainWindow is responsible for
 // the moveToThread() + signal/slot wiring; this class assumes it's already
 // off the main thread by the time connectToHost() runs.
+//
+// Connection setup uses QTcpSocket rather than raw BSD sockets — portable
+// across POSIX and Windows for free, since Qt Network is already linked.
+// libssh2 only needs the native socket descriptor
+// (QTcpSocket::socketDescriptor()) once the TCP connection is up; it
+// doesn't care how that connection was established.
 //
 // UNVERIFIED: auth is password-only below. Key-based auth
 // (libssh2_userauth_publickey_fromfile) and known_hosts verification are
@@ -39,7 +47,7 @@ private:
     QString m_password;
     QString m_currentPath = QStringLiteral("/");
 
-    int m_socket = -1;
+    QTcpSocket *m_socket = nullptr;
     LIBSSH2_SESSION *m_session = nullptr;
     LIBSSH2_SFTP *m_sftp = nullptr;
 };
