@@ -51,21 +51,28 @@ jobs:
         with:
           vcpkgGitCommitId: 'cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3'
 
+      # Caches the final installed/ output (headers, libs, DLLs) rather
+      # than using vcpkg's own binary-cache mechanism — Microsoft removed
+      # the x-gha backend entirely (github.com/microsoft/vcpkg-tool/pull/1662,
+      # confirmed directly, not just a deprecation warning), and this
+      # actions/cache approach is what that same PR thread calls out as
+      # "endorsed by the GitHub Actions team." Key is pinned to the vcpkg
+      # commit above plus the exact package spec — bump the trailing -v1
+      # if the install command ever changes without the commit id changing,
+      # to force a fresh cache.
+      - name: Cache vcpkg installed packages
+        id: vcpkg-cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.VCPKG_ROOT }}\installed
+          key: vcpkg-installed-windows-cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3-libssh2-x64-windows-v1
+
+      # Skipped entirely on a cache hit — CMake's vcpkg toolchain file only
+      # needs the restored headers/libs/DLLs under installed\, not vcpkg's
+      # own bookkeeping, so there's nothing else to redo here.
       - name: Install libssh2 (vcpkg)
-        # VCPKG_BINARY_SOURCES=clear disables vcpkg's build cache entirely.
-        # Without it, vcpkg defaults to trying GitHub Actions' binary cache,
-        # which needs ACTIONS_RUNTIME_TOKEN/ACTIONS_CACHE_URL bridged in via
-        # an extra step (they're not exposed to plain `run:` steps by
-        # default) — and vcpkg's GHA backend has reportedly been in flux
-        # (seen reports of it being removed in favor of a NuGet-based
-        # provider). Skipping caching entirely means every run rebuilds
-        # libssh2/openssl/zlib from source (slower, a few extra minutes),
-        # but it's correct and doesn't depend on a backend that might not
-        # be there. Worth revisiting — properly wiring up caching would
-        # speed up every subsequent run — once this pipeline is stable.
-        run: |
-          $env:VCPKG_BINARY_SOURCES = "clear"
-          ${{ env.VCPKG_ROOT }}\vcpkg.exe install libssh2:x64-windows
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        run: ${{ env.VCPKG_ROOT }}\vcpkg.exe install libssh2:x64-windows
         shell: pwsh
 
       - name: Configure
