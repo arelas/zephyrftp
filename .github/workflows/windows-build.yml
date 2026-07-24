@@ -51,7 +51,19 @@ jobs:
           vcpkgGitCommitId: 'a42af01b72c28a8e1d7b48107b33e4f286a55ef6'
 
       - name: Install libssh2 (vcpkg)
+        # VCPKG_BINARY_SOURCES=clear disables vcpkg's build cache entirely.
+        # Without it, vcpkg defaults to trying GitHub Actions' binary cache,
+        # which needs ACTIONS_RUNTIME_TOKEN/ACTIONS_CACHE_URL bridged in via
+        # an extra step (they're not exposed to plain `run:` steps by
+        # default) — and vcpkg's GHA backend has reportedly been in flux
+        # (seen reports of it being removed in favor of a NuGet-based
+        # provider). Skipping caching entirely means every run rebuilds
+        # libssh2/openssl/zlib from source (slower, a few extra minutes),
+        # but it's correct and doesn't depend on a backend that might not
+        # be there. Worth revisiting — properly wiring up caching would
+        # speed up every subsequent run — once this pipeline is stable.
         run: |
+          $env:VCPKG_BINARY_SOURCES = "clear"
           ${{ env.VCPKG_ROOT }}\vcpkg.exe install libssh2:x64-windows
         shell: pwsh
 
