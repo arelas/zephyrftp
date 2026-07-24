@@ -49,10 +49,20 @@ backend to follow using the same `RemoteBackend` interface.
   QT_QPA_PLATFORM=offscreen ./build/transfer-queue-test
   ```
 
-**Still not verified:** an actual SFTP round-trip (auth, directory listing,
-file transfer) against a real server, and real window rendering on a real
-display — no live SFTP server or windowing system was available in the
-environment this was built in.
+- **A real SFTP round-trip against a live server, confirmed by hand.**
+  Password auth, the host-key trust-on-first-use flow (`SftpBackend::verifyHostKey()`
+  against a persistent `known_hosts` file), and the home-directory default
+  (`libssh2_sftp_realpath(sftp, ".", ...)` instead of hardcoding `/`) have
+  all been exercised against a real local SFTP server and confirmed
+  working as intended — connecting lands in the actual home directory,
+  and the host-key prompt/persistence behaves correctly on repeat
+  connections. This is real per-feature verification, not inferred from
+  the code compiling.
+
+**Still not verified:** public-key authentication (implemented, but no
+real key file has been tested against it yet — see Known gaps), and real
+window rendering on a real display (this development environment has no
+windowing system; only headless/offscreen runs have been checked).
 
 ## Build
 
@@ -81,9 +91,18 @@ Dependencies (Debian/Ubuntu): `cmake build-essential qt6-base-dev libssh2-1-dev`
   can reach them by name across the thread boundary — the base class's
   moc-generated slot thunk dispatches through the vtable, so the derived
   override still runs (Qt's "virtual slot" pattern).
-- `ConnectionDialog` — host/port/username/password form. No saved-site
-  list, no input validation beyond "port is a number" — both reasonable
-  next additions.
+- `ConnectionDialog` — host/port/username form plus a password/private-key
+  auth toggle (`QStackedWidget` swaps the relevant fields). Returns a
+  single `SftpCredentials` struct (`src/backends/SftpCredentials.h`) that
+  `SftpBackend` consumes directly — no more unpacking/repacking individual
+  fields at the call site. No saved-site list yet — a reasonable next
+  addition.
+- `HostKeyVerifier` — lives on the GUI thread for the app's lifetime.
+  `SftpBackend`'s worker thread calls into it via
+  `QMetaObject::invokeMethod(..., Qt::BlockingQueuedConnection)` to get a
+  synchronous host-key trust decision from a real person — the standard
+  Qt pattern for a background thread needing a blocking answer from the
+  UI, since popping a `QMessageBox` off the GUI thread isn't safe.
 - `FilePaneWidget` — one side of the dual-pane view. Holds a
   `QStandardItemModel`, doesn't know or care which backend it's attached
   to. `setBackend(backend, thread)` swaps backends at runtime: if a
@@ -121,24 +140,43 @@ Dependencies (Debian/Ubuntu): `cmake build-essential qt6-base-dev libssh2-1-dev`
 
 `.github/workflows/windows-build.yml` builds this on GitHub's
 `windows-latest` runner: MSVC + Qt6 (via `jurplel/install-qt-action`) +
-libssh2 (via vcpkg) + Ninja, then `windeployqt` to bundle the Qt DLLs.
-Runs on every push to `main` and on `v*` tags; tag pushes also attach the
-build as a zipped GitHub Release asset.
+libssh2 (via vcpkg, with `actions/cache` on the `installed/` output so
+only the first run pays the ~8.5 minute openssl/zlib/libssh2 build) +
+Ninja, then `windeployqt` plus a wildcard copy of vcpkg's own DLLs to
+bundle everything the exe needs. Runs on every push to `main` and on
+`v*` tags; tag pushes also attach the build as a zipped GitHub Release
+asset (untested — no tag has been pushed yet).
 
-**UNVERIFIED — has not run yet.** The YAML syntax is valid (checked with
-`yaml.safe_load`), and `CMakeLists.txt` now branches on `WIN32` to use
-vcpkg's `Libssh2::libssh2` CMake target instead of pkg-config, but nothing
-about the actual Windows build — the Qt arch string, the vcpkg commit pin,
-whether `windeployqt` picks up everything needed — has been proven against
-a real Windows runner. First push to GitHub will be the first real test;
-check the Actions tab for the initial run.
+**Confirmed working end-to-end**, not just "builds without error": the
+resulting `.exe` has actually been run on real Windows, launches as a
+proper GUI app (no trailing console window), and connects to a real SFTP
+server successfully. Getting here surfaced and fixed several real,
+non-obvious bugs along the way — worth knowing about if this pipeline
+ever needs touching again:
+- Qt version/arch mismatch (`win64_msvc2022_64` requires Qt >= 6.8)
+- `run-vcpkg` needs a full 40-character commit SHA, not a tag name
+- A stale vcpkg commit pin 404'd on a pruned MSYS2 mirror artifact
+- Two POSIX-only portability bugs in `SftpBackend.cpp` (raw BSD socket
+  headers; `mode_t`/`S_IRUSR`-style permission macros) — this code had
+  only ever been compiled on Linux until the first real Windows build
+- Missing runtime DLLs (`libcrypto-3-x64.dll`, `z.dll`) — libssh2's own
+  transitive dependencies, which `windeployqt` doesn't know about
+- `qt_add_executable()` doesn't set `WIN32_EXECUTABLE` automatically —
+  without it, every launch opened a blank console window alongside the UI
+- vcpkg's `x-gha` binary-cache backend was fully removed by Microsoft
+  (not just deprecated) — `actions/cache` on the `installed/` directory
+  replaced it
 
 ## Known gaps (flagged, not fixed)
 
-- **No host-key verification.** `SftpBackend::ensureSession()` skips
-  `known_hosts` checking entirely — do not point this at anything but a
-  disposable test server until that's in.
-- **Password-only auth.** No public-key auth path yet.
+- **Public-key authentication is implemented but unverified.**
+  `ConnectionDialog` has a password/private-key toggle and
+  `SftpBackend::ensureSession()` branches accordingly, but no real key
+  file has been tested against it yet — only password auth has been
+  confirmed against a real server. It also assumes the conventional
+  `<privatekey>.pub` sibling file exists rather than deriving the public
+  key from the private key directly; untested if that assumption doesn't
+  hold for a given key.
 - **Remote-to-remote transfers are unsupported**, not silently dropped —
   `TransferManager::enqueue()` marks them `Failed` immediately with an
   explanatory message. Would need a stage-through-a-local-temp-file
