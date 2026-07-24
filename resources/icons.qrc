@@ -6,6 +6,17 @@
   render time by IconTheme::tintedIcon() (QPainter compositing) rather than
   needing a separate colored copy per accent — one source file per icon
   regardless of how many places/colors it's used in.
+
+  The app-icon-*.png files are the application icon (window/taskbar icon
+  on all platforms; the Windows .exe file icon is separate — see
+  resources/app-icon.rc and CMakeLists.txt) — a composed badge (blue
+  rounded square + the Tabler "wind" glyph, tagged "breeze" in its own
+  metadata, a direct thematic match for "Zephyr") rather than a bare
+  Tabler icon, since a single-color line-art glyph on transparent
+  background doesn't read as an app icon. Each size was rendered
+  independently with a tuned stroke width and glyph scale — a shared
+  master downsampled to 16px lost the glyph almost entirely (confirmed:
+  2 legible pixels out of 256) before this was corrected.
 -->
 <RCC>
     <qresource prefix="/">
@@ -27,5 +38,12 @@
         <file>icons/arrows-left-right.svg</file>
         <file>icons/alert-triangle.svg</file>
         <file>icons/x.svg</file>
+        <file>icons/app-icon-16.png</file>
+        <file>icons/app-icon-24.png</file>
+        <file>icons/app-icon-32.png</file>
+        <file>icons/app-icon-48.png</file>
+        <file>icons/app-icon-64.png</file>
+        <file>icons/app-icon-128.png</file>
+        <file>icons/app-icon-256.png</file>
     </qresource>
 </RCC>

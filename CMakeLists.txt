@@ -42,6 +42,15 @@ set(SOURCES
     resources/theme.qrc
 )
 
+# .rc files are a Windows-only resource-compiler input (embeds app-icon.ico
+# as the .exe's native icon, shown in File Explorer/taskbar before the app
+# even runs — separate from the Qt runtime window icon set in main.cpp).
+# CMake only knows what to do with this on Windows; guarded rather than
+# added unconditionally so it's a clean no-op on Linux, not a build error.
+if(WIN32)
+    list(APPEND SOURCES resources/app-icon.rc)
+endif()
+
 set(HEADERS
     src/ui/MainWindow.h
     src/ui/FilePaneWidget.h
