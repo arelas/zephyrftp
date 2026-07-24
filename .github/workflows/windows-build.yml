@@ -42,13 +42,17 @@ jobs:
       - name: Install CMake + Ninja
         uses: lukka/get-cmake@latest
 
-      # vcpkg ships as a submodule-free bootstrap here rather than pinning a
-      # specific commit, so the exact libssh2 version isn't locked. Fine for
-      # a first working build; pin it once the workflow is proven out.
+      # Previous pin (a42af01b...) was an arbitrary old commit whose openssl
+      # port referenced an MSYS2 pkgconf package that's since been pruned
+      # from every mirror (404 on all of them — confirmed from the actual
+      # CI failure, not a guess). Pinning to a named, immutable vcpkg
+      # release tag instead of a bare commit hash going forward, so it's
+      # obvious what's being tracked and easy to bump deliberately later
+      # rather than silently going stale again.
       - name: Set up vcpkg
         uses: lukka/run-vcpkg@v11
         with:
-          vcpkgGitCommitId: 'a42af01b72c28a8e1d7b48107b33e4f286a55ef6'
+          vcpkgGitCommitId: '2026.06.24'
 
       - name: Install libssh2 (vcpkg)
         # VCPKG_BINARY_SOURCES=clear disables vcpkg's build cache entirely.
