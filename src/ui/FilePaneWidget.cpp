@@ -1,5 +1,6 @@
 #include "FilePaneWidget.h"
 #include "FileTreeView.h"
+#include "IconTheme.h"
 
 #include <QLineEdit>
 #include <QLabel>
@@ -51,6 +52,8 @@ void FilePaneWidget::setBackend(RemoteBackend *backend, QThread *thread)
 
     m_backend = backend;
     m_backendThread = thread;
+
+    updatePathBarIcon();
 
     if (!m_backendThread) {
         // No thread affinity of its own (e.g. LocalBackend) — parent it to
@@ -107,6 +110,56 @@ void FilePaneWidget::buildUi()
     layout->addWidget(m_statusLabel);
 }
 
+void FilePaneWidget::updatePathBarIcon()
+{
+    // ICON-MAP.md: local machine root = device-laptop (blue), remote
+    // server root = server (green). QLineEdit::addAction(icon, Leading)
+    // is what draws this inside the field itself rather than needing a
+    // separate header row widget.
+    if (m_pathBarLeadingIcon) {
+        m_pathBar->removeAction(m_pathBarLeadingIcon);
+        delete m_pathBarLeadingIcon;
+        m_pathBarLeadingIcon = nullptr;
+    }
+
+    const QIcon icon = m_backend->isLocalFilesystem()
+        ? IconTheme::tintedIcon(":/icons/device-laptop.svg", IconTheme::Blue)
+        : IconTheme::tintedIcon(":/icons/server.svg", IconTheme::Green);
+    m_pathBarLeadingIcon = m_pathBar->addAction(icon, QLineEdit::LeadingPosition);
+}
+
+QIcon FilePaneWidget::iconForEntry(const RemoteEntry &e)
+{
+    // ICON-MAP.md's file/folder type table. Not exhaustive — matches the
+    // design package's own framing ("a starting map, not exhaustive").
+    if (e.isDir) {
+        // Dotfile-directory heuristic for "permission-restricted folder"
+        // (the design's own example is .ssh) — simpler than actually
+        // parsing the permissions string for missing group/world access,
+        // and matches the visual intent (flag sensitive-looking dirs)
+        // well enough for a re-skin pass.
+        if (e.name.startsWith(QLatin1Char('.')))
+            return IconTheme::tintedIcon(":/icons/lock.svg", IconTheme::Amber);
+        return IconTheme::tintedIcon(":/icons/folder.svg", IconTheme::Gray);
+    }
+
+    const QString lower = e.name.toLower();
+    if (lower.endsWith(QLatin1String(".pdf")))
+        return IconTheme::tintedIcon(":/icons/file-type-pdf.svg", IconTheme::Red);
+    if (lower.endsWith(QLatin1String(".sh")) || lower.endsWith(QLatin1String(".bash"))
+        || lower.endsWith(QLatin1String(".zsh")))
+        return IconTheme::tintedIcon(":/icons/terminal-2.svg", IconTheme::Green);
+    if (lower.endsWith(QLatin1String(".zip")) || lower.endsWith(QLatin1String(".tar.gz"))
+        || lower.endsWith(QLatin1String(".tgz")) || lower.endsWith(QLatin1String(".tar"))
+        || lower.endsWith(QLatin1String(".gz")) || lower.endsWith(QLatin1String(".7z"))
+        || lower.endsWith(QLatin1String(".rar")) || lower.endsWith(QLatin1String(".dll")))
+        return IconTheme::tintedIcon(":/icons/file-zip.svg", IconTheme::Amber);
+    if (lower.endsWith(QLatin1String(".exe")) || lower.endsWith(QLatin1String(".app")))
+        return IconTheme::tintedIcon(":/icons/app-window.svg", IconTheme::Green);
+
+    return IconTheme::tintedIcon(":/icons/file.svg", IconTheme::Gray);
+}
+
 void FilePaneWidget::navigateTo(const QString &path)
 {
     QMetaObject::invokeMethod(m_backend, "listDirectory",
@@ -127,6 +180,7 @@ void FilePaneWidget::onDirectoryListed(const QString &path, const QList<RemoteEn
     m_model->removeRows(0, m_model->rowCount());
     for (const RemoteEntry &e : entries) {
         auto *nameItem = new QStandardItem(e.isDir ? QStringLiteral("[%1]").arg(e.name) : e.name);
+        nameItem->setIcon(iconForEntry(e));
         auto *sizeItem = new QStandardItem(e.isDir ? QString() : QString::number(e.size));
         auto *modItem = new QStandardItem(e.modified.toString(Qt::ISODate));
         auto *permItem = new QStandardItem(e.permissions);

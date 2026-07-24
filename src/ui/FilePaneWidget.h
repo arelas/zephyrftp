@@ -4,12 +4,14 @@
 #include <QStandardItemModel>
 #include <QPoint>
 #include <QStringList>
+#include <QIcon>
 #include "../backends/RemoteBackend.h"
 
 class FileTreeView;
 class QLineEdit;
 class QLabel;
 class QThread;
+class QAction;
 
 // One side of the dual-pane layout. Owns a backend (local or remote) and
 // renders its current directory listing. MainWindow instantiates two of
@@ -73,10 +75,20 @@ private slots:
 private:
     void buildUi();
 
+    // Sets/replaces the path bar's leading icon (device-laptop blue for
+    // local, server green for remote) — called from setBackend() since
+    // that's the only thing that can change which of the two applies.
+    void updatePathBarIcon();
+
+    // Per ICON-MAP.md's file/folder type table. Static since it only
+    // depends on the entry's own data (name, isDir), not any pane state.
+    static QIcon iconForEntry(const RemoteEntry &e);
+
     RemoteBackend *m_backend;
     QThread *m_backendThread = nullptr;   // null when backend has no thread of its own (e.g. LocalBackend)
     FileTreeView *m_view;
     QLineEdit *m_pathBar;
+    QAction *m_pathBarLeadingIcon = nullptr;   // owned by m_pathBar once added; tracked so it can be replaced
     QLabel *m_statusLabel;
     QStandardItemModel *m_model;
     QList<RemoteEntry> m_currentEntries;

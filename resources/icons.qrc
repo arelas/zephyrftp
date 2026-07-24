@@ -1,0 +1,31 @@
+<!--
+  Vendored Tabler Icons SVGs (MIT licensed — see LICENSE-tabler-icons.txt in
+  this folder). Compiled into the binary via Qt's resource system so there's
+  no runtime CDN dependency, matching ICON-MAP.md's own "Shipping icons in
+  Qt6" guidance. Each SVG uses stroke="currentColor" and is recolored at
+  render time by IconTheme::tintedIcon() (QPainter compositing) rather than
+  needing a separate colored copy per accent — one source file per icon
+  regardless of how many places/colors it's used in.
+-->
+<RCC>
+    <qresource prefix="/">
+        <file>icons/plug.svg</file>
+        <file>icons/plug-connected-x.svg</file>
+        <file>icons/refresh.svg</file>
+        <file>icons/device-laptop.svg</file>
+        <file>icons/server.svg</file>
+        <file>icons/folder.svg</file>
+        <file>icons/lock.svg</file>
+        <file>icons/file.svg</file>
+        <file>icons/file-type-pdf.svg</file>
+        <file>icons/terminal-2.svg</file>
+        <file>icons/file-zip.svg</file>
+        <file>icons/app-window.svg</file>
+        <file>icons/arrow-up.svg</file>
+        <file>icons/arrow-down.svg</file>
+        <file>icons/check.svg</file>
+        <file>icons/arrows-left-right.svg</file>
+        <file>icons/alert-triangle.svg</file>
+        <file>icons/x.svg</file>
+    </qresource>
+</RCC>

@@ -24,6 +24,7 @@ private slots:
     void onFilesDropped(FilePaneWidget *sourcePane, const QStringList &names);
     void onConnectTriggered();
     void onDisconnectTriggered();
+    void onRefreshTriggered();
     void onTransferSucceeded();
 
 private:

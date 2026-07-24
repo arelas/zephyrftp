@@ -1,0 +1,162 @@
+/* ============================================================
+   ZephyrFTP QSS theme — ports the "Bold Accent" design package's
+   assets/zephyr-theme.css tokens to Qt Style Sheets.
+
+   Qt Style Sheets have no equivalent of CSS custom properties, so
+   every value below is a literal hardcoded from the CSS source
+   (each one commented with its --zf-* token name) rather than a
+   variable reference. If the design package's palette changes,
+   this file is the other place that needs updating to match —
+   there is no single shared source between the two anymore.
+   ============================================================ */
+
+QMainWindow, QWidget#zfRoot {
+    background-color: #14171c;   /* --zf-bg */
+    color: #dfe4ea;               /* --zf-text-primary */
+}
+
+QToolBar {
+    background-color: #1a1d23;   /* --zf-surface */
+    border-bottom: 1px solid #2a2e35;   /* --zf-border */
+    spacing: 6px;
+    padding: 4px 6px;
+}
+
+QToolButton {
+    background: transparent;
+    border: none;
+    border-radius: 6px;          /* --zf-radius */
+    padding: 6px;
+    color: #8790a0;               /* --zf-text-secondary */
+}
+QToolButton:hover {
+    background-color: rgba(255, 255, 255, 12);   /* --zf-surface-hover, alpha approximated (QSS rgba alpha is 0-255) */
+}
+
+QTreeView, QTableWidget {
+    background-color: #14171c;   /* --zf-bg */
+    color: #dfe4ea;               /* --zf-text-primary */
+    border: none;
+    alternate-background-color: rgba(255, 255, 255, 6);
+    selection-background-color: rgba(91, 141, 239, 26);   /* --zf-blue-tint */
+    selection-color: #dfe4ea;
+    font-size: 12px;
+}
+QTreeView::item:hover, QTableWidget::item:hover {
+    background-color: rgba(255, 255, 255, 10);   /* --zf-surface-hover */
+}
+
+QHeaderView::section {
+    background-color: #1a1d23;   /* --zf-surface */
+    color: #8790a0;               /* --zf-text-secondary */
+    border: none;
+    border-bottom: 1px solid #2a2e35;   /* --zf-border */
+    padding: 5px 8px;
+    font-size: 11px;
+}
+
+QLineEdit, QSpinBox, QComboBox {
+    background-color: #1a1d23;   /* --zf-surface */
+    border: 1px solid #2a2e35;   /* --zf-border */
+    color: #dfe4ea;               /* --zf-text-primary */
+    padding: 6px 8px;
+    border-radius: 6px;          /* --zf-radius */
+    font-size: 12px;
+}
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
+    border-color: #5b8def;       /* --zf-blue */
+}
+
+QLabel {
+    color: #8790a0;               /* --zf-text-secondary */
+    font-size: 11px;
+}
+
+QPushButton {
+    background: transparent;
+    border: 1px solid #2a2e35;   /* --zf-border */
+    color: #dfe4ea;               /* --zf-text-primary */
+    padding: 6px 14px;
+    border-radius: 6px;          /* --zf-radius */
+    font-size: 12px;
+}
+QPushButton:hover {
+    background-color: rgba(255, 255, 255, 10);
+}
+
+/* Set dynamic property primary="true" on a QPushButton (e.g. a dialog's
+   default action) to get the mockup's .zf-action-btn.primary treatment —
+   a green-tinted button rather than the neutral default above. */
+QPushButton[primary="true"] {
+    background-color: rgba(52, 199, 142, 30);   /* --zf-green-tint */
+    border-color: #34c78e;       /* --zf-green */
+    color: #34c78e;               /* --zf-green */
+}
+QPushButton[primary="true"]:hover {
+    background-color: rgba(52, 199, 142, 45);
+}
+
+QStatusBar {
+    background-color: #14171c;   /* --zf-bg */
+    color: #8790a0;               /* --zf-text-secondary */
+    border-top: 1px solid #2a2e35;   /* --zf-border */
+    font-size: 11px;
+}
+
+QDockWidget {
+    color: #dfe4ea;
+    titlebar-close-icon: none;
+}
+QDockWidget::title {
+    background-color: #1a1d23;   /* --zf-surface */
+    border-bottom: 1px solid #2a2e35;   /* --zf-border */
+    padding: 6px 10px;
+    font-size: 11px;
+}
+
+QMenu {
+    background-color: #1a1d23;   /* --zf-surface */
+    border: 1px solid #2a2e35;   /* --zf-border */
+    color: #dfe4ea;
+    padding: 4px;
+}
+QMenu::item {
+    padding: 5px 20px;
+    border-radius: 4px;
+}
+QMenu::item:selected {
+    background-color: rgba(91, 141, 239, 26);   /* --zf-blue-tint */
+}
+QMenu::item:disabled {
+    color: #5c6472;               /* --zf-text-muted */
+}
+
+QProgressBar {
+    background-color: #2a2e35;   /* --zf-border, used as track color per .zf-progress-track */
+    border: none;
+    border-radius: 4px;
+    text-align: center;
+    color: transparent;           /* hide the built-in percentage text — TransferQueueWidget shows it in its own column */
+    max-height: 6px;
+}
+/* Chunk color is set per-item at runtime via setStyleSheet() on the
+   individual QProgressBar (green/blue/red/gray depending on transfer
+   status) — see TransferQueueWidget::onItemUpdated(). No single QSS rule
+   can do that here since it depends on data, not just widget type. */
+
+QSplitter::handle {
+    background-color: #2a2e35;   /* --zf-border */
+}
+
+QScrollBar:vertical, QScrollBar:horizontal {
+    background: #14171c;         /* --zf-bg */
+    border: none;
+}
+QScrollBar::handle {
+    background: #2a2e35;         /* --zf-border */
+    border-radius: 4px;
+}
+QScrollBar::add-line, QScrollBar::sub-line {
+    height: 0;
+    width: 0;
+}

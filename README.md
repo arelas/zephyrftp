@@ -68,10 +68,32 @@ backend to follow using the same `RemoteBackend` interface.
   connections. This is real per-feature verification, not inferred from
   the code compiling.
 
+- **The dark theme and icon set render correctly, confirmed with a real
+  screenshot, not just "doesn't crash."** `IconTheme::tintedIcon()` (loads
+  a vendored SVG, recolors it via `QPainter` compositing) was verified
+  against all 18 vendored icons with a throwaway test that renders each
+  one and counts opaque pixels — this caught a real bug before it shipped:
+  the first version of `resources/icons.qrc` had the wrong resource path
+  (`:/icons/icons/plug.svg` instead of `:/icons/plug.svg` — the qresource
+  prefix and the file's own relative path were both contributing
+  `icons/`). Separately, a full headless screenshot of the running app
+  (`QWidget::grab()`, `QT_QPA_PLATFORM=offscreen`) was analyzed
+  pixel-by-pixel: the dark background matches the design's `#14171c`
+  token on 97.9% of sampled pixels, and all three toolbar icon colors
+  (green/red/amber) appear specifically within the toolbar region, with
+  zero blue there — correct, since blue is reserved for pane
+  headers/selection and none of the three toolbar actions use it.
+  **Not verified this way:** the transfer queue's colored progress bars
+  and status icons — the screenshot was taken with an empty queue, so
+  only their code paths and unit-level logic are covered (via
+  `transfer_queue_test.cpp`), not their actual rendered appearance.
+
 **Still not verified:** public-key authentication (implemented, but no
-real key file has been tested against it yet — see Known gaps), and real
-window rendering on a real display (this development environment has no
-windowing system; only headless/offscreen runs have been checked).
+real key file has been tested against it yet — see Known gaps), the
+transfer queue's progress-bar/status-icon rendering with a real active
+transfer (see above), and real window rendering on a real physical
+display (this development environment has no windowing system; only
+headless/offscreen runs have been checked).
 
 ## Build
 
@@ -81,7 +103,7 @@ cmake .. -DCMAKE_BUILD_TYPE=Debug
 make -j$(nproc)
 ```
 
-Dependencies (Debian/Ubuntu): `cmake build-essential qt6-base-dev libssh2-1-dev`
+Dependencies (Debian/Ubuntu): `cmake build-essential qt6-base-dev qt6-svg-dev libssh2-1-dev`
 
 ## Architecture
 
@@ -166,6 +188,44 @@ Dependencies (Debian/Ubuntu): `cmake build-essential qt6-base-dev libssh2-1-dev`
   `TransferManager::enqueue()` with that pane as source and the other as
   destination; `TransferManager::transferSucceeded` triggers a refresh of
   both panes' listings.
+
+## Design system
+
+The dark theme and icon set come from a design package (not included in
+this repo's history prior to this pass) built around Tabler Icons (MIT)
+and a fixed four-color semantic system — full rationale in that package's
+own README and `ICON-MAP.md`. Scope of this pass was a **visual re-skin
+of existing features only** — the mockups also cover a Site Manager
+(saved connections), pause/resume, and live transfer speed, none of
+which exist in this app yet; only the icon/color/theme layer was ported.
+
+- `resources/icons/*.svg` — 18 vendored Tabler Icons SVGs, fetched
+  directly from `github.com/tabler/tabler-icons` (MIT license included
+  as `resources/icons/LICENSE-tabler-icons.txt`). Each uses
+  `stroke="currentColor"`, deliberately not pre-colored — recolored at
+  render time instead (see `IconTheme` below), so there's one source
+  file per icon regardless of how many accent colors it's used with.
+- `resources/icons.qrc` / `resources/theme.qrc` — compiled into the
+  binary via Qt's resource system (`CMAKE_AUTORCC`), so there's no
+  runtime dependency on the icons existing as loose files or a CDN.
+- `IconTheme` (`src/ui/IconTheme.h/.cpp`) — loads a vendored SVG via
+  `QSvgRenderer`, renders it to a transparent `QPixmap`, then recolors
+  every non-transparent pixel via `QPainter::CompositionMode_SourceIn` —
+  standard Qt technique for tinting monochrome icons. Also generates a late
+  `@2x` pixmap (`QPixmap::setDevicePixelRatio(2.0)`) for HiDPI displays.
+  Exposes the four semantic accent colors (`IconTheme::Blue/Green/Red/Amber`)
+  plus two neutral grays as named constants, matching
+  `assets/zephyr-theme.css`'s `--zf-*` tokens from the design package.
+- `resources/theme.qss` — the design package's CSS theme ported to Qt
+  Style Sheets token-by-token (QSS has no equivalent of CSS custom
+  properties, so each `--zf-*` value is hardcoded here with its source
+  token name in a comment — **if the design package's palette changes,
+  this file needs updating too; there's no shared source between them**).
+  Loaded and applied via `qApp->setStyleSheet()` in `main.cpp` at startup.
+- Icon/color choices in the actual UI (which file extension gets which
+  icon, which toolbar action gets which color) follow `ICON-MAP.md`
+  directly — see `FilePaneWidget::iconForEntry()` and
+  `TransferQueueWidget::statusIcon()` for where those choices live in code.
 
 ## Windows builds (CI)
 

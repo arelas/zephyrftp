@@ -3,6 +3,7 @@
 #include "ConnectionDialog.h"
 #include "TransferQueueWidget.h"
 #include "HostKeyVerifier.h"
+#include "IconTheme.h"
 #include "../backends/LocalBackend.h"
 #include "../backends/SftpBackend.h"
 #include "../transfer/TransferManager.h"
@@ -38,14 +39,28 @@ void MainWindow::buildToolbar()
 {
     auto *toolbar = addToolBar(tr("Main"));
 
-    auto *connectAction = toolbar->addAction(tr("Connect..."));
+    // Icon/color mapping straight from the design package's ICON-MAP.md —
+    // connect=green (create/upload/success family), disconnect=red
+    // (destructive), refresh=amber (in this map's "caution/in-progress"
+    // bucket, since ICON-MAP explicitly lists Refresh as amber even
+    // though it's not destructive — a quirk of the source spec, not a
+    // typo introduced here).
+    auto *connectAction = toolbar->addAction(
+        IconTheme::tintedIcon(":/icons/plug.svg", IconTheme::Green), tr("Connect..."));
     connect(connectAction, &QAction::triggered, this, &MainWindow::onConnectTriggered);
 
-    auto *disconnectAction = toolbar->addAction(tr("Disconnect"));
+    auto *disconnectAction = toolbar->addAction(
+        IconTheme::tintedIcon(":/icons/plug-connected-x.svg", IconTheme::Red), tr("Disconnect"));
     connect(disconnectAction, &QAction::triggered, this, &MainWindow::onDisconnectTriggered);
 
     toolbar->addSeparator();
-    toolbar->addAction(tr("Refresh"));
+
+    // Previously a dead button (addAction with no connected slot) — giving
+    // it an icon that implies it does something meant it actually needed
+    // to, so this also wires it to refresh both panes' listings.
+    auto *refreshAction = toolbar->addAction(
+        IconTheme::tintedIcon(":/icons/refresh.svg", IconTheme::Amber), tr("Refresh"));
+    connect(refreshAction, &QAction::triggered, this, &MainWindow::onRefreshTriggered);
 }
 
 void MainWindow::buildLayout()
@@ -171,4 +186,11 @@ void MainWindow::onDisconnectTriggered()
     // thread quit()/wait()/delete sequence.
     m_rightPane->setBackend(new LocalBackend(), nullptr);
     statusBar()->showMessage(tr("Disconnected"), 3000);
+}
+
+void MainWindow::onRefreshTriggered()
+{
+    m_leftPane->navigateTo(m_leftPane->currentDirectory());
+    m_rightPane->navigateTo(m_rightPane->currentDirectory());
+    statusBar()->showMessage(tr("Refreshed"), 2000);
 }

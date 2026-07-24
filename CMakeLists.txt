@@ -7,7 +7,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Network Concurrent)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Network Concurrent Svg)
 
 # libssh2 discovery differs by platform: pkg-config is standard on
 # Linux/macOS, but Windows builds (via this repo's CI) get libssh2 through
@@ -34,9 +34,12 @@ set(SOURCES
     src/ui/ConnectionDialog.cpp
     src/ui/TransferQueueWidget.cpp
     src/ui/HostKeyVerifier.cpp
+    src/ui/IconTheme.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
     src/transfer/TransferManager.cpp
+    resources/icons.qrc
+    resources/theme.qrc
 )
 
 set(HEADERS
@@ -46,6 +49,7 @@ set(HEADERS
     src/ui/ConnectionDialog.h
     src/ui/TransferQueueWidget.h
     src/ui/HostKeyVerifier.h
+    src/ui/IconTheme.h
     src/backends/RemoteBackend.h
     src/backends/RemoteEntry.h
     src/backends/LocalBackend.h
@@ -72,6 +76,7 @@ target_link_libraries(zephyrftp PRIVATE
     Qt6::Widgets
     Qt6::Network
     Qt6::Concurrent
+    Qt6::Svg
     ${LIBSSH2_TARGET}
 )
 
@@ -84,14 +89,17 @@ qt_add_executable(smoke-test EXCLUDE_FROM_ALL
     src/ui/ConnectionDialog.cpp
     src/ui/TransferQueueWidget.cpp
     src/ui/HostKeyVerifier.cpp
+    src/ui/IconTheme.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
     src/transfer/TransferManager.cpp
+    resources/icons.qrc
+    resources/theme.qrc
     ${HEADERS}
 )
 target_include_directories(smoke-test PRIVATE src)
 target_link_libraries(smoke-test PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent ${LIBSSH2_TARGET}
+    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET}
 )
 
 # --- transfer queue functional test (moves a real file end-to-end) ---
@@ -103,12 +111,15 @@ qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
     src/ui/ConnectionDialog.cpp
     src/ui/TransferQueueWidget.cpp
     src/ui/HostKeyVerifier.cpp
+    src/ui/IconTheme.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
     src/transfer/TransferManager.cpp
+    resources/icons.qrc
+    resources/theme.qrc
     ${HEADERS}
 )
 target_include_directories(transfer-queue-test PRIVATE src)
 target_link_libraries(transfer-queue-test PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent ${LIBSSH2_TARGET}
+    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET}
 )

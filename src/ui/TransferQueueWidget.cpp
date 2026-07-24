@@ -1,11 +1,13 @@
 #include "TransferQueueWidget.h"
 #include "../transfer/TransferManager.h"
+#include "IconTheme.h"
 
 #include <QTableWidget>
 #include <QHeaderView>
 #include <QVBoxLayout>
 #include <QMenu>
 #include <QAction>
+#include <QProgressBar>
 
 namespace {
 constexpr int ColName = 0;
@@ -73,6 +75,56 @@ QString TransferQueueWidget::statusText(const TransferItem &item)
     return {};
 }
 
+QIcon TransferQueueWidget::statusIcon(const TransferItem &item)
+{
+    // Terminal states get their own icon regardless of direction, per
+    // ICON-MAP.md's "Transfer direction & status" table (Done -> green
+    // check). Cancelled isn't in the original design (this app has a
+    // status the mockup didn't anticipate) — muted x, consistent with how
+    // the mockup treats "done" as muted-but-still-marked rather than
+    // inventing a new accent color for it.
+    if (item.status == TransferStatus::Done)
+        return IconTheme::tintedIcon(":/icons/check.svg", IconTheme::Green);
+    if (item.status == TransferStatus::Failed)
+        return IconTheme::tintedIcon(":/icons/alert-triangle.svg", IconTheme::Red);
+    if (item.status == TransferStatus::Cancelled)
+        return IconTheme::tintedIcon(":/icons/x.svg", IconTheme::GrayMuted);
+
+    // Queued or InProgress: a direction-shaped icon (the mockup doesn't
+    // cover local-to-local or unsupported directions, since it assumes
+    // only upload/download exist — arrows-left-right and alert-triangle
+    // are this app's own extensions of the same visual language).
+    QString path;
+    switch (item.direction) {
+    case TransferDirection::LocalToRemote: path = ":/icons/arrow-up.svg"; break;
+    case TransferDirection::RemoteToLocal: path = ":/icons/arrow-down.svg"; break;
+    case TransferDirection::LocalToLocal:  path = ":/icons/arrows-left-right.svg"; break;
+    case TransferDirection::Unsupported:   path = ":/icons/alert-triangle.svg"; break;
+    }
+
+    QColor color = IconTheme::Gray;   // Queued default
+    if (item.status == TransferStatus::InProgress) {
+        switch (item.direction) {
+        case TransferDirection::LocalToRemote: color = IconTheme::Green; break;   // active upload
+        case TransferDirection::RemoteToLocal: color = IconTheme::Blue; break;    // active download
+        default: color = IconTheme::Gray; break;
+        }
+    }
+    return IconTheme::tintedIcon(path, color);
+}
+
+QColor TransferQueueWidget::statusTextColor(TransferStatus status)
+{
+    switch (status) {
+    case TransferStatus::Queued:      return IconTheme::Gray;
+    case TransferStatus::InProgress:  return IconTheme::Blue;
+    case TransferStatus::Done:        return IconTheme::Green;
+    case TransferStatus::Failed:      return IconTheme::Red;
+    case TransferStatus::Cancelled:   return IconTheme::GrayMuted;
+    }
+    return IconTheme::Gray;
+}
+
 void TransferQueueWidget::onItemAdded(const TransferItem &item)
 {
     const int row = m_table->rowCount();
@@ -81,9 +133,26 @@ void TransferQueueWidget::onItemAdded(const TransferItem &item)
     auto *nameItem = new QTableWidgetItem(item.fileName);
     nameItem->setData(IdRole, item.id);
     m_table->setItem(row, ColName, nameItem);
-    m_table->setItem(row, ColDirection, new QTableWidgetItem(directionText(item.direction)));
-    m_table->setItem(row, ColStatus, new QTableWidgetItem(statusText(item)));
-    m_table->setItem(row, ColProgress, new QTableWidgetItem(QString()));
+
+    auto *dirItem = new QTableWidgetItem();
+    dirItem->setIcon(statusIcon(item));
+    dirItem->setToolTip(directionText(item.direction));
+    m_table->setItem(row, ColDirection, dirItem);
+
+    auto *statusItem = new QTableWidgetItem(statusText(item));
+    statusItem->setForeground(statusTextColor(item.status));
+    m_table->setItem(row, ColStatus, statusItem);
+
+    // Inline progress bars (design decision #6 in the package's README:
+    // "trims the table to 3 meaningful columns... rather than a separate
+    // text status column plus a separate progress column") — replaces
+    // what used to be a plain percentage-text QTableWidgetItem.
+    auto *progressBar = new QProgressBar(m_table);
+    progressBar->setRange(0, 100);
+    progressBar->setValue(0);
+    progressBar->setTextVisible(false);
+    progressBar->setFixedHeight(6);   // matches .zf-progress-track's 6px height
+    m_table->setCellWidget(row, ColProgress, progressBar);
 }
 
 void TransferQueueWidget::onItemUpdated(const TransferItem &item)
@@ -92,16 +161,43 @@ void TransferQueueWidget::onItemUpdated(const TransferItem &item)
     if (row < 0)
         return;
 
-    m_table->item(row, ColStatus)->setText(statusText(item));
+    m_table->item(row, ColDirection)->setIcon(statusIcon(item));
+    m_table->item(row, ColDirection)->setToolTip(directionText(item.direction));
 
-    QString progressText;
-    if (item.status == TransferStatus::InProgress && item.bytesTotal > 0) {
-        const int percent = static_cast<int>((item.bytesDone * 100) / item.bytesTotal);
-        progressText = QStringLiteral("%1%").arg(percent);
-    } else if (item.status == TransferStatus::Done) {
-        progressText = tr("100%");
+    auto *statusItem = m_table->item(row, ColStatus);
+    statusItem->setText(statusText(item));
+    statusItem->setForeground(statusTextColor(item.status));
+
+    auto *progressBar = qobject_cast<QProgressBar *>(m_table->cellWidget(row, ColProgress));
+    if (!progressBar)
+        return;
+
+    int percent = 0;
+    if (item.status == TransferStatus::InProgress && item.bytesTotal > 0)
+        percent = static_cast<int>((item.bytesDone * 100) / item.bytesTotal);
+    else if (item.status == TransferStatus::Done)
+        percent = 100;
+    progressBar->setValue(percent);
+
+    // Chunk color depends on this specific item's data (status + direction),
+    // so it has to be set per-widget here rather than as a single QSS rule
+    // in theme.qss — see that file's comment on QProgressBar for why.
+    QColor chunkColor = IconTheme::Gray;
+    switch (item.status) {
+    case TransferStatus::Done:      chunkColor = IconTheme::Green; break;
+    case TransferStatus::Failed:    chunkColor = IconTheme::Red; break;
+    case TransferStatus::Cancelled: chunkColor = IconTheme::GrayMuted; break;
+    case TransferStatus::InProgress:
+        chunkColor = (item.direction == TransferDirection::RemoteToLocal)
+            ? IconTheme::Blue : IconTheme::Green;
+        break;
+    case TransferStatus::Queued:
+        chunkColor = IconTheme::Gray;
+        break;
     }
-    m_table->item(row, ColProgress)->setText(progressText);
+    progressBar->setStyleSheet(
+        QStringLiteral("QProgressBar::chunk { background-color: %1; border-radius: 3px; }")
+            .arg(chunkColor.name()));
 }
 
 void TransferQueueWidget::showContextMenu(const QPoint &pos)
