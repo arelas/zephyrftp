@@ -91,6 +91,22 @@ bool SftpBackend::ensureSession()
         return false;
     }
 
+    // Resolve the server's default directory for this connection — almost
+    // always the user's home directory — rather than hardcoding "/".
+    // Matches the convention other SFTP clients (FileZilla, WinSCP) follow.
+    // "." is the standard way to ask an SFTP server to resolve its own
+    // starting point; confirmed the macro's exact signature and return
+    // semantics (length on success, negative on failure) against
+    // libssh2_sftp.h directly rather than assuming.
+    char realPathBuf[1024];
+    const int realPathLen = libssh2_sftp_realpath(m_sftp, ".", realPathBuf, sizeof(realPathBuf) - 1);
+    if (realPathLen > 0) {
+        m_currentPath = QString::fromUtf8(realPathBuf, realPathLen);
+    }
+    // Not fatal if this fails (some servers don't support realpath cleanly)
+    // — m_currentPath's default member initializer ("/") stands in, which
+    // still works, just starts at the root instead of the home directory.
+
     return true;
 }
 
