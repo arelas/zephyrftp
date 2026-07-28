@@ -16,6 +16,8 @@ SftpCredentials SavedSite::toCredentials() const
     creds.username = username;
     creds.authMethod = authMethod;
     creds.privateKeyPath = privateKeyPath;
+    creds.useHomeDirectory = useHomeDirectory;
+    creds.startingDirectory = startingDirectory;
     // creds.password left empty — deliberately; see the class doc comment.
     return creds;
 }
@@ -55,6 +57,12 @@ QList<SavedSite> SiteStore::load()
             ? SftpAuthMethod::PublicKey
             : SftpAuthMethod::Password;
         site.privateKeyPath = obj.value(QStringLiteral("privateKeyPath")).toString();
+        // Sites saved before this field existed have no "useHomeDirectory"
+        // key at all — toBool(true) means that absence correctly defaults
+        // to the pre-existing behavior (resolve home dir) rather than
+        // silently reinterpreting old sites as pointing at an empty path.
+        site.useHomeDirectory = obj.value(QStringLiteral("useHomeDirectory")).toBool(true);
+        site.startingDirectory = obj.value(QStringLiteral("startingDirectory")).toString();
 
         // Backfill an id for sites saved before `id` existed, rather than
         // silently dropping them or crashing on a lookup-by-id later.
@@ -85,6 +93,8 @@ bool SiteStore::save(const QList<SavedSite> &sites)
         obj[QStringLiteral("authMethod")] =
             site.authMethod == SftpAuthMethod::PublicKey ? QStringLiteral("key") : QStringLiteral("password");
         obj[QStringLiteral("privateKeyPath")] = site.privateKeyPath;
+        obj[QStringLiteral("useHomeDirectory")] = site.useHomeDirectory;
+        obj[QStringLiteral("startingDirectory")] = site.startingDirectory;
         // No password field written, ever — see SavedSite's doc comment.
         array.append(obj);
     }

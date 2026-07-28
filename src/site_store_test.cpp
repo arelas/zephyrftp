@@ -33,6 +33,8 @@ int main(int argc, char *argv[])
     passwordSite.port = 2222;
     passwordSite.username = "deploy";
     passwordSite.authMethod = SftpAuthMethod::Password;
+    passwordSite.useHomeDirectory = false;
+    passwordSite.startingDirectory = "/uploads/incoming";
     original.append(passwordSite);
 
     SavedSite keySite;
@@ -44,6 +46,7 @@ int main(int argc, char *argv[])
     keySite.username = "ci";
     keySite.authMethod = SftpAuthMethod::PublicKey;
     keySite.privateKeyPath = "/home/user/.ssh/staging_ed25519";
+    keySite.useHomeDirectory = true;   // deliberately the default, to cover both branches
     original.append(keySite);
 
     const bool saveOk = SiteStore::save(original);
@@ -62,7 +65,9 @@ int main(int argc, char *argv[])
             const SavedSite &l = loaded[i];
             const bool matches = o.id == l.id && o.name == l.name && o.group == l.group
                 && o.host == l.host && o.port == l.port && o.username == l.username
-                && o.authMethod == l.authMethod && o.privateKeyPath == l.privateKeyPath;
+                && o.authMethod == l.authMethod && o.privateKeyPath == l.privateKeyPath
+                && o.useHomeDirectory == l.useHomeDirectory
+                && o.startingDirectory == l.startingDirectory;
             qDebug() << "[test] site" << i << "round-trip match:" << matches;
             if (!matches) fieldsOk = false;
         }
@@ -75,6 +80,14 @@ int main(int argc, char *argv[])
     const bool credsPasswordEmpty = passwordCreds.password.isEmpty();
     qDebug() << "[test] toCredentials() leaves password empty for a Password-auth site:" << credsPasswordEmpty;
     if (!credsPasswordEmpty) allPass = false;
+
+    // passwordSite was set up with useHomeDirectory=false and a specific
+    // path above — confirm toCredentials() actually carries that choice
+    // through rather than silently defaulting back to home-dir.
+    const bool startingDirOk = !passwordCreds.useHomeDirectory
+        && passwordCreds.startingDirectory == "/uploads/incoming";
+    qDebug() << "[test] toCredentials() carries the starting-directory choice through:" << startingDirOk;
+    if (!startingDirOk) allPass = false;
 
     // Read the raw file and confirm no plausible secret-bearing key name
     // exists anywhere in it — belt-and-suspenders on top of SavedSite

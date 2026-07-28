@@ -46,14 +46,16 @@ void MainWindow::buildToolbar()
     // (destructive), refresh=amber (in this map's "caution/in-progress"
     // bucket, since ICON-MAP explicitly lists Refresh as amber even
     // though it's not destructive — a quirk of the source spec, not a
-    // typo introduced here).
-    auto *connectAction = toolbar->addAction(
-        IconTheme::tintedIcon(":/icons/plug.svg", IconTheme::Green), tr("Connect..."));
-    connect(connectAction, &QAction::triggered, this, &MainWindow::onConnectTriggered);
-
+    // typo introduced here). Sites comes first in the toolbar — it's the
+    // primary way most people will actually connect, once they've saved
+    // a site or two; Connect stays right after it for one-off connections.
     auto *sitesAction = toolbar->addAction(
         IconTheme::tintedIcon(":/icons/server-cog.svg", IconTheme::Blue), tr("Sites..."));
     connect(sitesAction, &QAction::triggered, this, &MainWindow::onSiteManagerTriggered);
+
+    auto *connectAction = toolbar->addAction(
+        IconTheme::tintedIcon(":/icons/plug.svg", IconTheme::Green), tr("Connect..."));
+    connect(connectAction, &QAction::triggered, this, &MainWindow::onConnectTriggered);
 
     auto *disconnectAction = toolbar->addAction(
         IconTheme::tintedIcon(":/icons/plug-connected-x.svg", IconTheme::Red), tr("Disconnect"));

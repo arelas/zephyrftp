@@ -102,15 +102,20 @@ that way, it's flagged explicitly rather than left implied.
   CMake target, isolated from any real saved sites via `XDG_CONFIG_HOME`
   — see its own header comment) round-trips a password-auth and a
   key-auth site through `SiteStore::save()`/`load()` and confirms every
-  field survives; confirms `SavedSite::toCredentials()` never fabricates
-  a password from thin air; confirms `load()` with no file yet returns
-  an empty list rather than erroring; and parses the raw written JSON to
-  confirm no object has a `password`- or `passphrase`-named key anywhere
-  in it — checked via actual `QJsonDocument` key inspection, not a raw
-  text search, after a first version of that check false-positived on
-  the perfectly innocuous `"authMethod": "password"` label (which
-  distinguishes auth type, carries no secret) and had to be corrected
-  before it could misreport a real problem that wasn't there.
+  field survives — including `useHomeDirectory`/`startingDirectory`,
+  deliberately set to non-default values on the test sites so the
+  round-trip check actually exercises them, not just the fields that
+  happened to already be non-default; confirms
+  `SavedSite::toCredentials()` never fabricates a password from thin
+  air, and separately confirms it correctly carries the
+  starting-directory choice through; confirms `load()` with no file yet
+  returns an empty list rather than erroring; and parses the raw written
+  JSON to confirm no object has a `password`- or `passphrase`-named key
+  anywhere in it — checked via actual `QJsonDocument` key inspection,
+  not a raw text search, after a first version of that check
+  false-positived on the perfectly innocuous `"authMethod": "password"`
+  label (which distinguishes auth type, carries no secret) and had to be
+  corrected before it could misreport a real problem that wasn't there.
   Separately, a real screenshot of the new `SiteManagerDialog` (same
   `QWidget::grab()` + pixel-sampling method proven on the toolbar
   earlier) caught a genuine, pre-existing bug: `theme.qss` only ever
@@ -155,22 +160,29 @@ headless/offscreen runs have been checked).
   than risking regressing an already-verified flow; `MainWindow::startConnection()`
   is the shared code both paths funnel through afterward.
 - `SavedSite` / `SiteStore` (`src/backends/SavedSite.h/.cpp`) — a saved
-  connection profile (host/port/username/auth method/key path, optionally
-  grouped into a folder) and its JSON persistence
-  (`QStandardPaths::AppConfigLocation/sites.json`). **Deliberately has no
-  password field, full stop** — not "encrypted," not "obfuscated," simply
-  never collected for storage. This is stricter than the source design
-  mockup, which showed a "Password" logon type implying stored
-  credentials; overridden on purpose, since shipping plaintext credential
-  storage without being explicitly asked to would cut against the
-  security hygiene the rest of this app has been built with (host-key
-  TOFU, no silent trust). The same no-storage rule extends to a private
-  key's passphrase, for consistency, even though a passphrase's risk
-  profile (protects a key file already under OS permissions) differs
-  from a bare password's.
+  connection profile (host/port/username/auth method/key path, optional
+  starting directory, optionally grouped into a folder) and its JSON
+  persistence (`QStandardPaths::AppConfigLocation/sites.json`).
+  **Deliberately has no password field, full stop** — not "encrypted,"
+  not "obfuscated," simply never collected for storage. This is
+  stricter than the source design mockup, which showed a "Password"
+  logon type implying stored credentials; overridden on purpose, since
+  shipping plaintext credential storage without being explicitly asked
+  to would cut against the security hygiene the rest of this app has
+  been built with (host-key TOFU, no silent trust). The same
+  no-storage rule extends to a private key's passphrase, for
+  consistency, even though a passphrase's risk profile (protects a key
+  file already under OS permissions) differs from a bare password's.
+  `useHomeDirectory`/`startingDirectory` (both mirrored onto
+  `SftpCredentials`, consumed by `SftpBackend::ensureSession()`) let a
+  site skip the default home-directory resolution and land somewhere
+  specific instead — not validated at save time; an invalid path
+  surfaces through the same `listDirectory()`/`connectionFailed` error
+  path as typing a bad path into the pane's own path bar.
 - `SiteManagerDialog` — the saved-sites UI: a grouped tree on the left,
   a details form on the right, matching the design package's
-  site-manager.html mockup. Persists via `SiteStore` on every field edit
+  site-manager.html mockup, plus a starting-directory radio choice
+  (Home / Specific) the mockup didn't have. Persists via `SiteStore` on every field edit
   (`QLineEdit::editingFinished`, not per-keystroke) and every structural
   change (new/duplicate/delete), so there's no separate "Save" step to
   forget. Its Connect button prompts for the password or key passphrase

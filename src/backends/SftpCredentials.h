@@ -17,4 +17,11 @@ struct SftpCredentials {
     QString password;        // used when authMethod == Password
     QString privateKeyPath;  // used when authMethod == PublicKey
     QString passphrase;      // optional, used when authMethod == PublicKey
+
+    // Where the remote pane lands right after connecting. Defaults to
+    // true/empty, meaning "resolve the server's home directory" — the
+    // existing behavior, unchanged for anything that doesn't set these
+    // explicitly (e.g. ConnectionDialog's one-off connections).
+    bool useHomeDirectory = true;
+    QString startingDirectory;   // only meaningful when useHomeDirectory == false
 };

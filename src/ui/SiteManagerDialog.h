@@ -43,6 +43,7 @@ private slots:
     void onFieldEdited();
     void onConnectClicked();
     void updateAuthFieldsVisibility();
+    void updateStartingDirVisibility();
 
 private:
     void buildUi();
@@ -66,6 +67,10 @@ private:
     QRadioButton *m_keyAuthRadio;
     QStackedWidget *m_authFieldsStack;
     QLineEdit *m_privateKeyPathEdit;   // page 1 — no passphrase field here; prompted at connect time instead
+
+    QRadioButton *m_homeDirRadio;
+    QRadioButton *m_specificDirRadio;
+    QLineEdit *m_startingDirEdit;      // enabled only when m_specificDirRadio is checked
 
     SftpCredentials m_pendingCredentials;
 };

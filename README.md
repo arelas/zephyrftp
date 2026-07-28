@@ -11,9 +11,11 @@ move things between them. Think FileZilla or WinSCP, built fresh in Qt6.
 - **SFTP with password or private-key login.**
 - **Site Manager** — save connections you use often (grouped into
   folders if you like), so you don't have to re-type the host, port, and
-  username every time. Your password is never saved to disk, though —
-  you'll be asked for it each time you connect. Same for a private key's
-  passphrase, if it has one.
+  username every time. Each saved site can also default to a specific
+  starting folder on the server instead of your home directory — handy
+  if you always go straight to the same upload folder. Your password is
+  never saved to disk, though — you'll be asked for it each time you
+  connect. Same for a private key's passphrase, if it has one.
 - **Host-key verification** — the first time you connect to a server,
   ZephyrFTP shows you its identity fingerprint and asks you to confirm
   it. If that fingerprint ever changes on a later connection, you get a

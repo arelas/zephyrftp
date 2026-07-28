@@ -34,6 +34,15 @@ struct SavedSite {
     SftpAuthMethod authMethod = SftpAuthMethod::Password;
     QString privateKeyPath;   // only meaningful when authMethod == PublicKey
 
+    // Where this site's remote pane lands right after connecting.
+    // Defaults to true (resolve the server's home directory, matching
+    // the pre-existing behavior); if false, startingDirectory is used
+    // as-is. Not validated here — an invalid path surfaces through the
+    // normal listDirectory()/connectionFailed error path on first
+    // connect, same as typing a bad path into the path bar manually.
+    bool useHomeDirectory = true;
+    QString startingDirectory;
+
     // Builds an SftpCredentials for connecting. password is left empty
     // when authMethod == Password — the caller (SiteManagerDialog) is
     // responsible for prompting and filling it in before actually

@@ -260,16 +260,31 @@ bool SftpBackend::ensureSession()
         return false;
     }
 
-    // Resolve the server's default directory for this connection — almost
-    // always the user's home directory — rather than hardcoding "/".
-    // Matches the convention other SFTP clients (FileZilla, WinSCP) follow.
-    char realPathBuf[1024];
-    const int realPathLen = libssh2_sftp_realpath(m_sftp, ".", realPathBuf, sizeof(realPathBuf) - 1);
-    if (realPathLen > 0) {
-        m_currentPath = QString::fromUtf8(realPathBuf, realPathLen);
+    // Where to land right after connecting: either resolve the server's
+    // default directory for this connection (almost always the user's
+    // home directory — matches the convention other SFTP clients
+    // (FileZilla, WinSCP) follow), or use an explicitly configured
+    // starting directory from Site Manager. Falls back to home-dir
+    // resolution if a starting directory was requested but somehow left
+    // empty (shouldn't happen — SiteManagerDialog validates this — but
+    // failing back to a working default beats leaving m_currentPath at
+    // its hardcoded "/" fallback for no good reason).
+    if (m_credentials.useHomeDirectory || m_credentials.startingDirectory.isEmpty()) {
+        char realPathBuf[1024];
+        const int realPathLen = libssh2_sftp_realpath(m_sftp, ".", realPathBuf, sizeof(realPathBuf) - 1);
+        if (realPathLen > 0) {
+            m_currentPath = QString::fromUtf8(realPathBuf, realPathLen);
+        }
+        // Not fatal if this fails — m_currentPath's default member
+        // initializer ("/") stands in, which still works, just starts at
+        // the root.
+    } else {
+        // Not validated here — an invalid path surfaces through the
+        // normal listDirectory()/connectionFailed error path on the
+        // first directory listing, same as typing a bad path into the
+        // path bar manually.
+        m_currentPath = m_credentials.startingDirectory;
     }
-    // Not fatal if this fails — m_currentPath's default member initializer
-    // ("/") stands in, which still works, just starts at the root.
 
     return true;
 }

@@ -133,12 +133,35 @@ void SiteManagerDialog::buildUi()
     m_authFieldsStack->addWidget(passwordPage);   // index 0
     m_authFieldsStack->addWidget(keyPage);         // index 1
 
+    // --- Starting directory: home (default) or a specific path ---
+    m_homeDirRadio = new QRadioButton(tr("Home directory"), this);
+    m_specificDirRadio = new QRadioButton(tr("Specific directory:"), this);
+    auto *dirGroup = new QButtonGroup(this);
+    dirGroup->addButton(m_homeDirRadio);
+    dirGroup->addButton(m_specificDirRadio);
+    m_homeDirRadio->setChecked(true);
+    connect(m_homeDirRadio, &QRadioButton::toggled, this, &SiteManagerDialog::updateStartingDirVisibility);
+
+    m_startingDirEdit = new QLineEdit(this);
+    m_startingDirEdit->setPlaceholderText(tr("/path/on/server"));
+    connect(m_startingDirEdit, &QLineEdit::editingFinished, this, &SiteManagerDialog::onFieldEdited);
+
+    auto *dirRadioRow = new QHBoxLayout;
+    dirRadioRow->addWidget(m_homeDirRadio);
+    dirRadioRow->addWidget(m_specificDirRadio);
+    dirRadioRow->addStretch();
+
+    auto *dirFieldColumn = new QVBoxLayout;
+    dirFieldColumn->addLayout(dirRadioRow);
+    dirFieldColumn->addWidget(m_startingDirEdit);
+
     auto *form = new QFormLayout;
     form->addRow(tr("Site name:"), m_nameEdit);
     form->addRow(tr("Host:"), m_hostEdit);
     form->addRow(tr("Port:"), m_portSpin);
     form->addRow(tr("Username:"), m_usernameEdit);
     form->addRow(tr("Authentication:"), authRadioRow);
+    form->addRow(tr("Starting directory:"), dirFieldColumn);
 
     auto *rightLayout = new QVBoxLayout;
     rightLayout->addLayout(form);
@@ -172,6 +195,7 @@ void SiteManagerDialog::buildUi()
     mainLayout->addLayout(buttonRow);
 
     updateAuthFieldsVisibility();
+    updateStartingDirVisibility();
 }
 
 void SiteManagerDialog::rebuildTree()
@@ -257,6 +281,9 @@ void SiteManagerDialog::loadSiteIntoForm(const SavedSite &site)
     const QSignalBlocker b5(m_passwordAuthRadio);
     const QSignalBlocker b6(m_keyAuthRadio);
     const QSignalBlocker b7(m_privateKeyPathEdit);
+    const QSignalBlocker b8(m_homeDirRadio);
+    const QSignalBlocker b9(m_specificDirRadio);
+    const QSignalBlocker b10(m_startingDirEdit);
 
     m_nameEdit->setText(site.name);
     m_hostEdit->setText(site.host);
@@ -268,7 +295,14 @@ void SiteManagerDialog::loadSiteIntoForm(const SavedSite &site)
         m_passwordAuthRadio->setChecked(true);
     m_privateKeyPathEdit->setText(site.privateKeyPath);
 
+    if (site.useHomeDirectory)
+        m_homeDirRadio->setChecked(true);
+    else
+        m_specificDirRadio->setChecked(true);
+    m_startingDirEdit->setText(site.startingDirectory);
+
     updateAuthFieldsVisibility();
+    updateStartingDirVisibility();
 }
 
 void SiteManagerDialog::commitFormToSelectedSite()
@@ -283,6 +317,8 @@ void SiteManagerDialog::commitFormToSelectedSite()
     site->username = m_usernameEdit->text();
     site->authMethod = m_keyAuthRadio->isChecked() ? SftpAuthMethod::PublicKey : SftpAuthMethod::Password;
     site->privateKeyPath = m_privateKeyPathEdit->text().trimmed();
+    site->useHomeDirectory = m_homeDirRadio->isChecked();
+    site->startingDirectory = m_startingDirEdit->text().trimmed();
 
     SiteStore::save(m_sites);
 
@@ -302,6 +338,12 @@ void SiteManagerDialog::updateAuthFieldsVisibility()
 {
     m_authFieldsStack->setCurrentIndex(m_passwordAuthRadio->isChecked() ? 0 : 1);
     onFieldEdited();   // auth-method choice is itself an edit worth persisting immediately
+}
+
+void SiteManagerDialog::updateStartingDirVisibility()
+{
+    m_startingDirEdit->setEnabled(m_specificDirRadio->isChecked());
+    onFieldEdited();   // this choice is itself an edit worth persisting immediately, same as auth method above
 }
 
 void SiteManagerDialog::onNewSite()
@@ -374,10 +416,16 @@ void SiteManagerDialog::onConnectClicked()
         creds.username = m_usernameEdit->text();
         creds.authMethod = m_passwordAuthRadio->isChecked() ? SftpAuthMethod::Password : SftpAuthMethod::PublicKey;
         creds.privateKeyPath = m_privateKeyPathEdit->text().trimmed();
+        creds.useHomeDirectory = m_homeDirRadio->isChecked();
+        creds.startingDirectory = m_startingDirEdit->text().trimmed();
     }
 
     if (creds.host.isEmpty()) {
         QMessageBox::warning(this, tr("Connect"), tr("Host cannot be empty."));
+        return;
+    }
+    if (!creds.useHomeDirectory && creds.startingDirectory.isEmpty()) {
+        QMessageBox::warning(this, tr("Connect"), tr("Enter a starting directory, or choose Home directory."));
         return;
     }
 
