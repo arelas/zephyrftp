@@ -5,6 +5,7 @@
 class FilePaneWidget;
 class TransferManager;
 class HostKeyVerifier;
+struct SftpCredentials;
 
 // Top-level window: two FilePaneWidgets side by side (commander style),
 // a docked transfer queue along the bottom, and a toolbar for
@@ -23,6 +24,7 @@ private slots:
     void onRightFilesActivated(const QStringList &names);
     void onFilesDropped(FilePaneWidget *sourcePane, const QStringList &names);
     void onConnectTriggered();
+    void onSiteManagerTriggered();
     void onDisconnectTriggered();
     void onRefreshTriggered();
     void onTransferSucceeded();
@@ -31,6 +33,12 @@ private:
     void buildLayout();
     void buildToolbar();
     void buildTransferQueue();
+
+    // Shared by both the plain "Connect..." dialog and the Site Manager's
+    // Connect button — spins up an SftpBackend + worker QThread for the
+    // given credentials and hands it to the right pane. One tested path
+    // for "actually establish a connection" rather than two copies of it.
+    void startConnection(const SftpCredentials &credentials);
 
     FilePaneWidget *m_leftPane = nullptr;   // local, by default
     FilePaneWidget *m_rightPane = nullptr;  // remote, once connected

@@ -38,6 +38,10 @@
         <file>icons/arrows-left-right.svg</file>
         <file>icons/alert-triangle.svg</file>
         <file>icons/x.svg</file>
+        <file>icons/server-cog.svg</file>
+        <file>icons/folder-plus.svg</file>
+        <file>icons/copy.svg</file>
+        <file>icons/trash.svg</file>
         <file>icons/app-icon-16.png</file>
         <file>icons/app-icon-24.png</file>
         <file>icons/app-icon-32.png</file>

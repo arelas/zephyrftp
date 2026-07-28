@@ -1,11 +1,13 @@
 #include "MainWindow.h"
 #include "FilePaneWidget.h"
 #include "ConnectionDialog.h"
+#include "SiteManagerDialog.h"
 #include "TransferQueueWidget.h"
 #include "HostKeyVerifier.h"
 #include "IconTheme.h"
 #include "../backends/LocalBackend.h"
 #include "../backends/SftpBackend.h"
+#include "../backends/SftpCredentials.h"
 #include "../transfer/TransferManager.h"
 
 #include <QSplitter>
@@ -48,6 +50,10 @@ void MainWindow::buildToolbar()
     auto *connectAction = toolbar->addAction(
         IconTheme::tintedIcon(":/icons/plug.svg", IconTheme::Green), tr("Connect..."));
     connect(connectAction, &QAction::triggered, this, &MainWindow::onConnectTriggered);
+
+    auto *sitesAction = toolbar->addAction(
+        IconTheme::tintedIcon(":/icons/server-cog.svg", IconTheme::Blue), tr("Sites..."));
+    connect(sitesAction, &QAction::triggered, this, &MainWindow::onSiteManagerTriggered);
 
     auto *disconnectAction = toolbar->addAction(
         IconTheme::tintedIcon(":/icons/plug-connected-x.svg", IconTheme::Red), tr("Disconnect"));
@@ -165,17 +171,34 @@ void MainWindow::onConnectTriggered()
         return;
     }
 
+    startConnection(creds);
+}
+
+void MainWindow::onSiteManagerTriggered()
+{
+    SiteManagerDialog dialog(this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+
+    // SiteManagerDialog has already validated the host and prompted for
+    // any password/passphrase by the time it accepts — nothing left to
+    // check here, unlike onConnectTriggered above.
+    startConnection(dialog.credentialsToConnect());
+}
+
+void MainWindow::startConnection(const SftpCredentials &credentials)
+{
     // No parent: SftpBackend is about to be moved to a worker thread, and
     // Qt refuses to reparent an object across thread boundaries. FilePaneWidget
     // owns its lifetime manually from here via setBackend()'s deleteLater +
     // quit()/wait() teardown path instead of the usual QObject parent-child chain.
-    auto *backend = new SftpBackend(creds, m_hostKeyVerifier);
+    auto *backend = new SftpBackend(credentials, m_hostKeyVerifier);
     auto *thread = new QThread(this);   // the QThread *controller* object is fine
                                          // to parent normally — it's backend that
                                          // can't be, since IT is what moves.
     backend->moveToThread(thread);
 
-    statusBar()->showMessage(tr("Connecting to %1...").arg(creds.host));
+    statusBar()->showMessage(tr("Connecting to %1...").arg(credentials.host));
     m_rightPane->setBackend(backend, thread);
 }
 

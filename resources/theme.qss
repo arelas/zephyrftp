@@ -10,7 +10,7 @@
    there is no single shared source between the two anymore.
    ============================================================ */
 
-QMainWindow, QWidget#zfRoot {
+QMainWindow, QDialog, QWidget#zfRoot {
     background-color: #14171c;   /* --zf-bg */
     color: #dfe4ea;               /* --zf-text-primary */
 }

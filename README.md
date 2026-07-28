@@ -9,6 +9,11 @@ move things between them. Think FileZilla or WinSCP, built fresh in Qt6.
 - **Dual-pane browsing** — your computer on one side, the server on the
   other, both visible at once.
 - **SFTP with password or private-key login.**
+- **Site Manager** — save connections you use often (grouped into
+  folders if you like), so you don't have to re-type the host, port, and
+  username every time. Your password is never saved to disk, though —
+  you'll be asked for it each time you connect. Same for a private key's
+  passphrase, if it has one.
 - **Host-key verification** — the first time you connect to a server,
   ZephyrFTP shows you its identity fingerprint and asks you to confirm
   it. If that fingerprint ever changes on a later connection, you get a
@@ -41,9 +46,11 @@ quick on any recent distro.
 1. **Launch the app.** The left pane shows your local files right away —
    ZephyrFTP works as a plain two-pane local file manager even before
    you connect to anything.
-2. **Click Connect** in the toolbar. Fill in the server's host, port
-   (22 by default), your username, and either a password or a private
-   key file.
+2. **Click Connect** in the toolbar for a one-off connection — fill in
+   the server's host, port (22 by default), your username, and either a
+   password or a private key file. If it's a server you'll come back to,
+   use **Sites** instead: same information, but saved for next time (a
+   "New Site" button, and a tree on the left to organize them).
 3. **First connection to a new server?** You'll be asked to confirm its
    identity fingerprint. This is expected and normal — it's the same
    prompt any SSH client shows the first time. Confirming it once means

@@ -21,7 +21,7 @@ does and the real, sometimes non-obvious bugs it surfaced along the way.
 
 ## Running the test suites
 
-Two `EXCLUDE_FROM_ALL` CMake targets — not part of a normal `make`, built
+Three `EXCLUDE_FROM_ALL` CMake targets — not part of a normal `make`, built
 and run explicitly:
 
 ```
@@ -36,7 +36,16 @@ head -c 500000 /dev/urandom > /tmp/transfer_test/src_dir/testfile.bin
 QT_QPA_PLATFORM=offscreen ./build/transfer-queue-test
 ```
 
-Both need to actually pass — not just build — before a change is
+```
+cmake --build build --target site-store-test
+XDG_CONFIG_HOME=/tmp/zephyrftp_test_config QT_QPA_PLATFORM=offscreen ./build/site-store-test
+```
+
+The `XDG_CONFIG_HOME` override on the last one isn't optional — without
+it, `SiteStore` writes to your actual config directory, and the test's
+own cleanup phase will delete whatever `sites.json` it finds there.
+
+All three need to actually pass — not just build — before a change is
 considered done. See ARCHITECTURE.md's "Verification status" section for
 what each test actually proves and why it exists.
 

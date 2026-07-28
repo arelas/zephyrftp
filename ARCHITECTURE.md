@@ -96,6 +96,32 @@ that way, it's flagged explicitly rather than left implied.
   only their code paths and unit-level logic are covered (via
   `transfer_queue_test.cpp`), not their actual rendered appearance.
 
+- **Site Manager persists correctly, and the security property that
+  matters most about it (no password ever hits disk) is verified, not
+  assumed.** `src/site_store_test.cpp` (built via the `site-store-test`
+  CMake target, isolated from any real saved sites via `XDG_CONFIG_HOME`
+  — see its own header comment) round-trips a password-auth and a
+  key-auth site through `SiteStore::save()`/`load()` and confirms every
+  field survives; confirms `SavedSite::toCredentials()` never fabricates
+  a password from thin air; confirms `load()` with no file yet returns
+  an empty list rather than erroring; and parses the raw written JSON to
+  confirm no object has a `password`- or `passphrase`-named key anywhere
+  in it — checked via actual `QJsonDocument` key inspection, not a raw
+  text search, after a first version of that check false-positived on
+  the perfectly innocuous `"authMethod": "password"` label (which
+  distinguishes auth type, carries no secret) and had to be corrected
+  before it could misreport a real problem that wasn't there.
+  Separately, a real screenshot of the new `SiteManagerDialog` (same
+  `QWidget::grab()` + pixel-sampling method proven on the toolbar
+  earlier) caught a genuine, pre-existing bug: `theme.qss` only ever
+  styled `QMainWindow`, never `QDialog` — every dialog window, including
+  the original `ConnectionDialog` (shipped several sessions earlier),
+  had been silently rendering with Qt's default *light* background this
+  whole time, since nobody had screenshotted a dialog specifically until
+  now. Fixed with one added selector; re-verified both dialogs by pixel
+  sampling after the fix (background sample went from `(239,239,239)`
+  to `(20,23,28)`, matching `#14171c` exactly).
+
 **Still not verified:** public-key authentication (implemented, but no
 real key file has been tested against it yet — see Known gaps), the
 transfer queue's progress-bar/status-icon rendering with a real active
@@ -124,8 +150,36 @@ headless/offscreen runs have been checked).
   auth toggle (`QStackedWidget` swaps the relevant fields). Returns a
   single `SftpCredentials` struct (`src/backends/SftpCredentials.h`) that
   `SftpBackend` consumes directly — no more unpacking/repacking individual
-  fields at the call site. No saved-site list yet — a reasonable next
-  addition.
+  fields at the call site. Still the "one-off connection" path — kept
+  deliberately unchanged when Site Manager was added (see below) rather
+  than risking regressing an already-verified flow; `MainWindow::startConnection()`
+  is the shared code both paths funnel through afterward.
+- `SavedSite` / `SiteStore` (`src/backends/SavedSite.h/.cpp`) — a saved
+  connection profile (host/port/username/auth method/key path, optionally
+  grouped into a folder) and its JSON persistence
+  (`QStandardPaths::AppConfigLocation/sites.json`). **Deliberately has no
+  password field, full stop** — not "encrypted," not "obfuscated," simply
+  never collected for storage. This is stricter than the source design
+  mockup, which showed a "Password" logon type implying stored
+  credentials; overridden on purpose, since shipping plaintext credential
+  storage without being explicitly asked to would cut against the
+  security hygiene the rest of this app has been built with (host-key
+  TOFU, no silent trust). The same no-storage rule extends to a private
+  key's passphrase, for consistency, even though a passphrase's risk
+  profile (protects a key file already under OS permissions) differs
+  from a bare password's.
+- `SiteManagerDialog` — the saved-sites UI: a grouped tree on the left,
+  a details form on the right, matching the design package's
+  site-manager.html mockup. Persists via `SiteStore` on every field edit
+  (`QLineEdit::editingFinished`, not per-keystroke) and every structural
+  change (new/duplicate/delete), so there's no separate "Save" step to
+  forget. Its Connect button prompts for the password or key passphrase
+  fresh every time, regardless of what's saved — see `SavedSite` above.
+  No in-UI way to move a site between groups yet, or to create a group
+  directly — `SavedSite.group` exists in the data model and the tree
+  will display groups if present, but nothing in this dialog sets one
+  besides `SiteStore`'s own field-preserving round-trip (i.e. hand-editing
+  `sites.json`, or a future version of this dialog).
 - `HostKeyVerifier` — lives on the GUI thread for the app's lifetime.
   `SftpBackend`'s worker thread calls into it via
   `QMetaObject::invokeMethod(..., Qt::BlockingQueuedConnection)` to get a
@@ -179,9 +233,12 @@ headless/offscreen runs have been checked).
   this is a view, not a second source of truth.
 - `MainWindow` — two `FilePaneWidget`s in a `QSplitter`, plus a
   `QDockWidget` at the bottom holding the transfer queue. Left pane is
-  always `LocalBackend`. Right pane starts on `LocalBackend` and the
-  toolbar's "Connect..." action swaps it for a live `SftpBackend` + worker
-  `QThread` via `ConnectionDialog`; "Disconnect" swaps back to
+  always `LocalBackend`. Right pane starts on `LocalBackend`; the
+  toolbar's "Connect..." action (via `ConnectionDialog`) and "Sites..."
+  action (via `SiteManagerDialog`) both funnel into a single
+  `startConnection(const SftpCredentials &)` — spins up an `SftpBackend`
+  + worker `QThread` and hands it to the right pane — rather than
+  duplicating that setup in two places. "Disconnect" swaps back to
   `LocalBackend`. Double-clicking a file in either pane calls
   `TransferManager::enqueue()` with that pane as source and the other as
   destination; `TransferManager::transferSucceeded` triggers a refresh of
@@ -192,13 +249,16 @@ headless/offscreen runs have been checked).
 The dark theme and icon set come from a design package (not included in
 this repo's history prior to this pass) built around Tabler Icons (MIT)
 and a fixed four-color semantic system — full rationale in that package's
-own README and `ICON-MAP.md`. Scope of this pass was a **visual re-skin
-of existing features only** — the mockups also cover a Site Manager
-(saved connections), pause/resume, and live transfer speed, none of
-which exist in this app yet; only the icon/color/theme layer was ported.
+own README and `ICON-MAP.md`. The first pass porting this theme was
+scoped to a **visual re-skin of existing features only**; Site Manager
+(saved connections) was added in a later pass and is covered in the
+Architecture section above. Pause/resume and live transfer speed, also
+shown in the mockups, still don't exist in this app.
 
-- `resources/icons/*.svg` — 19 vendored Tabler Icons SVGs (18 in-app UI
-  icons plus `wind.svg`, used only as the app icon's source glyph — see
+- `resources/icons/*.svg` — 23 vendored Tabler Icons SVGs (22 in-app UI
+  icons — 18 from the original theming pass plus `server-cog`,
+  `folder-plus`, `copy`, `trash` added for Site Manager — plus
+  `wind.svg`, used only as the app icon's source glyph — see
   below), fetched directly from `github.com/tabler/tabler-icons` (MIT
   license included as `resources/icons/LICENSE-tabler-icons.txt`). Each
   uses `stroke="currentColor"`, deliberately not pre-colored — recolored
@@ -291,6 +351,12 @@ ever needs touching again:
 
 ## Known gaps (flagged, not fixed)
 
+- **Site Manager has no in-UI way to create or move sites between
+  groups yet.** `SavedSite.group` exists in the data model, and
+  `SiteManagerDialog`'s tree will correctly display groups if a site
+  has one, but nothing in the dialog itself sets one — every "New Site"
+  is created ungrouped. Reaching the grouped state shown in the design
+  mockup currently means hand-editing `sites.json`'s `group` field.
 - **Public-key authentication is implemented but unverified.**
   `ConnectionDialog` has a password/private-key toggle and
   `SftpBackend::ensureSession()` branches accordingly, but no real key

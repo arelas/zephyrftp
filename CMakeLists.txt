@@ -35,8 +35,10 @@ set(SOURCES
     src/ui/TransferQueueWidget.cpp
     src/ui/HostKeyVerifier.cpp
     src/ui/IconTheme.cpp
+    src/ui/SiteManagerDialog.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
+    src/backends/SavedSite.cpp
     src/transfer/TransferManager.cpp
     resources/icons.qrc
     resources/theme.qrc
@@ -59,11 +61,13 @@ set(HEADERS
     src/ui/TransferQueueWidget.h
     src/ui/HostKeyVerifier.h
     src/ui/IconTheme.h
+    src/ui/SiteManagerDialog.h
     src/backends/RemoteBackend.h
     src/backends/RemoteEntry.h
     src/backends/LocalBackend.h
     src/backends/SftpBackend.h
     src/backends/SftpCredentials.h
+    src/backends/SavedSite.h
     src/transfer/TransferItem.h
     src/transfer/TransferManager.h
 )
@@ -99,8 +103,10 @@ qt_add_executable(smoke-test EXCLUDE_FROM_ALL
     src/ui/TransferQueueWidget.cpp
     src/ui/HostKeyVerifier.cpp
     src/ui/IconTheme.cpp
+    src/ui/SiteManagerDialog.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
+    src/backends/SavedSite.cpp
     src/transfer/TransferManager.cpp
     resources/icons.qrc
     resources/theme.qrc
@@ -121,8 +127,10 @@ qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
     src/ui/TransferQueueWidget.cpp
     src/ui/HostKeyVerifier.cpp
     src/ui/IconTheme.cpp
+    src/ui/SiteManagerDialog.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
+    src/backends/SavedSite.cpp
     src/transfer/TransferManager.cpp
     resources/icons.qrc
     resources/theme.qrc
@@ -132,3 +140,11 @@ target_include_directories(transfer-queue-test PRIVATE src)
 target_link_libraries(transfer-queue-test PRIVATE
     Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET}
 )
+
+# --- SiteStore persistence test (pure QCoreApplication, no GUI needed) ---
+qt_add_executable(site-store-test EXCLUDE_FROM_ALL
+    src/site_store_test.cpp
+    src/backends/SavedSite.cpp
+)
+target_include_directories(site-store-test PRIVATE src)
+target_link_libraries(site-store-test PRIVATE Qt6::Core)
