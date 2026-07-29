@@ -5,6 +5,8 @@
 #include <QLineEdit>
 #include <QLabel>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QToolButton>
 #include <QHeaderView>
 #include <QDir>
 #include <QThread>
@@ -23,6 +25,9 @@ FilePaneWidget::FilePaneWidget(RemoteBackend *backend, QWidget *parent)
     : QWidget(parent)
     , m_backend(nullptr)
     , m_view(nullptr)
+    , m_backButton(nullptr)
+    , m_forwardButton(nullptr)
+    , m_upButton(nullptr)
     , m_pathBar(nullptr)
     , m_statusLabel(nullptr)
     , m_model(new QStandardItemModel(this))
@@ -54,6 +59,7 @@ void FilePaneWidget::setBackend(RemoteBackend *backend, QThread *thread)
     m_backendThread = thread;
 
     updatePathBarIcon();
+    resetHistory();
 
     if (!m_backendThread) {
         // No thread affinity of its own (e.g. LocalBackend) — parent it to
@@ -87,9 +93,36 @@ void FilePaneWidget::buildUi()
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(4, 4, 4, 4);
 
+    // Back/forward/up, matching any ordinary file manager. Neutral gray
+    // rather than a semantic accent color — these are generic navigation,
+    // not upload/download/connect-style actions, so they deliberately sit
+    // outside the four-color system the rest of the icon set follows.
+    m_backButton = new QToolButton(this);
+    m_backButton->setIcon(IconTheme::tintedIcon(":/icons/arrow-left.svg", IconTheme::Gray));
+    m_backButton->setToolTip(tr("Back"));
+    m_backButton->setEnabled(false);
+    connect(m_backButton, &QToolButton::clicked, this, &FilePaneWidget::goBack);
+
+    m_forwardButton = new QToolButton(this);
+    m_forwardButton->setIcon(IconTheme::tintedIcon(":/icons/arrow-right.svg", IconTheme::Gray));
+    m_forwardButton->setToolTip(tr("Forward"));
+    m_forwardButton->setEnabled(false);
+    connect(m_forwardButton, &QToolButton::clicked, this, &FilePaneWidget::goForward);
+
+    m_upButton = new QToolButton(this);
+    m_upButton->setIcon(IconTheme::tintedIcon(":/icons/corner-left-up.svg", IconTheme::Gray));
+    m_upButton->setToolTip(tr("Up one level"));
+    connect(m_upButton, &QToolButton::clicked, this, &FilePaneWidget::goUp);
+
     m_pathBar = new QLineEdit(this);
     connect(m_pathBar, &QLineEdit::returnPressed, this, &FilePaneWidget::onPathBarReturnPressed);
-    layout->addWidget(m_pathBar);
+
+    auto *pathRow = new QHBoxLayout;
+    pathRow->addWidget(m_backButton);
+    pathRow->addWidget(m_forwardButton);
+    pathRow->addWidget(m_upButton);
+    pathRow->addWidget(m_pathBar, 1);
+    layout->addLayout(pathRow);
 
     m_model->setHorizontalHeaderLabels({tr("Name"), tr("Size"), tr("Modified"), tr("Permissions")});
 
@@ -186,6 +219,30 @@ void FilePaneWidget::onDirectoryListed(const QString &path, const QList<RemoteEn
         auto *permItem = new QStandardItem(e.permissions);
         m_model->appendRow({nameItem, sizeItem, modItem, permItem});
     }
+
+    // History bookkeeping happens here — on a CONFIRMED successful
+    // listing — rather than eagerly when navigateTo() is called, since a
+    // navigation request can fail (bad path) and a failed one has no
+    // business becoming a history entry.
+    if (m_navigatingHistory) {
+        // This listing is the result of goBack()/goForward(), which
+        // already moved m_historyIndex — nothing further to do here.
+    } else {
+        // A fresh navigation (path bar, double-click, Up, initial
+        // connect): drop any "forward" entries beyond the current
+        // position, same convention every browser uses, then push. Skip
+        // pushing a duplicate of the current top entry — Refresh
+        // re-lists the same directory and shouldn't create a new step.
+        while (m_history.size() > m_historyIndex + 1)
+            m_history.removeLast();
+        if (m_history.isEmpty() || m_history.last() != path) {
+            m_history.append(path);
+            m_historyIndex = m_history.size() - 1;
+        }
+    }
+    m_navigatingHistory = false;
+
+    updateNavigationButtonsEnabled();
 }
 
 void FilePaneWidget::onRowDoubleClicked(const QModelIndex &index)
@@ -242,4 +299,64 @@ void FilePaneWidget::showContextMenu(const QPoint &pos)
     QAction *chosen = menu.exec(m_view->viewport()->mapToGlobal(pos));
     if (chosen == transferAction)
         emit filesActivated(names);
+}
+
+void FilePaneWidget::goBack()
+{
+    if (m_historyIndex <= 0)
+        return;   // m_backButton should already be disabled in this case — defensive, not load-bearing
+    m_historyIndex--;
+    m_navigatingHistory = true;
+    navigateTo(m_history.at(m_historyIndex));
+}
+
+void FilePaneWidget::goForward()
+{
+    if (m_historyIndex >= m_history.size() - 1)
+        return;
+    m_historyIndex++;
+    m_navigatingHistory = true;
+    navigateTo(m_history.at(m_historyIndex));
+}
+
+void FilePaneWidget::goUp()
+{
+    navigateTo(parentOfPath(currentDirectory()));
+}
+
+QString FilePaneWidget::parentOfPath(const QString &path)
+{
+    QString clean = path;
+    if (clean.length() > 1 && clean.endsWith(QLatin1Char('/')))
+        clean.chop(1);
+
+    const int lastSlash = clean.lastIndexOf(QLatin1Char('/'));
+    if (lastSlash < 0)
+        return path;   // no slash at all (e.g. a bare Windows drive letter) — nothing to go up to, stay put
+    if (lastSlash == 0)
+        return QStringLiteral("/");   // parent of "/something" is root
+    return clean.left(lastSlash);
+}
+
+void FilePaneWidget::updateNavigationButtonsEnabled()
+{
+    m_backButton->setEnabled(canGoBack());
+    m_forwardButton->setEnabled(canGoForward());
+    // Up has no history dependency — parentOfPath() is a safe no-op at
+    // any root, so it's simplest to just always leave it enabled rather
+    // than trying to detect "already at root" ahead of time.
+}
+
+void FilePaneWidget::resetHistory()
+{
+    m_history.clear();
+    m_historyIndex = -1;
+    m_navigatingHistory = false;
+    // Buttons may not exist yet the very first time this runs (called
+    // from setBackend() during the constructor, before buildUi() —
+    // actually after, since buildUi() runs first in the constructor, but
+    // defensive nullptr checks cost nothing and this order could
+    // plausibly change later).
+    if (m_backButton)
+        updateNavigationButtonsEnabled();
 }

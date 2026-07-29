@@ -7,7 +7,8 @@ move things between them. Think FileZilla or WinSCP, built fresh in Qt6.
 ## Features
 
 - **Dual-pane browsing** — your computer on one side, the server on the
-  other, both visible at once.
+  other, both visible at once. Back, forward, and up buttons beside each
+  pane's location bar, same as any file manager.
 - **SFTP with password or private-key login.**
 - **Site Manager** — save connections you use often (grouped into
   folders if you like), so you don't have to re-type the host, port, and

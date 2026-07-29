@@ -21,7 +21,7 @@ does and the real, sometimes non-obvious bugs it surfaced along the way.
 
 ## Running the test suites
 
-Three `EXCLUDE_FROM_ALL` CMake targets — not part of a normal `make`, built
+Four `EXCLUDE_FROM_ALL` CMake targets — not part of a normal `make`, built
 and run explicitly:
 
 ```
@@ -41,11 +41,18 @@ cmake --build build --target site-store-test
 XDG_CONFIG_HOME=/tmp/zephyrftp_test_config QT_QPA_PLATFORM=offscreen ./build/site-store-test
 ```
 
-The `XDG_CONFIG_HOME` override on the last one isn't optional — without
-it, `SiteStore` writes to your actual config directory, and the test's
-own cleanup phase will delete whatever `sites.json` it finds there.
+```
+cmake --build build --target navigation-test
+QT_QPA_PLATFORM=offscreen ./build/navigation-test
+```
 
-All three need to actually pass — not just build — before a change is
+The `XDG_CONFIG_HOME` override on `site-store-test` isn't optional —
+without it, `SiteStore` writes to your actual config directory, and the
+test's own cleanup phase will delete whatever `sites.json` it finds
+there. `navigation-test` creates its own scratch directory tree under
+`/tmp/nav_test` and doesn't touch anything outside it.
+
+All four need to actually pass — not just build — before a change is
 considered done. See ARCHITECTURE.md's "Verification status" section for
 what each test actually proves and why it exists.
 

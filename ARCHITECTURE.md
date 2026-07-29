@@ -127,6 +127,30 @@ that way, it's flagged explicitly rather than left implied.
   sampling after the fix (background sample went from `(239,239,239)`
   to `(20,23,28)`, matching `#14171c` exactly).
 
+- **Back/forward/up navigation is verified against real filesystem
+  behavior, including the tricky cases, not just the happy path.**
+  `src/navigation_test.cpp` (built via the `navigation-test` CMake
+  target) creates a real `FilePaneWidget` on a real `LocalBackend`
+  pointed at a real nested temp directory tree
+  (`/tmp/nav_test/a/b/c`), sequences 14 checks through the actual async
+  `navigateTo()`/`goBack()`/`goForward()`/`goUp()` path (same
+  `QMetaObject::invokeMethod(..., Qt::QueuedConnection)` route real
+  navigation uses, sequenced with `QTimer::singleShot` the same way
+  `transfer_queue_test.cpp` does), and confirms: three-deep forward
+  navigation lands correctly; two `goBack()` calls retrace it exactly;
+  `goForward()` after a partial retrace lands back where expected;
+  branching to a new directory *while sitting mid-history* (not at the
+  newest entry) correctly truncates the abandoned forward entries, the
+  same convention every browser uses — confirmed both that the branch
+  landed correctly and that forward history is actually gone afterward,
+  not just untested; `goUp()` at two different depths lands on the
+  correct parent; and `goUp()` from the filesystem root is a safe
+  no-op (stays at root) rather than erroring or producing a malformed
+  path. `canGoBack()`/`canGoForward()` (added as public API specifically
+  because they make this kind of precise, non-inferred verification
+  possible, not only for the test's sake) are checked directly rather
+  than inferred from navigation side effects.
+
 **Still not verified:** public-key authentication (implemented, but no
 real key file has been tested against it yet — see Known gaps), the
 transfer queue's progress-bar/status-icon rendering with a real active
@@ -209,6 +233,23 @@ headless/offscreen runs have been checked).
   parent-child ownership. Right-click on selected rows offers "Transfer
   Selected" (multi-select, via `filesActivated`), on top of the original
   double-click-one-file behavior (`fileActivated`).
+  Back/forward/up navigation lives here too: a per-pane `QStringList`
+  history plus an index, updated only from `onDirectoryListed()` — i.e.
+  only once a navigation is *confirmed successful* — rather than eagerly
+  when `navigateTo()` is called, so a failed navigation (bad path) never
+  becomes a history entry. A `m_navigatingHistory` guard distinguishes a
+  `goBack()`/`goForward()`-triggered listing (just moves the index) from
+  any other navigation (pushes a new entry, truncating whatever "forward"
+  entries existed past the current position — the same convention every
+  browser uses). `goUp()` computes the parent via `parentOfPath()`, a
+  static helper using `/` as the separator — correct for SFTP paths
+  always (the protocol mandates forward slashes regardless of the
+  server's OS) and for local paths too under Qt's own convention
+  (`QDir`/`QFileInfo` normalize to `/` even on Windows); a safe no-op at
+  any kind of root rather than erroring or producing a wrong path.
+  `resetHistory()` clears all of this on every `setBackend()` call — a
+  new backend (Connect/Disconnect) is a fresh navigation context, not a
+  continuation of the old one's history.
 - `FileTreeView` — thin `QTreeView` subclass adding cross-pane
   drag-and-drop. Qt's built-in item-view DnD pulls its `QMimeData` from
   the *model* (`QAbstractItemView::startDrag()` calls

@@ -148,3 +148,17 @@ qt_add_executable(site-store-test EXCLUDE_FROM_ALL
 )
 target_include_directories(site-store-test PRIVATE src)
 target_link_libraries(site-store-test PRIVATE Qt6::Core)
+
+# --- Navigation history test (back/forward/up, real LocalBackend + real temp dirs) ---
+qt_add_executable(navigation-test EXCLUDE_FROM_ALL
+    src/navigation_test.cpp
+    src/ui/FilePaneWidget.cpp
+    src/ui/FileTreeView.cpp
+    src/ui/IconTheme.cpp
+    src/backends/LocalBackend.cpp
+    src/backends/RemoteBackend.h
+    resources/icons.qrc
+    resources/theme.qrc
+)
+target_include_directories(navigation-test PRIVATE src)
+target_link_libraries(navigation-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)

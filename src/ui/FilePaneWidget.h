@@ -12,6 +12,7 @@ class QLineEdit;
 class QLabel;
 class QThread;
 class QAction;
+class QToolButton;
 
 // One side of the dual-pane layout. Owns a backend (local or remote) and
 // renders its current directory listing. MainWindow instantiates two of
@@ -34,6 +35,17 @@ public:
     QStringList selectedFileNames() const;
 
     void navigateTo(const QString &path);
+
+    // Back/forward/up navigation, matching any ordinary file manager.
+    // Back/forward walk a per-pane history list; Up computes the parent
+    // of the current directory and navigates there — none of these
+    // require backend support, they're built entirely on top of the
+    // existing navigateTo()/currentDirectory().
+    void goBack();
+    void goForward();
+    void goUp();
+    bool canGoBack() const { return m_historyIndex > 0; }
+    bool canGoForward() const { return m_historyIndex < m_history.size() - 1; }
 
     // Replaces the pane's backend, e.g. swapping the placeholder LocalBackend
     // for a live SftpBackend once a connection dialog succeeds. If `thread`
@@ -84,12 +96,38 @@ private:
     // depends on the entry's own data (name, isDir), not any pane state.
     static QIcon iconForEntry(const RemoteEntry &e);
 
+    // Computes the parent of a path using '/' as the separator — correct
+    // for SFTP paths always (the protocol mandates forward slashes
+    // regardless of the server's OS) and for local paths too under Qt's
+    // own convention (QDir/QFileInfo normalize to '/' even on Windows).
+    // A safe no-op at any kind of root: POSIX "/" returns "/" unchanged;
+    // a bare Windows drive root like "C:/" has nothing left to strip and
+    // returns unchanged too, rather than producing "/" (which would be
+    // wrong — there's no single filesystem root spanning drives).
+    static QString parentOfPath(const QString &path);
+
+    void updateNavigationButtonsEnabled();
+    void resetHistory();   // called from setBackend() — a new backend means a fresh navigation context
+
     RemoteBackend *m_backend;
     QThread *m_backendThread = nullptr;   // null when backend has no thread of its own (e.g. LocalBackend)
     FileTreeView *m_view;
+    QToolButton *m_backButton;
+    QToolButton *m_forwardButton;
+    QToolButton *m_upButton;
     QLineEdit *m_pathBar;
     QAction *m_pathBarLeadingIcon = nullptr;   // owned by m_pathBar once added; tracked so it can be replaced
     QLabel *m_statusLabel;
     QStandardItemModel *m_model;
     QList<RemoteEntry> m_currentEntries;
+
+    // Navigation history. m_historyIndex points at the currently-displayed
+    // entry; entries after it are "forward" history, cleared whenever a
+    // fresh (non back/forward) navigation happens, same convention every
+    // browser and file manager uses. m_navigatingHistory guards
+    // onDirectoryListed() so a goBack()/goForward()-triggered listing
+    // updates the index instead of pushing a new history entry.
+    QStringList m_history;
+    int m_historyIndex = -1;
+    bool m_navigatingHistory = false;
 };
