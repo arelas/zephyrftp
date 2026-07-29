@@ -11,6 +11,7 @@ class QSpinBox;
 class QRadioButton;
 class QStackedWidget;
 class QPushButton;
+class QComboBox;
 
 // Saved-connections manager — a tree of sites (optionally grouped into
 // folders) on the left, a details form on the right, matching the design
@@ -52,6 +53,13 @@ private:
     void commitFormToSelectedSite();   // writes current form values back into m_sites, then persists
     SavedSite *selectedSite();         // nullptr if nothing selected, or selection is a group folder
 
+    // Repopulates m_groupCombo with the current distinct set of group
+    // names across all sites (sorted), preserving whatever text is
+    // currently entered/selected — called after rebuildTree() since
+    // group membership can only have changed alongside the same events
+    // that trigger a tree rebuild (new/duplicate/delete/group edit).
+    void refreshGroupChoices();
+
     QList<SavedSite> m_sites;
     QString m_selectedId;   // empty if nothing/a folder is selected
 
@@ -60,6 +68,7 @@ private:
     QPushButton *m_deleteButton;
 
     QLineEdit *m_nameEdit;
+    QComboBox *m_groupCombo;   // editable — pick an existing group or type a new one; blank = ungrouped
     QLineEdit *m_hostEdit;
     QSpinBox *m_portSpin;
     QLineEdit *m_usernameEdit;

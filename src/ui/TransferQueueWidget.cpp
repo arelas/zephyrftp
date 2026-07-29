@@ -14,6 +14,7 @@ constexpr int ColName = 0;
 constexpr int ColDirection = 1;
 constexpr int ColStatus = 2;
 constexpr int ColProgress = 3;
+constexpr int ColSpeed = 4;
 constexpr int IdRole = Qt::UserRole;
 }
 
@@ -22,8 +23,9 @@ TransferQueueWidget::TransferQueueWidget(TransferManager *manager, QWidget *pare
     , m_table(new QTableWidget(this))
     , m_manager(manager)
 {
-    m_table->setColumnCount(4);
-    m_table->setHorizontalHeaderLabels({tr("File"), tr("Direction"), tr("Status"), tr("Progress")});
+    m_table->setColumnCount(5);
+    m_table->setHorizontalHeaderLabels(
+        {tr("File"), tr("Direction"), tr("Status"), tr("Progress"), tr("Speed")});
     m_table->horizontalHeader()->setSectionResizeMode(ColName, QHeaderView::Stretch);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionMode(QAbstractItemView::NoSelection);
@@ -66,6 +68,7 @@ QString TransferQueueWidget::statusText(const TransferItem &item)
     switch (item.status) {
     case TransferStatus::Queued:      return tr("Queued");
     case TransferStatus::InProgress:  return tr("Transferring");
+    case TransferStatus::Paused:      return tr("Paused");
     case TransferStatus::Done:        return tr("Done");
     case TransferStatus::Failed:      return item.errorMessage.isEmpty()
                                               ? tr("Failed")
@@ -89,6 +92,8 @@ QIcon TransferQueueWidget::statusIcon(const TransferItem &item)
         return IconTheme::tintedIcon(":/icons/alert-triangle.svg", IconTheme::Red);
     if (item.status == TransferStatus::Cancelled)
         return IconTheme::tintedIcon(":/icons/x.svg", IconTheme::GrayMuted);
+    if (item.status == TransferStatus::Paused)
+        return IconTheme::tintedIcon(":/icons/player-pause.svg", IconTheme::Amber);
 
     // Queued or InProgress: a direction-shaped icon (the mockup doesn't
     // cover local-to-local or unsupported directions, since it assumes
@@ -118,11 +123,25 @@ QColor TransferQueueWidget::statusTextColor(TransferStatus status)
     switch (status) {
     case TransferStatus::Queued:      return IconTheme::Gray;
     case TransferStatus::InProgress:  return IconTheme::Blue;
+    case TransferStatus::Paused:      return IconTheme::Amber;
     case TransferStatus::Done:        return IconTheme::Green;
     case TransferStatus::Failed:      return IconTheme::Red;
     case TransferStatus::Cancelled:   return IconTheme::GrayMuted;
     }
     return IconTheme::Gray;
+}
+
+QString TransferQueueWidget::speedText(const TransferItem &item)
+{
+    if (item.status != TransferStatus::InProgress || item.speedBytesPerSec <= 0)
+        return {};
+
+    const double bps = static_cast<double>(item.speedBytesPerSec);
+    if (bps >= 1024.0 * 1024.0)
+        return QStringLiteral("%1 MB/s").arg(bps / (1024.0 * 1024.0), 0, 'f', 1);
+    if (bps >= 1024.0)
+        return QStringLiteral("%1 KB/s").arg(bps / 1024.0, 0, 'f', 1);
+    return QStringLiteral("%1 B/s").arg(item.speedBytesPerSec);
 }
 
 void TransferQueueWidget::onItemAdded(const TransferItem &item)
@@ -153,6 +172,8 @@ void TransferQueueWidget::onItemAdded(const TransferItem &item)
     progressBar->setTextVisible(false);
     progressBar->setFixedHeight(6);   // matches .zf-progress-track's 6px height
     m_table->setCellWidget(row, ColProgress, progressBar);
+
+    m_table->setItem(row, ColSpeed, new QTableWidgetItem());
 }
 
 void TransferQueueWidget::onItemUpdated(const TransferItem &item)
@@ -177,7 +198,12 @@ void TransferQueueWidget::onItemUpdated(const TransferItem &item)
         percent = static_cast<int>((item.bytesDone * 100) / item.bytesTotal);
     else if (item.status == TransferStatus::Done)
         percent = 100;
+    else if (item.status == TransferStatus::Paused && item.bytesTotal > 0)
+        percent = static_cast<int>((item.bytesDone * 100) / item.bytesTotal);   // frozen at the pause point
     progressBar->setValue(percent);
+
+    if (auto *speedItem = m_table->item(row, ColSpeed))
+        speedItem->setText(speedText(item));
 
     // Chunk color depends on this specific item's data (status + direction),
     // so it has to be set per-widget here rather than as a single QSS rule
@@ -187,6 +213,7 @@ void TransferQueueWidget::onItemUpdated(const TransferItem &item)
     case TransferStatus::Done:      chunkColor = IconTheme::Green; break;
     case TransferStatus::Failed:    chunkColor = IconTheme::Red; break;
     case TransferStatus::Cancelled: chunkColor = IconTheme::GrayMuted; break;
+    case TransferStatus::Paused:    chunkColor = IconTheme::Amber; break;
     case TransferStatus::InProgress:
         chunkColor = (item.direction == TransferDirection::RemoteToLocal)
             ? IconTheme::Blue : IconTheme::Green;
@@ -215,10 +242,12 @@ void TransferQueueWidget::showContextMenu(const QPoint &pos)
     // trusting the table's displayed text — the manager is the source of
     // truth, the table is just a mirror of it.
     TransferStatus status = TransferStatus::Queued;
+    TransferDirection direction = TransferDirection::Unsupported;
     bool found = false;
     for (const TransferItem &item : m_manager->items()) {
         if (item.id == id) {
             status = item.status;
+            direction = item.direction;
             found = true;
             break;
         }
@@ -226,15 +255,36 @@ void TransferQueueWidget::showContextMenu(const QPoint &pos)
     if (!found)
         return;
 
+    // Pause is only meaningful for directions SftpBackend actually
+    // implements it for — LocalBackend's requestPause() is a documented
+    // no-op (QFile::copy() is atomic, there's no partial progress to
+    // preserve), so offering Pause for a local-to-local transfer would
+    // show an action that silently does nothing. Rather than that, it's
+    // just not offered.
+    const bool pauseCapableDirection =
+        direction == TransferDirection::LocalToRemote || direction == TransferDirection::RemoteToLocal;
+
     QMenu menu(this);
-    QAction *cancelAction = menu.addAction(tr("Cancel"));
-    cancelAction->setEnabled(status == TransferStatus::Queued || status == TransferStatus::InProgress);
-    QAction *retryAction = menu.addAction(tr("Retry"));
+    QAction *cancelAction = menu.addAction(IconTheme::tintedIcon(":/icons/x.svg", IconTheme::Red), tr("Cancel"));
+    cancelAction->setEnabled(status == TransferStatus::Queued || status == TransferStatus::InProgress
+                              || status == TransferStatus::Paused);
+    QAction *pauseAction = menu.addAction(
+        IconTheme::tintedIcon(":/icons/player-pause.svg", IconTheme::Amber), tr("Pause"));
+    pauseAction->setEnabled(status == TransferStatus::InProgress && pauseCapableDirection);
+    QAction *resumeAction = menu.addAction(
+        IconTheme::tintedIcon(":/icons/player-play.svg", IconTheme::Green), tr("Resume"));
+    resumeAction->setEnabled(status == TransferStatus::Paused);
+    QAction *retryAction = menu.addAction(
+        IconTheme::tintedIcon(":/icons/refresh.svg", IconTheme::Amber), tr("Retry"));
     retryAction->setEnabled(status == TransferStatus::Failed || status == TransferStatus::Cancelled);
 
     QAction *chosen = menu.exec(m_table->viewport()->mapToGlobal(pos));
     if (chosen == cancelAction)
         m_manager->cancelItem(id);
+    else if (chosen == pauseAction)
+        m_manager->pauseItem(id);
+    else if (chosen == resumeAction)
+        m_manager->resumeItem(id);
     else if (chosen == retryAction)
         m_manager->retryItem(id);
 }

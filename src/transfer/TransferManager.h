@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QList>
+#include <QElapsedTimer>
 #include "TransferItem.h"
 
 class RemoteBackend;
@@ -35,6 +36,22 @@ public:
     // in any other state, or that don't exist.
     void retryItem(int id);
 
+    // Pauses the currently InProgress item — only meaningful for the
+    // active item, since that's the only one actually mid-transfer.
+    // No-op for a Queued/Paused/terminal item, or for one whose backend
+    // doesn't support pausing (LocalBackend's requestPause() is a
+    // documented no-op — see RemoteBackend.h). Unlike cancelItem(), no
+    // flag is needed to disambiguate the result: transferPaused is its
+    // own signal, unambiguous the moment it arrives, unlike
+    // transferFailed which cancel and genuine errors both produce.
+    void pauseItem(int id);
+
+    // Re-queues a Paused item, preserving its bytesDone as the resume
+    // offset (unlike retryItem(), which resets progress to zero — a
+    // paused transfer has real partial progress worth keeping, a failed
+    // one doesn't necessarily). No-op for ids not currently Paused.
+    void resumeItem(int id);
+
     const QList<TransferItem> &items() const { return m_items; }
 
 signals:
@@ -46,6 +63,7 @@ private slots:
     void onBackendProgress(const QString &fileName, qint64 bytesDone, qint64 bytesTotal);
     void onBackendFinished(const QString &fileName);
     void onBackendFailed(const QString &fileName, const QString &reason);
+    void onBackendPaused(const QString &fileName, qint64 bytesDone);
 
 private:
     void startNext();
@@ -62,4 +80,11 @@ private:
     // for this to stop" from "it genuinely errored" once both surface as
     // the same transferFailed signal from the backend.
     bool m_activeItemCancelled = false;
+
+    // Live speed sampling for the active item. Recomputed roughly every
+    // 250ms in onBackendProgress() rather than on every single progress
+    // signal (SFTP's read loop emits one per 32KB chunk, which on a fast
+    // connection would be noisy and not meaningfully "live" anyway).
+    QElapsedTimer m_speedSampleTimer;
+    qint64 m_speedSampleBytesAtLastSample = 0;
 };

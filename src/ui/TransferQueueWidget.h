@@ -34,6 +34,11 @@ private:
     static QIcon statusIcon(const TransferItem &item);
     static QColor statusTextColor(TransferStatus status);
 
+    // "1.2 MB/s" style formatting — empty string when not meaningful
+    // (anything other than InProgress; see TransferManager, which zeroes
+    // speedBytesPerSec on every terminal/paused transition).
+    static QString speedText(const TransferItem &item);
+
     QTableWidget *m_table;
     TransferManager *m_manager;
 };

@@ -45,8 +45,9 @@ void LocalBackend::listDirectory(const QString &path)
     emit directoryListed(m_currentPath, entries);
 }
 
-void LocalBackend::downloadFile(const QString &remotePath, const QString &localPath)
+void LocalBackend::downloadFile(const QString &remotePath, const QString &localPath, qint64 resumeOffset)
 {
+    Q_UNUSED(resumeOffset);   // never nonzero in practice — see requestPause()'s doc comment
     // "download" here just means local-to-local copy, used when the local
     // pane is the destination of a transfer initiated from the remote pane.
     //
@@ -78,8 +79,9 @@ void LocalBackend::downloadFile(const QString &remotePath, const QString &localP
     emit transferFinished(remotePath);
 }
 
-void LocalBackend::uploadFile(const QString &localPath, const QString &remotePath)
+void LocalBackend::uploadFile(const QString &localPath, const QString &remotePath, qint64 resumeOffset)
 {
+    Q_UNUSED(resumeOffset);
     QFileInfo info(localPath);
     const qint64 size = info.size();
     emit transferProgress(localPath, 0, size);

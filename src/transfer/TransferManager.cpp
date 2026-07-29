@@ -65,7 +65,11 @@ void TransferManager::startNext()
         m_activeIndex = i;
         TransferItem &item = m_items[i];
         item.status = TransferStatus::InProgress;
+        item.speedBytesPerSec = 0;
         emit itemUpdated(item);
+
+        m_speedSampleTimer.start();
+        m_speedSampleBytesAtLastSample = item.bytesDone;   // nonzero when resuming a Paused item
 
         RemoteBackend *srcBackend = item.sourcePane->backend();
         RemoteBackend *dstBackend = item.destPane->backend();
@@ -113,8 +117,13 @@ void TransferManager::startNext()
         }
 
         connectToBackend(executor);
+        // item.bytesDone doubles as the resume offset — 0 for a fresh
+        // item, nonzero when re-starting a previously Paused one (see
+        // resumeItem(), which deliberately does NOT reset bytesDone the
+        // way retryItem() resets it to 0).
         QMetaObject::invokeMethod(executor, methodName, Qt::QueuedConnection,
-                                   Q_ARG(QString, argA), Q_ARG(QString, argB));
+                                   Q_ARG(QString, argA), Q_ARG(QString, argB),
+                                   Q_ARG(qint64, item.bytesDone));
         return;
     }
 
@@ -141,8 +150,11 @@ void TransferManager::cancelItem(int id)
         return;
     }
 
-    if (item.status == TransferStatus::Queued) {
-        // Hasn't started yet — nothing to interrupt, just mark it done.
+    if (item.status == TransferStatus::Queued || item.status == TransferStatus::Paused) {
+        // Neither is actively running — Queued never started, Paused
+        // already stopped and isn't the active item anymore (m_activeIndex
+        // moved on when it paused) — so there's nothing to interrupt,
+        // just mark it done.
         item.status = TransferStatus::Cancelled;
         emit itemUpdated(item);
     }
@@ -168,6 +180,38 @@ void TransferManager::retryItem(int id)
     startNext();
 }
 
+void TransferManager::pauseItem(int id)
+{
+    const int idx = indexById(id);
+    if (idx < 0 || idx != m_activeIndex)
+        return;   // only the currently-running item can be paused
+
+    if (m_currentBackend)
+        m_currentBackend->requestPause();
+    // No status change here — onBackendPaused() makes that transition
+    // once the backend actually confirms it stopped. Setting Paused
+    // eagerly here would show a status the transfer hasn't reached yet.
+}
+
+void TransferManager::resumeItem(int id)
+{
+    const int idx = indexById(id);
+    if (idx < 0)
+        return;
+
+    TransferItem &item = m_items[idx];
+    if (item.status != TransferStatus::Paused)
+        return;
+
+    // Deliberately NOT resetting bytesDone — that's the resume offset
+    // startNext() will pass through to the backend. This is the one
+    // place this differs from retryItem().
+    item.status = TransferStatus::Queued;
+    emit itemUpdated(item);
+
+    startNext();
+}
+
 void TransferManager::connectToBackend(RemoteBackend *backend)
 {
     if (m_currentBackend)
@@ -176,6 +220,7 @@ void TransferManager::connectToBackend(RemoteBackend *backend)
     connect(backend, &RemoteBackend::transferProgress, this, &TransferManager::onBackendProgress);
     connect(backend, &RemoteBackend::transferFinished, this, &TransferManager::onBackendFinished);
     connect(backend, &RemoteBackend::transferFailed, this, &TransferManager::onBackendFailed);
+    connect(backend, &RemoteBackend::transferPaused, this, &TransferManager::onBackendPaused);
 
     m_currentBackend = backend;
 }
@@ -189,6 +234,19 @@ void TransferManager::onBackendProgress(const QString &fileName, qint64 bytesDon
     TransferItem &item = m_items[m_activeIndex];
     item.bytesDone = bytesDone;
     item.bytesTotal = bytesTotal;
+
+    // Recompute speed roughly every 250ms rather than on every single
+    // progress signal — SFTP's read/write loop emits one per 32KB chunk,
+    // which on a fast connection would be far too frequent to be a
+    // meaningful "live" number rather than noise.
+    const qint64 elapsedMs = m_speedSampleTimer.isValid() ? m_speedSampleTimer.elapsed() : 0;
+    if (elapsedMs >= 250) {
+        const qint64 bytesSinceLastSample = bytesDone - m_speedSampleBytesAtLastSample;
+        item.speedBytesPerSec = (bytesSinceLastSample * 1000) / elapsedMs;
+        m_speedSampleBytesAtLastSample = bytesDone;
+        m_speedSampleTimer.restart();
+    }
+
     emit itemUpdated(item);
 }
 
@@ -201,6 +259,7 @@ void TransferManager::onBackendFinished(const QString &fileName)
     TransferItem &item = m_items[m_activeIndex];
     item.status = TransferStatus::Done;
     item.bytesDone = item.bytesTotal > 0 ? item.bytesTotal : item.bytesDone;
+    item.speedBytesPerSec = 0;   // not meaningful once finished — avoid showing a stale number
     m_activeItemCancelled = false;   // in case cancelItem() was called just as this finished anyway
     emit itemUpdated(item);
     emit transferSucceeded();
@@ -218,7 +277,24 @@ void TransferManager::onBackendFailed(const QString &fileName, const QString &re
     TransferItem &item = m_items[m_activeIndex];
     item.status = m_activeItemCancelled ? TransferStatus::Cancelled : TransferStatus::Failed;
     item.errorMessage = m_activeItemCancelled ? QString() : reason;
+    item.speedBytesPerSec = 0;
     m_activeItemCancelled = false;
+    emit itemUpdated(item);
+
+    m_activeIndex = -1;
+    startNext();
+}
+
+void TransferManager::onBackendPaused(const QString &fileName, qint64 bytesDone)
+{
+    Q_UNUSED(fileName);
+    if (m_activeIndex < 0 || m_activeIndex >= m_items.size())
+        return;
+
+    TransferItem &item = m_items[m_activeIndex];
+    item.status = TransferStatus::Paused;
+    item.bytesDone = bytesDone;   // becomes the resume offset the next time this item runs
+    item.speedBytesPerSec = 0;
     emit itemUpdated(item);
 
     m_activeIndex = -1;

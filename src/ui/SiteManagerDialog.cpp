@@ -10,6 +10,7 @@
 #include <QButtonGroup>
 #include <QStackedWidget>
 #include <QPushButton>
+#include <QComboBox>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFormLayout>
@@ -71,6 +72,18 @@ void SiteManagerDialog::buildUi()
     // --- Right: details form ---
     m_nameEdit = new QLineEdit(this);
     connect(m_nameEdit, &QLineEdit::editingFinished, this, &SiteManagerDialog::onFieldEdited);
+
+    // Editable combo: pick an existing group from the dropdown, or type a
+    // new name to create one on the spot. There's no separate "groups"
+    // collection to manage — a group exists precisely when at least one
+    // site references it, so typing a new name here is how one gets
+    // created; leaving it blank means ungrouped.
+    m_groupCombo = new QComboBox(this);
+    m_groupCombo->setEditable(true);
+    m_groupCombo->setInsertPolicy(QComboBox::NoInsert);   // don't auto-add typed text to the dropdown list itself
+    m_groupCombo->lineEdit()->setPlaceholderText(tr("(none)"));
+    connect(m_groupCombo->lineEdit(), &QLineEdit::editingFinished, this, &SiteManagerDialog::onFieldEdited);
+    connect(m_groupCombo, &QComboBox::currentIndexChanged, this, &SiteManagerDialog::onFieldEdited);
 
     m_hostEdit = new QLineEdit(this);
     connect(m_hostEdit, &QLineEdit::editingFinished, this, &SiteManagerDialog::onFieldEdited);
@@ -157,6 +170,7 @@ void SiteManagerDialog::buildUi()
 
     auto *form = new QFormLayout;
     form->addRow(tr("Site name:"), m_nameEdit);
+    form->addRow(tr("Group:"), m_groupCombo);
     form->addRow(tr("Host:"), m_hostEdit);
     form->addRow(tr("Port:"), m_portSpin);
     form->addRow(tr("Username:"), m_usernameEdit);
@@ -227,6 +241,7 @@ void SiteManagerDialog::rebuildTree()
     }
 
     m_tree->expandAll();
+    refreshGroupChoices();
 
     // Re-select whatever was selected before the rebuild, if it still exists.
     if (!previouslySelected.isEmpty()) {
@@ -238,6 +253,27 @@ void SiteManagerDialog::rebuildTree()
             }
         }
     }
+}
+
+void SiteManagerDialog::refreshGroupChoices()
+{
+    // Preserve whatever's currently typed/selected — this runs after
+    // every tree rebuild, including ones triggered by an in-progress
+    // group edit, so it must not clobber what the person just typed.
+    const QString currentText = m_groupCombo->currentText();
+
+    QStringList groups;
+    for (const SavedSite &site : m_sites) {
+        if (!site.group.isEmpty() && !groups.contains(site.group))
+            groups.append(site.group);
+    }
+    groups.sort(Qt::CaseInsensitive);
+
+    const QSignalBlocker blocker(m_groupCombo);
+    m_groupCombo->clear();
+    m_groupCombo->addItem(QString());   // "(none)" via placeholder text, not a literal empty-string row label
+    m_groupCombo->addItems(groups);
+    m_groupCombo->setCurrentText(currentText);
 }
 
 SavedSite *SiteManagerDialog::selectedSite()
@@ -284,8 +320,11 @@ void SiteManagerDialog::loadSiteIntoForm(const SavedSite &site)
     const QSignalBlocker b8(m_homeDirRadio);
     const QSignalBlocker b9(m_specificDirRadio);
     const QSignalBlocker b10(m_startingDirEdit);
+    const QSignalBlocker b11(m_groupCombo);
+    const QSignalBlocker b12(m_groupCombo->lineEdit());
 
     m_nameEdit->setText(site.name);
+    m_groupCombo->setCurrentText(site.group);
     m_hostEdit->setText(site.host);
     m_portSpin->setValue(site.port > 0 ? site.port : 22);
     m_usernameEdit->setText(site.username);
@@ -311,7 +350,11 @@ void SiteManagerDialog::commitFormToSelectedSite()
     if (!site)
         return;   // nothing selected — form is just a scratch area for a one-off connect
 
+    const QString newGroup = m_groupCombo->currentText().trimmed();
+    const bool groupChanged = (newGroup != site->group);
+
     site->name = m_nameEdit->text().trimmed().isEmpty() ? tr("Untitled Site") : m_nameEdit->text().trimmed();
+    site->group = newGroup;
     site->host = m_hostEdit->text().trimmed();
     site->port = m_portSpin->value();
     site->username = m_usernameEdit->text();
@@ -322,11 +365,16 @@ void SiteManagerDialog::commitFormToSelectedSite()
 
     SiteStore::save(m_sites);
 
-    // Tree item text needs to track the name in real time; everything
-    // else about hierarchy doesn't change from field edits in this
-    // version (no in-UI group editing yet — see class doc comment).
-    if (QTreeWidgetItem *item = m_tree->currentItem())
+    if (groupChanged) {
+        // Hierarchy itself changed (site may need to move to a different
+        // folder, or a folder may now be empty and should disappear) —
+        // a full rebuild is the simplest correct way to reflect that,
+        // unlike a plain rename which only needs the item's own text
+        // updated in place.
+        rebuildTree();
+    } else if (QTreeWidgetItem *item = m_tree->currentItem()) {
         item->setText(0, site->name);
+    }
 }
 
 void SiteManagerDialog::onFieldEdited()

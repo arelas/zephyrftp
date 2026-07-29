@@ -162,3 +162,18 @@ qt_add_executable(navigation-test EXCLUDE_FROM_ALL
 )
 target_include_directories(navigation-test PRIVATE src)
 target_link_libraries(navigation-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
+
+# --- Transfer pause/resume orchestration test (fake backend, no real server needed) ---
+qt_add_executable(transfer-pause-test EXCLUDE_FROM_ALL
+    src/transfer_pause_test.cpp
+    src/ui/FilePaneWidget.cpp
+    src/ui/FileTreeView.cpp
+    src/ui/IconTheme.cpp
+    src/backends/LocalBackend.cpp
+    src/backends/RemoteBackend.h
+    src/transfer/TransferManager.cpp
+    resources/icons.qrc
+    resources/theme.qrc
+)
+target_include_directories(transfer-pause-test PRIVATE src)
+target_link_libraries(transfer-pause-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)

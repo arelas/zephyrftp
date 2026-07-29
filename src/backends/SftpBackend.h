@@ -41,8 +41,8 @@ public:
 
     void connectToHost() override;
     void listDirectory(const QString &path) override;
-    void downloadFile(const QString &remotePath, const QString &localPath) override;
-    void uploadFile(const QString &localPath, const QString &remotePath) override;
+    void downloadFile(const QString &remotePath, const QString &localPath, qint64 resumeOffset = 0) override;
+    void uploadFile(const QString &localPath, const QString &remotePath, qint64 resumeOffset = 0) override;
 
     QString currentPath() const override;
     bool isLocalFilesystem() const override { return false; }
@@ -54,6 +54,12 @@ public:
     // or possible here (see RemoteBackend::requestCancel's doc comment for
     // why a queued signal wouldn't work for this).
     void requestCancel() override;
+
+    // Same mechanism as requestCancel() (thread-safe flag, polled in the
+    // same loop) but the loop reports back via transferPaused() with the
+    // current byte count instead of transferFailed() — see
+    // RemoteBackend::requestPause()'s doc comment.
+    void requestPause() override;
 
 private:
     bool ensureSession();   // lazy TCP + libssh2 handshake + host-key check + auth
@@ -85,4 +91,8 @@ private:
     // cross-thread memory visibility guarantee — a plain bool has no such
     // guarantee and could be cached/reordered incorrectly across threads.
     QAtomicInteger<bool> m_cancelRequested{false};
+
+    // Same pattern, same reasoning, for requestPause(). A single loop
+    // iteration checks both flags — see downloadFile()/uploadFile().
+    QAtomicInteger<bool> m_pauseRequested{false};
 };

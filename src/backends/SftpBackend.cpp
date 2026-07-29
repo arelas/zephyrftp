@@ -351,12 +351,13 @@ void SftpBackend::listDirectory(const QString &path)
     emit directoryListed(m_currentPath, entries);
 }
 
-void SftpBackend::downloadFile(const QString &remotePath, const QString &localPath)
+void SftpBackend::downloadFile(const QString &remotePath, const QString &localPath, qint64 resumeOffset)
 {
     if (!ensureSession())
         return;
 
     m_cancelRequested.storeRelaxed(false);   // reset — backend persists across transfers
+    m_pauseRequested.storeRelaxed(false);
 
     LIBSSH2_SFTP_HANDLE *handle =
         libssh2_sftp_open(m_sftp, remotePath.toUtf8().constData(), LIBSSH2_FXF_READ, 0);
@@ -365,18 +366,40 @@ void SftpBackend::downloadFile(const QString &remotePath, const QString &localPa
         return;
     }
 
+    // Resuming: open without truncating. QIODevice::ReadWrite (not
+    // WriteOnly) so the file can be seeked/resized precisely rather than
+    // just appended to — needed for the size-mismatch handling below.
     QFile out(localPath);
-    if (!out.open(QIODevice::WriteOnly)) {
+    const QIODevice::OpenMode openMode = resumeOffset > 0
+        ? QIODevice::ReadWrite
+        : (QIODevice::WriteOnly | QIODevice::Truncate);
+    if (!out.open(openMode)) {
         libssh2_sftp_close(handle);
         emit transferFailed(remotePath, QStringLiteral("Cannot open local file for write: %1").arg(localPath));
         return;
     }
 
+    // Trust what's actually on disk over the requested offset if they
+    // disagree — the local file could have changed between pause and
+    // resume (edge case, but a real one). Smaller-than-expected: clamp
+    // down rather than zero-pad up to resumeOffset, which would corrupt
+    // the file with a gap of null bytes. Larger-than-expected: trim the
+    // excess back to the resume point.
+    qint64 effectiveOffset = 0;
+    if (resumeOffset > 0) {
+        effectiveOffset = qMin(resumeOffset, out.size());
+        if (out.size() > effectiveOffset)
+            out.resize(effectiveOffset);
+        out.seek(effectiveOffset);
+        libssh2_sftp_seek64(handle, static_cast<libssh2_uint64_t>(effectiveOffset));
+    }
+
     LIBSSH2_SFTP_ATTRIBUTES attrs;
     libssh2_sftp_fstat(handle, &attrs);
     const qint64 totalSize = static_cast<qint64>(attrs.filesize);
-    qint64 done = 0;
+    qint64 done = effectiveOffset;
     bool cancelled = false;
+    bool paused = false;
 
     char buf[32 * 1024];
     ssize_t n = 0;
@@ -389,12 +412,18 @@ void SftpBackend::downloadFile(const QString &remotePath, const QString &localPa
             cancelled = true;
             break;
         }
+        if (m_pauseRequested.loadRelaxed()) {
+            paused = true;
+            break;
+        }
     }
 
     out.close();
     libssh2_sftp_close(handle);
 
-    if (cancelled)
+    if (paused)
+        emit transferPaused(remotePath, done);
+    else if (cancelled)
         emit transferFailed(remotePath, QStringLiteral("Cancelled"));
     else if (n < 0)
         emit transferFailed(remotePath, QStringLiteral("Read error during transfer"));
@@ -402,12 +431,13 @@ void SftpBackend::downloadFile(const QString &remotePath, const QString &localPa
         emit transferFinished(remotePath);
 }
 
-void SftpBackend::uploadFile(const QString &localPath, const QString &remotePath)
+void SftpBackend::uploadFile(const QString &localPath, const QString &remotePath, qint64 resumeOffset)
 {
     if (!ensureSession())
         return;
 
     m_cancelRequested.storeRelaxed(false);   // reset — backend persists across transfers
+    m_pauseRequested.storeRelaxed(false);
 
     QFile in(localPath);
     if (!in.open(QIODevice::ReadOnly)) {
@@ -415,19 +445,38 @@ void SftpBackend::uploadFile(const QString &localPath, const QString &remotePath
         return;
     }
 
+    // Clamp to the actual local size if the source shrank since the
+    // pause (edge case) — seeking past EOF would just immediately hit
+    // end-of-file and upload nothing further; resuming from what's
+    // actually there is the more correct behavior.
+    qint64 effectiveOffset = 0;
+    if (resumeOffset > 0) {
+        effectiveOffset = qMin(resumeOffset, in.size());
+        in.seek(effectiveOffset);
+    }
+
+    // Resuming: no LIBSSH2_FXF_TRUNC — truncating would destroy the bytes
+    // already uploaded before the pause. Fresh start keeps the original
+    // truncate-on-open behavior.
+    const int openFlags = effectiveOffset > 0
+        ? (LIBSSH2_FXF_WRITE | LIBSSH2_FXF_CREAT)
+        : (LIBSSH2_FXF_WRITE | LIBSSH2_FXF_CREAT | LIBSSH2_FXF_TRUNC);
+
     LIBSSH2_SFTP_HANDLE *handle = libssh2_sftp_open(
-        m_sftp, remotePath.toUtf8().constData(),
-        LIBSSH2_FXF_WRITE | LIBSSH2_FXF_CREAT | LIBSSH2_FXF_TRUNC,
+        m_sftp, remotePath.toUtf8().constData(), openFlags,
         LIBSSH2_SFTP_S_IRUSR | LIBSSH2_SFTP_S_IWUSR | LIBSSH2_SFTP_S_IRGRP | LIBSSH2_SFTP_S_IROTH);
     if (!handle) {
         emit transferFailed(localPath, QStringLiteral("Cannot open remote file for write"));
         return;
     }
+    if (effectiveOffset > 0)
+        libssh2_sftp_seek64(handle, static_cast<libssh2_uint64_t>(effectiveOffset));
 
     const qint64 totalSize = in.size();
-    qint64 done = 0;
+    qint64 done = effectiveOffset;
     char buf[32 * 1024];
     bool cancelled = false;
+    bool paused = false;
 
     while (!in.atEnd()) {
         qint64 n = in.read(buf, sizeof(buf));
@@ -451,14 +500,25 @@ void SftpBackend::uploadFile(const QString &localPath, const QString &remotePath
             cancelled = true;
             break;
         }
+        if (m_pauseRequested.loadRelaxed()) {
+            paused = true;
+            break;
+        }
     }
 
     libssh2_sftp_close(handle);
 
-    if (cancelled)
+    if (paused)
+        emit transferPaused(localPath, done);
+    else if (cancelled)
         emit transferFailed(localPath, QStringLiteral("Cancelled"));
     else
         emit transferFinished(localPath);
+}
+
+void SftpBackend::requestPause()
+{
+    m_pauseRequested.storeRelaxed(true);
 }
 
 void SftpBackend::requestCancel()

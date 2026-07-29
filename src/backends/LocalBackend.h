@@ -13,8 +13,8 @@ public:
 
     void connectToHost() override;   // immediately emits connected()
     void listDirectory(const QString &path) override;
-    void downloadFile(const QString &remotePath, const QString &localPath) override;
-    void uploadFile(const QString &localPath, const QString &remotePath) override;
+    void downloadFile(const QString &remotePath, const QString &localPath, qint64 resumeOffset = 0) override;
+    void uploadFile(const QString &localPath, const QString &remotePath, qint64 resumeOffset = 0) override;
 
     QString currentPath() const override;
     bool isLocalFilesystem() const override { return true; }
@@ -23,6 +23,11 @@ public:
     // to check a flag inside — there's nothing to interrupt mid-transfer.
     // Local copies are fast enough in practice that this hasn't mattered.
     void requestCancel() override {}
+
+    // Same reasoning as requestCancel() above — see RemoteBackend's doc
+    // comment on requestPause() for why local transfers never actually
+    // reach this in practice (the UI doesn't offer Pause for them).
+    void requestPause() override {}
 
 private:
     QString m_currentPath;

@@ -151,6 +151,41 @@ that way, it's flagged explicitly rather than left implied.
   possible, not only for the test's sake) are checked directly rather
   than inferred from navigation side effects.
 
+- **Pause/resume's orchestration logic is verified via a purpose-built
+  fake backend, since the real byte-offset resume needs a live SFTP
+  server this environment doesn't have.** `src/transfer_pause_test.cpp`
+  (built via the `transfer-pause-test` CMake target) defines
+  `FakePausableBackend` — a `RemoteBackend` implementation that simulates
+  an interruptible async transfer via a `QTimer` ticking in fixed
+  chunks, genuinely asynchronous (not one synchronous loop) so there's a
+  real window between ticks for the test to call
+  `pauseItem()`/`resumeItem()`, same as there'd be with a real backend
+  on a real network. This is a legitimate test-double technique —
+  `TransferManager` only ever talks to the `RemoteBackend` interface, so
+  a fake honoring that interface's contract exercises the same
+  orchestration code a real backend would. Confirms: pausing produces a
+  genuine `Paused` status with real nonzero `bytesDone` (checked against
+  the manager's own item list, not a local test variable); resuming
+  produces a first `InProgress` update whose `bytesDone` is at or above
+  the paused value — proving it continued rather than restarted from
+  zero, the entire point of pause/resume over cancel/retry; and the
+  transfer reaches `Done` with the full byte count afterward. Does
+  **not** verify `SftpBackend`'s actual seek/clamp/no-truncate logic —
+  see Known gaps.
+
+- **Site Manager's new Group field renders in the right place,
+  confirmed by pixel analysis, not assumed from the code alone.** A
+  screenshot of `SiteManagerDialog` with two grouped sites was analyzed
+  for the QLineEdit/QComboBox "surface" color (`#1a1d23`) — the first
+  attempt used too loose a tolerance and matched the dialog's `#14171c`
+  background as well (they differ by only ~6-7 per channel), giving a
+  false single-block result; corrected to a tight tolerance and found
+  exactly 6 distinct field-row bands — Site name, **Group**, Host, Port,
+  Username, then a gap where the Authentication radios sit (no text
+  field there), then Starting directory further down — matching the
+  expected form structure exactly, with Group in the correct second
+  position.
+
 **Still not verified:** public-key authentication (implemented, but no
 real key file has been tested against it yet — see Known gaps), the
 transfer queue's progress-bar/status-icon rendering with a real active
@@ -175,6 +210,19 @@ headless/offscreen runs have been checked).
   can reach them by name across the thread boundary — the base class's
   moc-generated slot thunk dispatches through the vtable, so the derived
   override still runs (Qt's "virtual slot" pattern).
+  `downloadFile`/`uploadFile` take a `resumeOffset` parameter (0 for a
+  fresh transfer) implementing real byte-offset resume, not just a
+  cosmetic "paused" label: on resume, the local file is opened
+  read/write and trimmed or clamped to match what's actually on disk
+  (not blindly trusted — the local file could have changed between
+  pause and resume) rather than reopened fresh, `libssh2_sftp_seek64()`
+  positions the remote side, and — for uploads specifically —
+  `LIBSSH2_FXF_TRUNC` is deliberately omitted on a resumed open, since
+  truncating would destroy the bytes already uploaded before the pause.
+  `requestPause()` follows the exact same thread-safe-flag pattern as
+  `requestCancel()` (`QAtomicInteger<bool>`, polled inside the same
+  read/write loop, both checked every iteration) — see `RemoteBackend`'s
+  doc comment on why a queued signal can't do this job instead.
 - `ConnectionDialog` — host/port/username form plus a password/private-key
   auth toggle (`QStackedWidget` swaps the relevant fields). Returns a
   single `SftpCredentials` struct (`src/backends/SftpCredentials.h`) that
@@ -206,16 +254,18 @@ headless/offscreen runs have been checked).
 - `SiteManagerDialog` — the saved-sites UI: a grouped tree on the left,
   a details form on the right, matching the design package's
   site-manager.html mockup, plus a starting-directory radio choice
-  (Home / Specific) the mockup didn't have. Persists via `SiteStore` on every field edit
-  (`QLineEdit::editingFinished`, not per-keystroke) and every structural
-  change (new/duplicate/delete), so there's no separate "Save" step to
-  forget. Its Connect button prompts for the password or key passphrase
-  fresh every time, regardless of what's saved — see `SavedSite` above.
-  No in-UI way to move a site between groups yet, or to create a group
-  directly — `SavedSite.group` exists in the data model and the tree
-  will display groups if present, but nothing in this dialog sets one
-  besides `SiteStore`'s own field-preserving round-trip (i.e. hand-editing
-  `sites.json`, or a future version of this dialog).
+  (Home / Specific) the mockup didn't have. Persists via `SiteStore` on
+  every field edit (`QLineEdit::editingFinished`, not per-keystroke) and
+  every structural change (new/duplicate/delete), so there's no separate
+  "Save" step to forget. Its Connect button prompts for the password or
+  key passphrase fresh every time, regardless of what's saved — see
+  `SavedSite` above. Groups are organized via an editable `QComboBox`
+  (`m_groupCombo`) next to the site name — pick an existing group from
+  the dropdown or type a new one to create it on the spot; there's no
+  separate "groups" collection to manage, a group exists precisely when
+  at least one site references it. Changing a site's group triggers a
+  full `rebuildTree()` (hierarchy actually changed) rather than the
+  simple in-place item-text update every other field edit uses.
 - `HostKeyVerifier` — lives on the GUI thread for the app's lifetime.
   `SftpBackend`'s worker thread calls into it via
   `QMetaObject::invokeMethod(..., Qt::BlockingQueuedConnection)` to get a
@@ -279,11 +329,27 @@ headless/offscreen runs have been checked).
   blocking transfer loop it's meant to interrupt already returned on its
   own) — and a flag (`m_activeItemCancelled`) distinguishes the resulting
   `transferFailed` as "cancelled" vs. "genuinely failed" once it arrives.
+  `pauseItem()`/`resumeItem()` follow the same `requestPause()` pattern as
+  cancel, but need no equivalent disambiguating flag — `transferPaused` is
+  its own signal, unambiguous the moment it arrives, unlike
+  `transferFailed` which both cancellation and genuine errors produce.
+  `resumeItem()` deliberately does NOT reset `bytesDone` the way
+  `retryItem()` resets it to zero — that value is exactly the resume
+  offset `startNext()` passes through to the backend on the next run.
+  Live speed (`TransferItem::speedBytesPerSec`) is sampled roughly every
+  250ms in `onBackendProgress()` (via `QElapsedTimer`) rather than on
+  every single progress signal, which for SFTP's 32KB-chunk read/write
+  loop would be far too frequent to read as a stable "live" number.
 - `TransferQueueWidget` — table view mirroring `TransferManager`'s
   `itemAdded`/`itemUpdated` signals, plus a right-click context menu
-  (Cancel/Retry, enabled based on the item's current status) that calls
-  straight back into the manager. All state still lives in the manager —
-  this is a view, not a second source of truth.
+  (Cancel/Pause/Resume/Retry, each enabled based on the item's current
+  status — Pause additionally checks the item's direction, since
+  `LocalBackend`'s `requestPause()` is a documented no-op and offering
+  Pause for a local-to-local transfer would just silently do nothing)
+  that calls straight back into the manager. A Speed column shows
+  `TransferManager`'s sampled rate, formatted B/s -> KB/s -> MB/s. All
+  state still lives in the manager — this is a view, not a second source
+  of truth.
 - `MainWindow` — two `FilePaneWidget`s in a `QSplitter`, plus a
   `QDockWidget` at the bottom holding the transfer queue. Left pane is
   always `LocalBackend`. Right pane starts on `LocalBackend`; the
@@ -308,11 +374,13 @@ scoped to a **visual re-skin of existing features only**; Site Manager
 Architecture section above. Pause/resume and live transfer speed, also
 shown in the mockups, still don't exist in this app.
 
-- `resources/icons/*.svg` — 23 vendored Tabler Icons SVGs (22 in-app UI
-  icons — 18 from the original theming pass plus `server-cog`,
-  `folder-plus`, `copy`, `trash` added for Site Manager — plus
-  `wind.svg`, used only as the app icon's source glyph — see
-  below), fetched directly from `github.com/tabler/tabler-icons` (MIT
+- `resources/icons/*.svg` — 28 vendored Tabler Icons SVGs (27 in-app UI
+  icons — 18 from the original theming pass, `server-cog`/`folder-plus`/
+  `copy`/`trash` added for Site Manager, `arrow-left`/`arrow-right`/
+  `corner-left-up` added for pane navigation, `player-pause`/`player-play`
+  added for transfer pause/resume — plus `wind.svg`, used only as the
+  app icon's source glyph — see below), fetched directly from
+  `github.com/tabler/tabler-icons` (MIT
   license included as `resources/icons/LICENSE-tabler-icons.txt`). Each
   uses `stroke="currentColor"`, deliberately not pre-colored — recolored
   at render time instead (see `IconTheme` below), so there's one source
@@ -404,12 +472,6 @@ ever needs touching again:
 
 ## Known gaps (flagged, not fixed)
 
-- **Site Manager has no in-UI way to create or move sites between
-  groups yet.** `SavedSite.group` exists in the data model, and
-  `SiteManagerDialog`'s tree will correctly display groups if a site
-  has one, but nothing in the dialog itself sets one — every "New Site"
-  is created ungrouped. Reaching the grouped state shown in the design
-  mockup currently means hand-editing `sites.json`'s `group` field.
 - **Public-key authentication is implemented but unverified.**
   `ConnectionDialog` has a password/private-key toggle and
   `SftpBackend::ensureSession()` branches accordingly, but no real key
@@ -426,13 +488,22 @@ ever needs touching again:
   drag-and-drop both skip directories entirely (files only) — dragging or
   selecting a folder does nothing, silently, rather than erroring. Would
   need real recursive traversal + a nested queue structure to support.
-- **Cancel is implemented but only automated-tested against `LocalBackend`,
-  where it's a documented no-op** (`QFile::copy()` can't be interrupted
-  mid-call). `SftpBackend`'s actual mid-transfer interruption — the cancel
-  flag checked inside the libssh2 read/write loops — compiles and follows
-  the same pattern proven correct elsewhere in this codebase, but has no
-  real-server test confirming it actually stops a transfer partway
-  through. Needs a slow enough real transfer to verify by hand.
+- **Cancel and pause/resume are implemented but only automated-tested
+  against a fake backend and against `LocalBackend`, where both are a
+  documented no-op** (`QFile::copy()` can't be interrupted mid-call).
+  `SftpBackend`'s actual mid-transfer interruption — the cancel and pause
+  flags checked inside the libssh2 read/write loops — and its real
+  byte-offset resume logic (the `libssh2_sftp_seek64()` calls, the
+  local-file clamping/trimming against what's actually on disk) all
+  compile and follow patterns proven correct elsewhere in this codebase,
+  but none of it has a real-server test confirming it actually works —
+  `transfer-pause-test` verifies `TransferManager`'s orchestration
+  (status transitions, offset preservation, resume-not-restart) using a
+  fake backend built for exactly that purpose, which is a real and
+  useful thing to have verified, but is a different claim than "resuming
+  a paused SFTP upload actually picks up where it left off on a live
+  server." Needs a slow enough real transfer, paused and resumed by
+  hand, to verify that specific claim.
 - **Queue item execution is bound to whatever backend is on the pane when
   its turn comes up**, not when it was enqueued. If you queue a transfer,
   then hit Disconnect before it starts, it'll run against whatever backend

@@ -10,13 +10,15 @@ move things between them. Think FileZilla or WinSCP, built fresh in Qt6.
   other, both visible at once. Back, forward, and up buttons beside each
   pane's location bar, same as any file manager.
 - **SFTP with password or private-key login.**
-- **Site Manager** — save connections you use often (grouped into
-  folders if you like), so you don't have to re-type the host, port, and
-  username every time. Each saved site can also default to a specific
-  starting folder on the server instead of your home directory — handy
-  if you always go straight to the same upload folder. Your password is
-  never saved to disk, though — you'll be asked for it each time you
-  connect. Same for a private key's passphrase, if it has one.
+- **Site Manager** — save connections you use often, organized into
+  folders (type a new folder name right on the site's details, or pick
+  an existing one from the dropdown), so you don't have to re-type the
+  host, port, and username every time. Each saved site can also default
+  to a specific starting folder on the server instead of your home
+  directory — handy if you always go straight to the same upload folder.
+  Your password is never saved to disk, though — you'll be asked for it
+  each time you connect. Same for a private key's passphrase, if it has
+  one.
 - **Host-key verification** — the first time you connect to a server,
   ZephyrFTP shows you its identity fingerprint and asks you to confirm
   it. If that fingerprint ever changes on a later connection, you get a
@@ -24,8 +26,10 @@ move things between them. Think FileZilla or WinSCP, built fresh in Qt6.
   protection SSH itself uses, and it's on by default here.
 - **Drag-and-drop or multi-select transfers** — drag files from one pane
   to the other, or select several at once and right-click → Transfer.
-- **A real transfer queue** — see what's moving, cancel something
-  mid-transfer, or retry something that failed, all from one place.
+- **A real transfer queue** — see what's moving and how fast, pause a
+  transfer to a server and pick it back up later without starting over,
+  cancel something outright, or retry something that failed, all from
+  one place.
 - **Dark theme**, built around a small set of colors that mean the same
   thing everywhere in the app (green = connect/upload/success, red =
   disconnect/delete/error, blue = navigation/download, amber = caution)
@@ -76,8 +80,11 @@ rather than being half-implemented:
 - **Server-to-server transfers aren't supported** — ZephyrFTP always
   transfers between your computer and one server, not between two
   remote servers directly.
-- **No pause** — transfers can be cancelled and retried, but not paused
-  and resumed later.
+- **Pause only works for transfers involving a server** — you can pause
+  an upload or download to/from a server and pick it back up later, but
+  a purely local copy (between two folders on your own computer) can
+  only be cancelled and retried, not paused, since there's nothing
+  meaningful to interrupt mid-copy on a local transfer.
 
 ## For developers and tinkerers
 

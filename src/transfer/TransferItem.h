@@ -14,6 +14,7 @@ enum class TransferDirection {
 enum class TransferStatus {
     Queued,
     InProgress,
+    Paused,
     Done,
     Failed,
     Cancelled
@@ -37,8 +38,13 @@ struct TransferItem {
     QString destPath;
     TransferDirection direction = TransferDirection::Unsupported;
     TransferStatus status = TransferStatus::Queued;
-    qint64 bytesDone = 0;
+    qint64 bytesDone = 0;   // also serves as the resume offset when status == Paused
     qint64 bytesTotal = 0;
+    // Live transfer rate, sampled roughly every 250ms while InProgress
+    // (see TransferManager::onBackendProgress) — not a per-chunk
+    // instantaneous rate, which would be too noisy to read. 0 outside of
+    // an active transfer; not meaningful/updated for Paused or Done.
+    qint64 speedBytesPerSec = 0;
     QString errorMessage;
 
     FilePaneWidget *sourcePane = nullptr;
