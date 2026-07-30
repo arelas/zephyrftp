@@ -151,6 +151,23 @@ that way, it's flagged explicitly rather than left implied.
   possible, not only for the test's sake) are checked directly rather
   than inferred from navigation side effects.
 
+  **A real bug reported after shipping, fixed and now covered directly:**
+  on Windows, pressing Up from a top-level local folder (e.g.
+  `C:/Users`) landed on the app's own working directory instead of the
+  actual drive root `C:\`. Root cause: `parentOfPath("C:/Users")` was
+  computing the bare string `"C:"` (no trailing slash) — which Windows
+  interprets as "the process's current directory on drive C" (a legacy
+  per-drive-working-directory quirk), not the drive's actual root. Fixed
+  by special-casing a computed parent matching the `<letter>:` pattern
+  and appending a trailing slash. Since this sandbox is Linux, a real
+  `C:/Users` path can never resolve through the full
+  `navigateTo()->LocalBackend->onDirectoryListed()` stack here — the only
+  way to verify Windows drive-root behavior in this environment is
+  calling the now-public `parentOfPath()` directly, which
+  `navigation-test` now does explicitly (6 checks: the fix itself, the
+  drive-root no-op case one level up, and three POSIX cases confirming
+  the fix didn't disturb the already-working `/`-rooted behavior).
+
 - **Pause/resume's orchestration logic is verified via a purpose-built
   fake backend, since the real byte-offset resume needs a live SFTP
   server this environment doesn't have.** `src/transfer_pause_test.cpp`
@@ -291,12 +308,21 @@ headless/offscreen runs have been checked).
   `goBack()`/`goForward()`-triggered listing (just moves the index) from
   any other navigation (pushes a new entry, truncating whatever "forward"
   entries existed past the current position — the same convention every
-  browser uses). `goUp()` computes the parent via `parentOfPath()`, a
-  static helper using `/` as the separator — correct for SFTP paths
-  always (the protocol mandates forward slashes regardless of the
-  server's OS) and for local paths too under Qt's own convention
-  (`QDir`/`QFileInfo` normalize to `/` even on Windows); a safe no-op at
-  any kind of root rather than erroring or producing a wrong path.
+  browser uses). `goUp()` computes the parent via `parentOfPath()` (a
+  public static helper — deliberately public so its Windows drive-root
+  special case can be tested directly, since a real `C:/...` path can't
+  resolve through this Linux sandbox's actual filesystem) using `/` as
+  the separator — correct for SFTP paths always (the protocol mandates
+  forward slashes regardless of the server's OS) and for local paths too
+  under Qt's own convention (`QDir`/`QFileInfo` normalize to `/` even on
+  Windows). A computed parent matching the bare `<letter>:` pattern
+  (e.g. `"C:"`) gets an explicit trailing slash appended — Windows
+  interprets `"C:"` without one as "the process's current directory on
+  drive C" rather than the drive's actual root, which caused a real
+  reported bug (Up from a top-level folder landing on the app's own
+  working directory instead of `C:\`) before this was added. Otherwise a
+  safe no-op at any kind of root rather than erroring or producing a
+  wrong path.
   `resetHistory()` clears all of this on every `setBackend()` call — a
   new backend (Connect/Disconnect) is a fresh navigation context, not a
   continuation of the old one's history.

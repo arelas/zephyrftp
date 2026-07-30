@@ -335,7 +335,23 @@ QString FilePaneWidget::parentOfPath(const QString &path)
         return path;   // no slash at all (e.g. a bare Windows drive letter) — nothing to go up to, stay put
     if (lastSlash == 0)
         return QStringLiteral("/");   // parent of "/something" is root
-    return clean.left(lastSlash);
+
+    QString parent = clean.left(lastSlash);
+
+    // Windows drive-root special case: "C:/Users" has its last '/' right
+    // after "C:", so the naive result is the bare string "C:" — which
+    // Windows interprets as "the process's current directory on drive C"
+    // (a legacy per-drive-working-directory quirk), NOT the drive's
+    // actual root. Confirmed as a real bug: pressing Up from a top-level
+    // folder landed wherever the app happened to launch from instead of
+    // "C:\". An explicit trailing slash disambiguates it to the real,
+    // absolute drive root — matches what "C:/" already does one Up press
+    // later (a safe no-op, since chopping-then-searching-for-'/' on "C:"
+    // finds none, so this function returns the input unchanged there).
+    if (parent.length() == 2 && parent.at(1) == QLatin1Char(':'))
+        parent += QLatin1Char('/');
+
+    return parent;
 }
 
 void FilePaneWidget::updateNavigationButtonsEnabled()

@@ -15,17 +15,41 @@ int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
 
-    const QString base = "/tmp/nav_test";
-    QDir().mkpath(base + "/a/b/c");
-    QDir().mkpath(base + "/other");
-
-    auto *pane = new FilePaneWidget(new LocalBackend());
-
     bool allPass = true;
     auto check = [&](const QString &label, bool condition) {
         qDebug() << (condition ? "[PASS]" : "[FAIL]") << label;
         if (!condition) allPass = false;
     };
+
+    // --- Direct checks of parentOfPath() itself, synchronous, no event
+    // loop needed --- covers a real bug found after shipping: "C:/Users"
+    // was computing its parent as the bare string "C:" (no trailing
+    // slash), which Windows interprets as "the process's current
+    // directory on drive C" — a legacy per-drive-working-directory quirk
+    // — NOT the drive's actual root. Pressing Up from a top-level local
+    // folder landed wherever the app happened to launch from instead of
+    // "C:\". This sandbox is Linux, so this can only be verified by
+    // calling the pure string-manipulation function directly — a real
+    // "C:/Users" path could never resolve through the full
+    // navigateTo()->LocalBackend->onDirectoryListed() stack here.
+    check("Windows: parent of 'C:/Users/David' is 'C:/Users'",
+          FilePaneWidget::parentOfPath("C:/Users/David") == "C:/Users");
+    check("Windows: THE BUG FIX — parent of 'C:/Users' is 'C:/' (not the bare, ambiguous 'C:')",
+          FilePaneWidget::parentOfPath("C:/Users") == "C:/");
+    check("Windows: parent of the drive root 'C:/' is itself (safe no-op)",
+          FilePaneWidget::parentOfPath("C:/") == "C:/");
+    check("POSIX: parent of '/home/user' is '/home' (unaffected by the Windows fix)",
+          FilePaneWidget::parentOfPath("/home/user") == "/home");
+    check("POSIX: parent of '/home' is '/'",
+          FilePaneWidget::parentOfPath("/home") == "/");
+    check("POSIX: parent of the root '/' is itself (safe no-op)",
+          FilePaneWidget::parentOfPath("/") == "/");
+
+    const QString base = "/tmp/nav_test";
+    QDir().mkpath(base + "/a/b/c");
+    QDir().mkpath(base + "/other");
+
+    auto *pane = new FilePaneWidget(new LocalBackend());
 
     // Step 0 (t=200ms): let the initial home-directory listing complete
     // first (constructor triggers an async connectToHost() ->
