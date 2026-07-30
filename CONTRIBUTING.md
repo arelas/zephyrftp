@@ -21,7 +21,7 @@ does and the real, sometimes non-obvious bugs it surfaced along the way.
 
 ## Running the test suites
 
-Five `EXCLUDE_FROM_ALL` CMake targets — not part of a normal `make`, built
+Six `EXCLUDE_FROM_ALL` CMake targets — not part of a normal `make`, built
 and run explicitly:
 
 ```
@@ -51,6 +51,11 @@ cmake --build build --target transfer-pause-test
 QT_QPA_PLATFORM=offscreen ./build/transfer-pause-test
 ```
 
+```
+cmake --build build --target file-operations-test
+QT_QPA_PLATFORM=offscreen ./build/file-operations-test
+```
+
 The `XDG_CONFIG_HOME` override on `site-store-test` isn't optional —
 without it, `SiteStore` writes to your actual config directory, and the
 test's own cleanup phase will delete whatever `sites.json` it finds
@@ -58,8 +63,12 @@ there. `navigation-test` creates its own scratch directory tree under
 `/tmp/nav_test` and doesn't touch anything outside it. `transfer-pause-test`
 uses a fake in-process backend (no real server, no real files) — see its
 own header comment for exactly what it does and doesn't prove.
+`file-operations-test` creates its own scratch tree under
+`/tmp/file_ops_test` and tests `LocalBackend` directly (not through the
+UI, since its prompts can't be driven headlessly) — see its own header
+comment for what it does and doesn't cover.
 
-All five need to actually pass — not just build — before a change is
+All six need to actually pass — not just build — before a change is
 considered done. See ARCHITECTURE.md's "Verification status" section for
 what each test actually proves and why it exists.
 

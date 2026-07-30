@@ -52,6 +52,14 @@ public slots:
         start(localPath, resumeOffset);
     }
 
+    // Not exercised by this test — it's about pause/resume orchestration,
+    // not file management — but RemoteBackend is a pure interface, so a
+    // concrete fake needs some implementation to be instantiable at all.
+    void deleteEntry(const QString &, bool) override {}
+    void renameEntry(const QString &, const QString &) override {}
+    void createDirectory(const QString &) override {}
+    void createFile(const QString &) override {}
+
 private slots:
     void tick() {
         if (m_cancelRequested) {

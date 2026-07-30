@@ -105,3 +105,79 @@ QString LocalBackend::currentPath() const
 {
     return m_currentPath;
 }
+
+void LocalBackend::deleteEntry(const QString &path, bool isDirectory)
+{
+    if (isDirectory) {
+        // Empty-only, matching plain POSIX rmdir / SFTP RMDIR semantics —
+        // see RemoteBackend::deleteEntry()'s doc comment for why this is
+        // deliberately not recursive.
+        if (!QDir().rmdir(path)) {
+            emit fileOperationFailed(QStringLiteral("Delete"), path,
+                QStringLiteral("Could not remove folder — it may not be empty"));
+            return;
+        }
+    } else {
+        QFile file(path);
+        if (!file.remove()) {
+            emit fileOperationFailed(QStringLiteral("Delete"), path, file.errorString());
+            return;
+        }
+    }
+    listDirectory(m_currentPath);
+}
+
+void LocalBackend::renameEntry(const QString &oldPath, const QString &newPath)
+{
+    // Checked explicitly rather than relying on QDir::rename()'s own
+    // failure to distinguish "name taken" from any other failure reason
+    // in the error message shown to the person who triggered this.
+    if (QFileInfo::exists(newPath)) {
+        emit fileOperationFailed(QStringLiteral("Rename"), oldPath,
+            QStringLiteral("\"%1\" already exists").arg(QFileInfo(newPath).fileName()));
+        return;
+    }
+    // QDir::rename() (not QFile::rename()) specifically — QFile::rename()
+    // isn't documented to reliably rename directories across platforms;
+    // QDir::rename() is the correct portable call for both files and
+    // directories. Works correctly on absolute paths regardless of which
+    // QDir instance it's called on.
+    if (!QDir().rename(oldPath, newPath)) {
+        emit fileOperationFailed(QStringLiteral("Rename"), oldPath, QStringLiteral("Rename failed"));
+        return;
+    }
+    listDirectory(m_currentPath);
+}
+
+void LocalBackend::createDirectory(const QString &path)
+{
+    if (QFileInfo::exists(path)) {
+        emit fileOperationFailed(QStringLiteral("Create folder"), path,
+            QStringLiteral("Something with that name already exists"));
+        return;
+    }
+    if (!QDir().mkdir(path)) {
+        emit fileOperationFailed(QStringLiteral("Create folder"), path, QStringLiteral("Could not create folder"));
+        return;
+    }
+    listDirectory(m_currentPath);
+}
+
+void LocalBackend::createFile(const QString &path)
+{
+    // QIODevice::WriteOnly alone would silently truncate an existing
+    // file — checked explicitly first so "the name is already taken" is
+    // reported as an error instead.
+    if (QFileInfo::exists(path)) {
+        emit fileOperationFailed(QStringLiteral("Create file"), path,
+            QStringLiteral("Something with that name already exists"));
+        return;
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        emit fileOperationFailed(QStringLiteral("Create file"), path, file.errorString());
+        return;
+    }
+    file.close();
+    listDirectory(m_currentPath);
+}

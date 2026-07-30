@@ -177,3 +177,12 @@ qt_add_executable(transfer-pause-test EXCLUDE_FROM_ALL
 )
 target_include_directories(transfer-pause-test PRIVATE src)
 target_link_libraries(transfer-pause-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
+
+# --- File management operations test (delete/rename/create, real LocalBackend + real temp dirs) ---
+qt_add_executable(file-operations-test EXCLUDE_FROM_ALL
+    src/file_operations_test.cpp
+    src/backends/LocalBackend.cpp
+    src/backends/RemoteBackend.h
+)
+target_include_directories(file-operations-test PRIVATE src)
+target_link_libraries(file-operations-test PRIVATE Qt6::Core)

@@ -242,6 +242,36 @@ that way, it's flagged explicitly rather than left implied.
   chased with the same evidence-first approach used so far, not guessed
   at.
 
+- **File management (delete/rename/create file/create folder) is
+  verified against `LocalBackend`, real files, real temp directories —
+  including the two cases that matter most for a destructive,
+  no-undo feature.** `src/file_operations_test.cpp` (built via the
+  `file-operations-test` CMake target) tests the backend directly rather
+  than through `FilePaneWidget`'s right-click menu, since the menu's
+  role is just prompting via `QInputDialog`/`QMessageBox` — dialogs that
+  can't be driven headlessly — while the actual risk lives in the
+  backend operations themselves. 15 checks confirm: creating a file
+  produces a real empty file on disk; creating a file where one already
+  exists is reported as a failure AND — checked explicitly, not assumed
+  — the original content is untouched, not silently truncated; the same
+  two checks for creating a folder; renaming a file and a folder both
+  work and leave no trace of the old name; deleting a file and an empty
+  folder both work; and **deleting a non-empty folder is reported as a
+  failure, with the folder and its contents confirmed still present
+  afterward** — proving the non-recursive-by-design behavior actually
+  holds rather than silently degrading into a partial or accidental
+  recursive delete. Also confirmed by a real screenshot (grabbed via
+  `QApplication::activePopupWidget()` while the context menu's `exec()`
+  call was still blocking, letting a `QTimer` fire during it) that the
+  new menu items actually render, with a pixel-level check confirming
+  the right number of distinct content rows. **Not verified:**
+  `SftpBackend`'s implementation of these same four operations — no live
+  SFTP server is available in this environment, the same limitation
+  already flagged for transfers, cancel/pause/resume, and pipelining
+  elsewhere in this document. The libssh2 calls it's built on were
+  confirmed against the installed `libssh2_sftp.h` before being used,
+  but "does this actually delete a file on a real server" is unverified.
+
 **Still not verified:** public-key authentication (implemented, but no
 real key file has been tested against it yet — see Known gaps), the
 transfer queue's progress-bar/status-icon rendering with a real active
@@ -254,10 +284,27 @@ headless/offscreen runs have been checked).
 - `RemoteBackend` — abstract interface (`connectToHost`, `listDirectory`,
   `downloadFile`, `uploadFile` + signals for results/progress). Everything
   in the UI layer talks to this, never to a concrete backend type.
+  Also declares `deleteEntry`/`renameEntry`/`createDirectory`/`createFile`
+  — file management, all "fire and refresh": on success each backend
+  re-lists the current directory itself (reusing the existing
+  `directoryListed` signal `FilePaneWidget` already handles), and on
+  failure emits `fileOperationFailed(operation, path, reason)` rather
+  than overloading `connectionFailed`/`transferFailed` for a
+  conceptually different kind of error. `deleteEntry()`'s directory case
+  is deliberately **not recursive** — both backends only remove an empty
+  directory (plain POSIX `rmdir`/SFTP `RMDIR` semantics) and report a
+  clear "not empty" failure rather than either silently no-op'ing or
+  wiping out a whole tree; recursive delete is a meaningfully bigger,
+  more dangerous feature that wasn't asked for.
 - `LocalBackend` — wraps `QDir`/`QFile`. Runs on the GUI thread; local
   listing/copy is fast enough that this hasn't been a problem, but it's a
   design decision worth revisiting if it ever needs to handle slow
-  network-mounted paths.
+  network-mounted paths. File management uses `QDir::rename()` (not
+  `QFile::rename()`, which isn't documented to reliably rename
+  directories across platforms) for both files and folders, and checks
+  `QFileInfo::exists()` explicitly before create/rename so "the name is
+  already taken" is reported as a specific error rather than silently
+  overwriting or falling through to a generic OS failure message.
 - `SftpBackend` — wraps libssh2's synchronous API directly. Runs on a
   dedicated `QThread`, confirmed by the smoke test above. Its four
   operations (`connectToHost`, `listDirectory`, `downloadFile`,
@@ -326,6 +373,20 @@ headless/offscreen runs have been checked).
   1.6-1.8x rather than the original ~10x; whether it's closeable at all
   from here, and if so how, is unknown — would need to be chased with
   the same evidence-first approach used so far, not guessed at.
+  File management (`deleteEntry`/`renameEntry`/`createDirectory`/
+  `createFile`) is built on `libssh2_sftp_unlink`/`rmdir`/`rename`/
+  `mkdir`/`open` — every signature confirmed directly against the
+  installed `libssh2_sftp.h` before use, same discipline as everywhere
+  else in this class. `createFile()` uses `LIBSSH2_FXF_EXCL` specifically
+  so it fails rather than silently truncating something already at that
+  path. Error reporting for these four uses a new `sftpErrorString()`
+  helper — `libssh2_sftp_last_error()` only returns a numeric
+  `LIBSSH2_FX_*` status code, with no built-in string conversion, so this
+  maps the codes actually plausible here (not-found, permission denied,
+  already-exists, not-empty, etc. — confirmed against the full
+  `LIBSSH2_FX_*` list in the header) to something a person reads
+  directly, falling back to the raw numeric code for anything
+  unmapped rather than swallowing it silently.
 - `ConnectionDialog` — host/port/username form plus a password/private-key
   auth toggle (`QStackedWidget` swaps the relevant fields). Returns a
   single `SftpCredentials` struct (`src/backends/SftpCredentials.h`) that
@@ -385,7 +446,19 @@ headless/offscreen runs have been checked).
   `thread=nullptr` (e.g. for `LocalBackend`) falls back to normal
   parent-child ownership. Right-click on selected rows offers "Transfer
   Selected" (multi-select, via `filesActivated`), on top of the original
-  double-click-one-file behavior (`fileActivated`).
+  double-click-one-file behavior (`fileActivated`). The same context menu
+  also has New File/New Folder (prompt for a name via `QInputDialog`,
+  always enabled), Rename (prompts pre-filled with the current name,
+  enabled only for a single selection — renaming several items to one
+  name doesn't mean anything), Delete (works on any mix of selected files
+  and folders, confirms via `QMessageBox` first, dispatches one
+  `deleteEntry()` call per item — Qt's queued-connection ordering means
+  each one's own internal refresh completes before the next deletion
+  starts, so there's no race between them), and Refresh. All four new
+  operations funnel through `onFileOperationFailed()`, connected to the
+  backend's `fileOperationFailed` signal in `setBackend()`, which shows
+  the failure as a message box — there's no persistent queue/log for
+  these one-shot operations the way there is for transfers.
   Back/forward/up navigation lives here too: a per-pane `QStringList`
   history plus an index, updated only from `onDirectoryListed()` — i.e.
   only once a navigation is *confirmed successful* — rather than eagerly
@@ -585,6 +658,22 @@ ever needs touching again:
 
 ## Known gaps (flagged, not fixed)
 
+- **`SftpBackend`'s file management (delete/rename/create) is unverified
+  against a real server** — `LocalBackend`'s implementation of the same
+  four operations is thoroughly tested (see Verification status), but no
+  live SFTP server is available in this environment. The libssh2 calls
+  are confirmed correct against the installed header, and the pattern
+  matches other already-working SFTP calls in this class, but "does this
+  actually delete/rename/create something on a real server" hasn't been
+  proven.
+- **Directory deletion is never recursive, on either backend, by
+  design.** Deleting a non-empty folder fails with a clear error rather
+  than removing its contents first. This wasn't an oversight or a
+  missing feature so much as a deliberate scope decision — recursive
+  delete is a meaningfully bigger, more dangerous feature (a bug there
+  could delete far more than intended, with no undo) than what was
+  actually asked for. Worth revisiting explicitly if "delete this folder
+  and everything in it" turns out to be something people actually want.
 - **Public-key authentication is implemented but unverified.**
   `ConnectionDialog` has a password/private-key toggle and
   `SftpBackend::ensureSession()` branches accordingly, but no real key

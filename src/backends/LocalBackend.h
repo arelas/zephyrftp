@@ -16,6 +16,11 @@ public:
     void downloadFile(const QString &remotePath, const QString &localPath, qint64 resumeOffset = 0) override;
     void uploadFile(const QString &localPath, const QString &remotePath, qint64 resumeOffset = 0) override;
 
+    void deleteEntry(const QString &path, bool isDirectory) override;
+    void renameEntry(const QString &oldPath, const QString &newPath) override;
+    void createDirectory(const QString &path) override;
+    void createFile(const QString &path) override;
+
     QString currentPath() const override;
     bool isLocalFilesystem() const override { return true; }
 

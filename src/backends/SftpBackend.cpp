@@ -94,6 +94,29 @@ void waitForSocketReady(LIBSSH2_SESSION *session, libssh2_socket_t socket)
     // actually available, long before this timeout is reached).
     libssh2_poll(&pollFd, 1, 1000);
 }
+
+// libssh2_sftp_last_error() returns a numeric SFTP protocol status code,
+// not a message — libssh2 itself has no built-in string conversion for
+// these. Maps the ones actually plausible for delete/rename/mkdir/create
+// (confirmed against the full LIBSSH2_FX_* list in libssh2_sftp.h) to
+// something a person reads directly; anything else falls back to the
+// numeric code rather than silently swallowing it.
+QString sftpErrorString(LIBSSH2_SFTP *sftp)
+{
+    switch (libssh2_sftp_last_error(sftp)) {
+    case LIBSSH2_FX_NO_SUCH_FILE:        return QStringLiteral("No such file or folder");
+    case LIBSSH2_FX_PERMISSION_DENIED:   return QStringLiteral("Permission denied");
+    case LIBSSH2_FX_FILE_ALREADY_EXISTS: return QStringLiteral("Already exists");
+    case LIBSSH2_FX_DIR_NOT_EMPTY:       return QStringLiteral("Folder is not empty");
+    case LIBSSH2_FX_NOT_A_DIRECTORY:     return QStringLiteral("Not a folder");
+    case LIBSSH2_FX_INVALID_FILENAME:    return QStringLiteral("Invalid name");
+    case LIBSSH2_FX_NO_SPACE_ON_FILESYSTEM: return QStringLiteral("No space left on the server");
+    case LIBSSH2_FX_QUOTA_EXCEEDED:      return QStringLiteral("Storage quota exceeded");
+    case LIBSSH2_FX_WRITE_PROTECT:       return QStringLiteral("Write-protected");
+    case LIBSSH2_FX_OP_UNSUPPORTED:      return QStringLiteral("Server does not support this operation");
+    default: return QStringLiteral("SFTP error %1").arg(libssh2_sftp_last_error(sftp));
+    }
+}
 }
 
 SftpBackend::SftpBackend(SftpCredentials credentials, HostKeyVerifier *hostKeyVerifier,
@@ -654,4 +677,81 @@ void SftpBackend::requestCancel()
 QString SftpBackend::currentPath() const
 {
     return m_currentPath;
+}
+
+void SftpBackend::deleteEntry(const QString &path, bool isDirectory)
+{
+    if (!ensureSession())
+        return;
+
+    // Empty-only for directories — libssh2_sftp_rmdir() already has
+    // exactly this behavior at the protocol level (SFTP's RMDIR fails
+    // with LIBSSH2_FX_DIR_NOT_EMPTY rather than recursing), matching
+    // RemoteBackend::deleteEntry()'s documented contract without this
+    // function needing to do anything extra to enforce it.
+    const int rc = isDirectory
+        ? libssh2_sftp_rmdir(m_sftp, path.toUtf8().constData())
+        : libssh2_sftp_unlink(m_sftp, path.toUtf8().constData());
+
+    if (rc != 0) {
+        emit fileOperationFailed(QStringLiteral("Delete"), path, sftpErrorString(m_sftp));
+        return;
+    }
+    listDirectory(m_currentPath);
+}
+
+void SftpBackend::renameEntry(const QString &oldPath, const QString &newPath)
+{
+    if (!ensureSession())
+        return;
+
+    // The libssh2_sftp_rename() convenience macro already bakes in
+    // OVERWRITE | ATOMIC | NATIVE flags — overwrite-on-conflict matches
+    // ordinary rename semantics people expect, and ATOMIC/NATIVE just
+    // ask the server to use its best available implementation when one
+    // exists (falls back gracefully if not; not something this code
+    // needs to branch on).
+    if (libssh2_sftp_rename(m_sftp, oldPath.toUtf8().constData(), newPath.toUtf8().constData()) != 0) {
+        emit fileOperationFailed(QStringLiteral("Rename"), oldPath, sftpErrorString(m_sftp));
+        return;
+    }
+    listDirectory(m_currentPath);
+}
+
+void SftpBackend::createDirectory(const QString &path)
+{
+    if (!ensureSession())
+        return;
+
+    // 0755-equivalent (owner rwx, group/other rx) — a reasonable default
+    // or a fresh remote folder; the server's own umask may still narrow
+    // this further, same as it would for any other SFTP client's mkdir.
+    const long mode = LIBSSH2_SFTP_S_IRWXU | LIBSSH2_SFTP_S_IRGRP | LIBSSH2_SFTP_S_IXGRP
+        | LIBSSH2_SFTP_S_IROTH | LIBSSH2_SFTP_S_IXOTH;
+
+    if (libssh2_sftp_mkdir(m_sftp, path.toUtf8().constData(), mode) != 0) {
+        emit fileOperationFailed(QStringLiteral("Create folder"), path, sftpErrorString(m_sftp));
+        return;
+    }
+    listDirectory(m_currentPath);
+}
+
+void SftpBackend::createFile(const QString &path)
+{
+    if (!ensureSession())
+        return;
+
+    // LIBSSH2_FXF_EXCL: fail if something's already there rather than
+    // silently truncating an existing file — matches
+    // RemoteBackend::createFile()'s documented contract.
+    LIBSSH2_SFTP_HANDLE *handle = libssh2_sftp_open(
+        m_sftp, path.toUtf8().constData(),
+        LIBSSH2_FXF_WRITE | LIBSSH2_FXF_CREAT | LIBSSH2_FXF_EXCL,
+        LIBSSH2_SFTP_S_IRUSR | LIBSSH2_SFTP_S_IWUSR | LIBSSH2_SFTP_S_IRGRP | LIBSSH2_SFTP_S_IROTH);
+    if (!handle) {
+        emit fileOperationFailed(QStringLiteral("Create file"), path, sftpErrorString(m_sftp));
+        return;
+    }
+    libssh2_sftp_close(handle);   // never written to — an open+immediate close is what "empty file" means here
+    listDirectory(m_currentPath);
 }

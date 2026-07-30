@@ -66,6 +66,30 @@ public slots:
     virtual void downloadFile(const QString &remotePath, const QString &localPath, qint64 resumeOffset = 0) = 0;
     virtual void uploadFile(const QString &localPath, const QString &remotePath, qint64 resumeOffset = 0) = 0;
 
+    // File management: delete/rename/create, both local and remote. All
+    // four are "fire and refresh" — on success, the implementation
+    // re-lists the current directory itself (reusing the existing
+    // directoryListed signal FilePaneWidget already handles) rather than
+    // needing a separate success signal; on failure, fileOperationFailed
+    // below carries the reason. isDirectory on deleteEntry() matters
+    // because the two operations are genuinely different at the protocol
+    // level (unlink vs. rmdir for SFTP, QFile::remove vs. QDir::rmdir
+    // locally) — there's no single "delete anything" call to fall back
+    // to. Directory deletion is deliberately NOT recursive: both
+    // backends only remove an empty directory (matching plain POSIX
+    // rmdir / SFTP RMDIR semantics), and a non-empty one fails with a
+    // clear reason rather than either silently doing nothing or wiping
+    // out a whole tree — recursive delete is a meaningfully bigger, more
+    // dangerous feature that wasn't asked for.
+    virtual void deleteEntry(const QString &path, bool isDirectory) = 0;
+    virtual void renameEntry(const QString &oldPath, const QString &newPath) = 0;
+    virtual void createDirectory(const QString &path) = 0;
+    // Creates an empty (zero-byte) file. Fails if a file already exists
+    // at that path rather than silently truncating it — both backends
+    // treat "the name is already taken" as an error to report, not
+    // something to overwrite quietly.
+    virtual void createFile(const QString &path) = 0;
+
 signals:
     void connected();
     void connectionFailed(const QString &reason);
@@ -78,4 +102,11 @@ signals:
     // becomes the resume offset for the next uploadFile()/downloadFile()
     // call on this same file.
     void transferPaused(const QString &fileName, qint64 bytesDone);
+
+    // Failure path for deleteEntry()/renameEntry()/createDirectory()/
+    // createFile() — operation is a short human-readable label ("Delete",
+    // "Rename", "Create folder", "Create file"), not a machine-parsed
+    // code, since the only consumer is a message shown directly to the
+    // person who triggered it.
+    void fileOperationFailed(const QString &operation, const QString &path, const QString &reason);
 };

@@ -45,6 +45,8 @@
         <file>icons/arrow-left.svg</file>
         <file>icons/arrow-right.svg</file>
         <file>icons/corner-left-up.svg</file>
+        <file>icons/edit.svg</file>
+        <file>icons/file-plus.svg</file>
         <file>icons/player-pause.svg</file>
         <file>icons/player-play.svg</file>
         <file>icons/app-icon-16.png</file>

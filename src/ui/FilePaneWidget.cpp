@@ -13,12 +13,23 @@
 #include <QMetaObject>
 #include <QMenu>
 #include <QAction>
+#include <QInputDialog>
+#include <QMessageBox>
+#include <QFileInfo>
 
 namespace {
 constexpr int ColName = 0;
 constexpr int ColSize = 1;
 constexpr int ColModified = 2;
 constexpr int ColPermissions = 3;
+
+// Same logic as TransferManager.cpp's identical (file-local, not shared)
+// helper — small enough that duplicating it here beats introducing a
+// shared-utility header for one three-line function.
+QString joinPath(const QString &dir, const QString &name)
+{
+    return dir.endsWith('/') ? dir + name : dir + '/' + name;
+}
 }
 
 FilePaneWidget::FilePaneWidget(RemoteBackend *backend, QWidget *parent)
@@ -79,6 +90,8 @@ void FilePaneWidget::setBackend(RemoteBackend *backend, QThread *thread)
         QMetaObject::invokeMethod(m_backend, "listDirectory",
                                    Qt::QueuedConnection, Q_ARG(QString, QString()));
     });
+    connect(m_backend, &RemoteBackend::fileOperationFailed,
+            this, &FilePaneWidget::onFileOperationFailed);
 
     if (m_backendThread)
         m_backendThread->start();
@@ -286,19 +299,135 @@ QStringList FilePaneWidget::selectedFileNames() const
     return names;
 }
 
+QList<RemoteEntry> FilePaneWidget::selectedEntries() const
+{
+    QList<RemoteEntry> entries;
+    const auto selected = m_view->selectionModel()->selectedRows(ColName);
+    for (const QModelIndex &index : selected) {
+        const int row = index.row();
+        if (row < 0 || row >= m_currentEntries.size())
+            continue;
+        entries.append(m_currentEntries.at(row));
+    }
+    return entries;
+}
+
 void FilePaneWidget::showContextMenu(const QPoint &pos)
 {
-    const QStringList names = selectedFileNames();
+    const QStringList fileNames = selectedFileNames();      // files only — for Transfer
+    const QList<RemoteEntry> selected = selectedEntries();  // files + folders — for Rename/Delete
 
     QMenu menu(this);
+
     QAction *transferAction = menu.addAction(
-        names.size() > 1 ? tr("Transfer %1 Files to Other Pane").arg(names.size())
-                          : tr("Transfer to Other Pane"));
-    transferAction->setEnabled(!names.isEmpty());
+        fileNames.size() > 1 ? tr("Transfer %1 Files to Other Pane").arg(fileNames.size())
+                              : tr("Transfer to Other Pane"));
+    transferAction->setEnabled(!fileNames.isEmpty());
+
+    menu.addSeparator();
+    QAction *newFileAction = menu.addAction(
+        IconTheme::tintedIcon(":/icons/file-plus.svg", IconTheme::Green), tr("New File..."));
+    QAction *newFolderAction = menu.addAction(
+        IconTheme::tintedIcon(":/icons/folder-plus.svg", IconTheme::Green), tr("New Folder..."));
+
+    menu.addSeparator();
+    QAction *renameAction = menu.addAction(
+        IconTheme::tintedIcon(":/icons/edit.svg", IconTheme::Blue), tr("Rename..."));
+    renameAction->setEnabled(selected.size() == 1);   // renaming several items to one name doesn't make sense
+
+    QAction *deleteAction = menu.addAction(
+        IconTheme::tintedIcon(":/icons/trash.svg", IconTheme::Red),
+        selected.size() > 1 ? tr("Delete %1 Items").arg(selected.size()) : tr("Delete"));
+    deleteAction->setEnabled(!selected.isEmpty());
+
+    menu.addSeparator();
+    QAction *refreshAction = menu.addAction(
+        IconTheme::tintedIcon(":/icons/refresh.svg", IconTheme::Amber), tr("Refresh"));
 
     QAction *chosen = menu.exec(m_view->viewport()->mapToGlobal(pos));
+
     if (chosen == transferAction)
-        emit filesActivated(names);
+        emit filesActivated(fileNames);
+    else if (chosen == newFileAction)
+        promptAndCreateFile();
+    else if (chosen == newFolderAction)
+        promptAndCreateFolder();
+    else if (chosen == renameAction)
+        promptAndRename(selected.first());
+    else if (chosen == deleteAction)
+        confirmAndDelete(selected);
+    else if (chosen == refreshAction)
+        navigateTo(currentDirectory());
+}
+
+void FilePaneWidget::promptAndCreateFile()
+{
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, tr("New File"), tr("File name:"),
+                                                QLineEdit::Normal, QString(), &ok);
+    if (!ok || name.trimmed().isEmpty())
+        return;
+
+    const QString path = joinPath(currentDirectory(), name.trimmed());
+    QMetaObject::invokeMethod(m_backend, "createFile", Qt::QueuedConnection, Q_ARG(QString, path));
+}
+
+void FilePaneWidget::promptAndCreateFolder()
+{
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, tr("New Folder"), tr("Folder name:"),
+                                                QLineEdit::Normal, QString(), &ok);
+    if (!ok || name.trimmed().isEmpty())
+        return;
+
+    const QString path = joinPath(currentDirectory(), name.trimmed());
+    QMetaObject::invokeMethod(m_backend, "createDirectory", Qt::QueuedConnection, Q_ARG(QString, path));
+}
+
+void FilePaneWidget::promptAndRename(const RemoteEntry &entry)
+{
+    bool ok = false;
+    const QString newName = QInputDialog::getText(this, tr("Rename"), tr("New name:"),
+                                                   QLineEdit::Normal, entry.name, &ok);
+    if (!ok || newName.trimmed().isEmpty() || newName.trimmed() == entry.name)
+        return;
+
+    const QString oldPath = joinPath(currentDirectory(), entry.name);
+    const QString newPath = joinPath(currentDirectory(), newName.trimmed());
+    QMetaObject::invokeMethod(m_backend, "renameEntry", Qt::QueuedConnection,
+                               Q_ARG(QString, oldPath), Q_ARG(QString, newPath));
+}
+
+void FilePaneWidget::confirmAndDelete(const QList<RemoteEntry> &entries)
+{
+    if (entries.isEmpty())
+        return;
+
+    const QString message = entries.size() == 1
+        ? tr("Delete \"%1\"? This can't be undone.").arg(entries.first().name)
+        : tr("Delete %1 items? This can't be undone.").arg(entries.size());
+    const auto reply = QMessageBox::question(this, tr("Delete"), message,
+                                              QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (reply != QMessageBox::Yes)
+        return;
+
+    // One invokeMethod() call per entry, queued in order — the backend
+    // lives on (at most) one thread of its own, so Qt's queue processes
+    // these strictly one at a time; each delete's own internal refresh
+    // (see RemoteBackend::deleteEntry()'s doc comment) completes before
+    // the next deletion starts. No race between them.
+    for (const RemoteEntry &entry : entries) {
+        const QString path = joinPath(currentDirectory(), entry.name);
+        QMetaObject::invokeMethod(m_backend, "deleteEntry", Qt::QueuedConnection,
+                                   Q_ARG(QString, path), Q_ARG(bool, entry.isDir));
+    }
+}
+
+void FilePaneWidget::onFileOperationFailed(const QString &operation, const QString &path, const QString &reason)
+{
+    QMessageBox::warning(this, operation,
+                          tr("%1 failed for \"%2\":\n%3")
+                              .arg(operation, QFileInfo(path).fileName(), reason));
 }
 
 void FilePaneWidget::goBack()

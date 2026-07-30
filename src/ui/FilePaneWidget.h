@@ -34,6 +34,13 @@ public:
     // menu's "Transfer Selected" action.
     QStringList selectedFileNames() const;
 
+    // Selected rows regardless of type (files AND directories) — unlike
+    // selectedFileNames() above. Used by Rename (single-selection only)
+    // and Delete (works on any mix of files/folders) in the context
+    // menu, where directories are meaningful targets even though they
+    // never are for a transfer.
+    QList<RemoteEntry> selectedEntries() const;
+
     void navigateTo(const QString &path);
 
     // Back/forward/up navigation, matching any ordinary file manager.
@@ -97,6 +104,13 @@ private slots:
     void onPathBarReturnPressed();
     void showContextMenu(const QPoint &pos);
 
+    // Connected to the backend's fileOperationFailed signal in
+    // setBackend() — surfaces delete/rename/create-file/create-folder
+    // failures as a message box, since there's no queue or persistent
+    // UI element for these one-shot operations the way there is for
+    // transfers.
+    void onFileOperationFailed(const QString &operation, const QString &path, const QString &reason);
+
 private:
     void buildUi();
 
@@ -111,6 +125,16 @@ private:
 
     void updateNavigationButtonsEnabled();
     void resetHistory();   // called from setBackend() — a new backend means a fresh navigation context
+
+    // Each prompts (or confirms, for delete) then dispatches to the
+    // backend via QMetaObject::invokeMethod(..., Qt::QueuedConnection) —
+    // same pattern as every other cross-thread-safe backend call in this
+    // class. All four are no-ops if the person cancels the prompt/dialog,
+    // or (rename/delete) if nothing appropriate is selected.
+    void promptAndCreateFile();
+    void promptAndCreateFolder();
+    void promptAndRename(const RemoteEntry &entry);
+    void confirmAndDelete(const QList<RemoteEntry> &entries);
 
     RemoteBackend *m_backend;
     QThread *m_backendThread = nullptr;   // null when backend has no thread of its own (e.g. LocalBackend)

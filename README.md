@@ -9,6 +9,12 @@ move things between them. Think FileZilla or WinSCP, built fresh in Qt6.
 - **Dual-pane browsing** — your computer on one side, the server on the
   other, both visible at once. Back, forward, and up buttons beside each
   pane's location bar, same as any file manager.
+- **File management from the right-click menu** — create a new file or
+  folder, rename, or delete, on either side (your computer or the
+  server). Delete works on multiple selected items at once, with a
+  confirmation first. Deleting a folder only works if it's empty —
+  there's no "delete everything inside it too" here, on purpose, so a
+  misclick can't wipe out more than you meant to remove.
 - **SFTP with password or private-key login.**
 - **Site Manager** — save connections you use often, organized into
   folders (type a new folder name right on the site's details, or pick
