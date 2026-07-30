@@ -261,6 +261,21 @@ bool SftpBackend::ensureSession()
         return false;
     }
 
+    // Disable Nagle's algorithm (TCP_NODELAY) — standard practice for a
+    // request/ACK-style protocol like SFTP. Nagle's algorithm batches
+    // small outgoing writes to reduce packet count, which is exactly the
+    // wrong trade for a protocol issuing many pipelined small
+    // reads/writes (see downloadFile()/uploadFile()) where each one is
+    // waiting on a response; the added send-side delay directly costs
+    // round-trip latency, which is the whole thing pipelining is meant
+    // to avoid paying repeatedly for. Qt does not disable Nagle by
+    // default. This is a real, independent lever from the pipelining
+    // fix itself (LowDelayOption is Qt's cross-platform equivalent of
+    // setsockopt(TCP_NODELAY) — no raw platform-specific socket code
+    // needed here, same reasoning as using libssh2_poll() over raw
+    // select() elsewhere in this file).
+    m_socket->setSocketOption(QAbstractSocket::LowDelayOption, 1);
+
     const libssh2_socket_t sock = static_cast<libssh2_socket_t>(m_socket->socketDescriptor());
 
     m_session = libssh2_session_init();
@@ -475,7 +490,15 @@ void SftpBackend::downloadFile(const QString &remotePath, const QString &localPa
     {
         ScopedNonBlocking nonBlocking(m_session);
         const libssh2_socket_t sock = static_cast<libssh2_socket_t>(m_socket->socketDescriptor());
-        char buf[256 * 1024];
+        // 480000 = 16 x 30000. libssh2's internal SFTP packet size is
+        // hardcoded to exactly 30000 bytes (confirmed directly against
+        // libssh2's own current source, MAX_SFTP_READ_SIZE in sftp.h —
+        // not something we can change, but something our buffer size
+        // should be an exact multiple of). A buffer that isn't leaves a
+        // small "leftover" packet every cycle below the 30000 cap,
+        // which doesn't fully use the pipeline — a real, independently
+        // reported ~20% throughput cost from exactly this misalignment.
+        char buf[480000];
 
         for (;;) {
             n = libssh2_sftp_read(handle, buf, sizeof(buf));
@@ -570,7 +593,10 @@ void SftpBackend::uploadFile(const QString &localPath, const QString &remotePath
     {
         ScopedNonBlocking nonBlocking(m_session);
         const libssh2_socket_t sock = static_cast<libssh2_socket_t>(m_socket->socketDescriptor());
-        char buf[256 * 1024];
+        // Same reasoning and same value as downloadFile()'s buffer above
+        // — see that comment. MAX_SFTP_OUTGOING_SIZE (libssh2's internal
+        // write-packet cap) is also hardcoded to exactly 30000.
+        char buf[480000];
 
         while (!in.atEnd()) {
             qint64 n = in.read(buf, sizeof(buf));

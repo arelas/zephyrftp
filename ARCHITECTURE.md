@@ -203,29 +203,38 @@ that way, it's flagged explicitly rather than left implied.
   expected form structure exactly, with Group in the correct second
   position.
 
-- **Pipelined SFTP I/O's mechanics are verified directly; its actual
-  throughput improvement is not — that needs a real server.** Reported
-  after use: ~4MB/s in this app versus ~40MB/s via FileZilla, Termius,
-  and SMB on the same connection. Root-caused against independent
-  external sources (libssh2's own issue tracker, the curl maintainer's
-  own writeups on this exact problem) rather than guessed at — blocking-
-  mode libssh2 sends one 32KB-capped SFTP packet and waits for its ACK
-  before sending the next, making round-trip time the throughput
-  ceiling; real-world reports elsewhere of ~5-10x slowdowns from this
-  exact cause line up with what was reported here. Fixed by pipelining
-  reads/writes through a temporary non-blocking mode switch, modeled on
-  libssh2's own canonical `sftp_write_nonblock.c` example rather than
-  improvised. What's directly verified: a throwaway test (not committed
-  — see its own reasoning below) confirmed the `ScopedNonBlocking` RAII
-  guard actually flips `libssh2_session_get_blocking()` to non-blocking
-  inside its scope and restores blocking mode afterward, through both a
-  normal scope exit and — critically, since `uploadFile()`'s write-error
-  path returns from inside the guard's scope — an early-return path too.
-  What's NOT verified: that this actually closes the reported speed gap
-  on a real connection. No live SFTP server is available in this
-  environment to measure throughput against, the same limitation already
-  flagged for cancel/resume elsewhere in this document. Needs a real
-  re-test on the same setup that reported ~4MB/s.
+- **Pipelined SFTP I/O's mechanics are verified directly, and its real-world
+  impact is now confirmed too — partially.** Reported after use: ~4MB/s
+  in this app versus ~40MB/s via FileZilla, Termius, and SMB on the same
+  connection. Root-caused against independent external sources
+  (libssh2's own issue tracker, the curl maintainer's own writeups on
+  this exact problem) rather than guessed at — blocking-mode libssh2
+  sends one SFTP packet and waits for its ACK before sending the next,
+  making round-trip time the throughput ceiling; real-world reports
+  elsewhere of ~5-10x slowdowns from this exact cause line up with what
+  was reported here. Fixed by pipelining reads/writes through a
+  temporary non-blocking mode switch, modeled on libssh2's own canonical
+  `sftp_write_nonblock.c` example rather than improvised. **Confirmed on
+  a real connection: ~18MB/s after this fix — a real, measured 4.5x
+  improvement** — though still short of the ~40MB/s comparison, which
+  prompted a second, more incremental round: buffer size aligned to an
+  exact multiple of libssh2's actual 30000-byte internal packet cap
+  (confirmed directly against libssh2's current source, not assumed to
+  be 32KB), and `TCP_NODELAY` enabled on the connection. What's directly
+  verified about the mechanics themselves: a throwaway test (not
+  committed — see its own reasoning below) confirmed the
+  `ScopedNonBlocking` RAII guard actually flips
+  `libssh2_session_get_blocking()` to non-blocking inside its scope and
+  restores blocking mode afterward, through both a normal scope exit and
+  — critically, since `uploadFile()`'s write-error path returns from
+  inside the guard's scope — an early-return path too. What's NOT
+  verified: whether the second tuning round (buffer alignment,
+  `TCP_NODELAY`) moves the confirmed ~18MB/s figure any further, or
+  whether the remaining gap to ~40MB/s reflects a deeper architectural
+  difference between libssh2-based clients and more optimized/native SFTP
+  implementations that buffer/socket tuning alone can't close. No live
+  SFTP server is available in this environment to measure any of this —
+  needs a real re-test on the same setup.
 
 **Still not verified:** public-key authentication (implemented, but no
 real key file has been tested against it yet — see Known gaps), the
@@ -270,19 +279,42 @@ headless/offscreen runs have been checked).
   loop, restoring blocking mode on scope exit regardless of which return
   path was taken (verified directly — see Verification status). This
   fixes a well-documented libssh2 characteristic: in blocking mode,
-  libssh2 sends one SFTP packet (protocol-capped at 32KB) and waits for
-  its ACK before sending the next, so round-trip time rather than
-  bandwidth becomes the throughput ceiling — reported in this app as
-  ~4MB/s versus ~40MB/s via FileZilla/Termius/SMB on the same
-  connection, in line with real-world reports elsewhere of roughly
-  5-10x slowdowns from this exact cause. `EAGAIN` retries wait via
-  `libssh2_poll()` (not raw `select()`/`fd_set`) specifically for
-  portability — `select()` needs different headers on POSIX vs. Windows
-  (`sys/select.h` vs. `winsock2.h`), the exact category of mistake that
-  broke the first real Windows build of this app; `libssh2_poll()`
-  handles that gap internally. Buffer size for both loops increased from
-  32KB to 256KB to give libssh2's internal pipelining more room to work
-  with, per its own documented behavior.
+  libssh2 sends one SFTP packet and waits for its ACK before sending the
+  next, so round-trip time rather than bandwidth becomes the throughput
+  ceiling — reported in this app as ~4MB/s versus ~40MB/s via
+  FileZilla/Termius/SMB on the same connection, in line with real-world
+  reports elsewhere of roughly 5-10x slowdowns from this exact cause.
+  Confirmed on a real connection after this fix: ~18MB/s, a real 4.5x
+  improvement, though still short of the ~40MB/s comparison. `EAGAIN`
+  retries wait via `libssh2_poll()` (not raw `select()`/`fd_set`)
+  specifically for portability — `select()` needs different headers on
+  POSIX vs. Windows (`sys/select.h` vs. `winsock2.h`), the exact category
+  of mistake that broke the first real Windows build of this app;
+  `libssh2_poll()` handles that gap internally.
+  Two further, more incremental tuning changes followed once the
+  remaining gap was reported: the read/write buffer is now exactly
+  480000 bytes (16 x 30000) rather than an arbitrary 256KB — libssh2's
+  actual internal SFTP packet size is hardcoded to exactly 30000 bytes
+  (confirmed directly against libssh2's own current source,
+  `MAX_SFTP_READ_SIZE`/`MAX_SFTP_OUTGOING_SIZE` in `sftp.h` — not 32KB,
+  and not something callers can change), and a buffer that isn't an
+  exact multiple leaves a small "leftover" packet under that cap every
+  cycle, which doesn't fully use the pipeline — independently reported
+  elsewhere as costing roughly 20% from this exact misalignment alone.
+  Separately, `QAbstractSocket::LowDelayOption` (Qt's portable
+  `TCP_NODELAY` equivalent) is now set on the connection — Qt doesn't
+  disable Nagle's algorithm by default, and Nagle's small-write batching
+  behavior works directly against a protocol now issuing many pipelined
+  small reads/writes, each one waiting on a response.
+  **Honest framing on the remaining gap:** these are real, evidence-based
+  levers, not guesses, but there may be a gap between libssh2-based
+  clients and OpenSSH-derived or other native SFTP implementations that
+  can't be fully closed through buffer/socket tuning alone (cipher
+  negotiation overhead and libssh2's own internal architecture relative
+  to more optimized implementations both came up in the research behind
+  this fix). Whether 480000/`TCP_NODELAY` move the ~18MB/s figure
+  further is unverified from this environment — no live SFTP server is
+  reachable here to measure it.
 - `ConnectionDialog` — host/port/username form plus a password/private-key
   auth toggle (`QStackedWidget` swaps the relevant fields). Returns a
   single `SftpCredentials` struct (`src/backends/SftpCredentials.h`) that
@@ -558,28 +590,37 @@ ever needs touching again:
   drag-and-drop both skip directories entirely (files only) — dragging or
   selecting a folder does nothing, silently, rather than erroring. Would
   need real recursive traversal + a nested queue structure to support.
-- **Cancel, pause/resume, AND pipelined I/O are all implemented but only
-  automated-tested against a fake backend and against `LocalBackend`,
-  where cancel/pause are a documented no-op** (`QFile::copy()` can't be
-  interrupted mid-call). `SftpBackend`'s actual mid-transfer interruption
-  — the cancel and pause flags checked inside the libssh2 read/write
-  loops — its real byte-offset resume logic (the `libssh2_sftp_seek64()`
-  calls, the local-file clamping/trimming against what's actually on
-  disk), and the non-blocking pipelining itself (the actual throughput
-  improvement it's meant to deliver, as opposed to the `ScopedNonBlocking`
-  RAII mechanics, which are verified — see Verification status) all
-  compile and follow patterns proven correct elsewhere in this codebase
-  or against libssh2's own canonical examples, but none of it has a
-  real-server test confirming it actually works — `transfer-pause-test`
-  verifies `TransferManager`'s orchestration (status transitions, offset
-  preservation, resume-not-restart) using a fake backend built for
-  exactly that purpose, which is a real and useful thing to have
-  verified, but is a different claim than "resuming a paused SFTP upload
-  actually picks up where it left off on a live server" or "this
-  actually transfers faster." Needs a slow-enough real transfer, paused
-  and resumed by hand, and a real throughput comparison against the
-  ~4MB/s baseline that prompted the pipelining fix, to verify those
-  specific claims.
+- **Cancel and pause/resume are implemented but only automated-tested
+  against a fake backend and against `LocalBackend`, where both are a
+  documented no-op** (`QFile::copy()` can't be interrupted mid-call).
+  `SftpBackend`'s actual mid-transfer interruption — the cancel and pause
+  flags checked inside the libssh2 read/write loops — and its real
+  byte-offset resume logic (the `libssh2_sftp_seek64()` calls, the
+  local-file clamping/trimming against what's actually on disk) compile
+  and follow patterns proven correct elsewhere in this codebase, but
+  none of it has a real-server test confirming it actually works —
+  `transfer-pause-test` verifies `TransferManager`'s orchestration
+  (status transitions, offset preservation, resume-not-restart) using a
+  fake backend built for exactly that purpose, which is a real and
+  useful thing to have verified, but is a different claim than "resuming
+  a paused SFTP upload actually picks up where it left off on a live
+  server." Needs a slow-enough real transfer, paused and resumed by
+  hand, to verify that specific claim.
+- **The second round of transfer-speed tuning (buffer alignment to
+  libssh2's exact 30000-byte packet size, `TCP_NODELAY`) is unverified —
+  unlike the base pipelining fix, which is now confirmed on a real
+  connection** (~4MB/s to ~18MB/s, a measured 4.5x). That confirmed
+  result still fell short of the ~40MB/s comparison
+  (FileZilla/Termius/SMB on the same connection) that prompted this
+  second round. Both changes are evidence-based — the exact packet-size
+  constant confirmed directly against libssh2's own current source,
+  `TCP_NODELAY` a standard, well-understood lever for a request/ACK-heavy
+  protocol issuing many small pipelined operations — but whether they
+  move the ~18MB/s figure further, and whether the remaining gap
+  reflects something buffer/socket tuning can't reach (cipher
+  negotiation overhead, a deeper architectural difference from more
+  optimized SFTP implementations), is unverified. No live SFTP server is
+  available in this environment to measure either.
 - **Queue item execution is bound to whatever backend is on the pane when
   its turn comes up**, not when it was enqueued. If you queue a transfer,
   then hit Disconnect before it starts, it'll run against whatever backend
