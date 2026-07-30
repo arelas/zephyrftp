@@ -99,11 +99,24 @@ void waitForSocketReady(LIBSSH2_SESSION *session, libssh2_socket_t socket)
 // not a message — libssh2 itself has no built-in string conversion for
 // these. Maps the ones actually plausible for delete/rename/mkdir/create
 // (confirmed against the full LIBSSH2_FX_* list in libssh2_sftp.h) to
-// something a person reads directly; anything else falls back to the
-// numeric code rather than silently swallowing it.
-QString sftpErrorString(LIBSSH2_SFTP *sftp)
+// something a person reads directly.
+//
+// LIBSSH2_FX_FAILURE (4) is the protocol's own generic "something went
+// wrong, no further detail" code — and real-world SFTP servers commonly
+// return exactly this instead of a more specific status. Confirmed
+// directly, not theorized: a real server returned code 4, not
+// LIBSSH2_FX_FILE_ALREADY_EXISTS, for a create-file call that failed
+// because the file already existed — the more specific code that would
+// have made this case self-explanatory. Since we already know which
+// operation was attempted, `likelyReason` lets each call site supply a
+// plain-English guess at the cause for this ambiguous case — framed as
+// "usually means", not asserted as certain, since a generic code
+// genuinely doesn't tell us for sure. Any other, truly unmapped code
+// still falls back to the raw number rather than guessing at those too.
+QString sftpErrorString(LIBSSH2_SFTP *sftp, const QString &likelyReason)
 {
-    switch (libssh2_sftp_last_error(sftp)) {
+    const unsigned long code = libssh2_sftp_last_error(sftp);
+    switch (code) {
     case LIBSSH2_FX_NO_SUCH_FILE:        return QStringLiteral("No such file or folder");
     case LIBSSH2_FX_PERMISSION_DENIED:   return QStringLiteral("Permission denied");
     case LIBSSH2_FX_FILE_ALREADY_EXISTS: return QStringLiteral("Already exists");
@@ -114,7 +127,12 @@ QString sftpErrorString(LIBSSH2_SFTP *sftp)
     case LIBSSH2_FX_QUOTA_EXCEEDED:      return QStringLiteral("Storage quota exceeded");
     case LIBSSH2_FX_WRITE_PROTECT:       return QStringLiteral("Write-protected");
     case LIBSSH2_FX_OP_UNSUPPORTED:      return QStringLiteral("Server does not support this operation");
-    default: return QStringLiteral("SFTP error %1").arg(libssh2_sftp_last_error(sftp));
+    case LIBSSH2_FX_FAILURE:
+        return likelyReason.isEmpty()
+            ? QStringLiteral("The server rejected this operation (no further detail given)")
+            : likelyReason;
+    default:
+        return QStringLiteral("SFTP error %1").arg(code);
     }
 }
 }
@@ -694,7 +712,10 @@ void SftpBackend::deleteEntry(const QString &path, bool isDirectory)
         : libssh2_sftp_unlink(m_sftp, path.toUtf8().constData());
 
     if (rc != 0) {
-        emit fileOperationFailed(QStringLiteral("Delete"), path, sftpErrorString(m_sftp));
+        const QString likelyReason = isDirectory
+            ? QStringLiteral("This usually means you don't have permission to delete it.")
+            : QStringLiteral("You may not have permission to delete this.");
+        emit fileOperationFailed(QStringLiteral("Delete"), path, sftpErrorString(m_sftp, likelyReason));
         return;
     }
     listDirectory(m_currentPath);
@@ -712,7 +733,13 @@ void SftpBackend::renameEntry(const QString &oldPath, const QString &newPath)
     // exists (falls back gracefully if not; not something this code
     // needs to branch on).
     if (libssh2_sftp_rename(m_sftp, oldPath.toUtf8().constData(), newPath.toUtf8().constData()) != 0) {
-        emit fileOperationFailed(QStringLiteral("Rename"), oldPath, sftpErrorString(m_sftp));
+        // We do request overwrite-on-conflict (see the comment above),
+        // but not every server honors that — so "the new name is
+        // already taken" is still a plausible cause here, not just
+        // permissions.
+        emit fileOperationFailed(QStringLiteral("Rename"), oldPath, sftpErrorString(m_sftp,
+            QStringLiteral("Something with the new name may already exist and the server may not "
+                           "support overwriting it, or you may not have permission to rename this.")));
         return;
     }
     listDirectory(m_currentPath);
@@ -730,7 +757,9 @@ void SftpBackend::createDirectory(const QString &path)
         | LIBSSH2_SFTP_S_IROTH | LIBSSH2_SFTP_S_IXOTH;
 
     if (libssh2_sftp_mkdir(m_sftp, path.toUtf8().constData(), mode) != 0) {
-        emit fileOperationFailed(QStringLiteral("Create folder"), path, sftpErrorString(m_sftp));
+        emit fileOperationFailed(QStringLiteral("Create folder"), path, sftpErrorString(m_sftp,
+            QStringLiteral("A folder with that name may already exist, or you may not have "
+                           "permission to create it here.")));
         return;
     }
     listDirectory(m_currentPath);
@@ -749,7 +778,15 @@ void SftpBackend::createFile(const QString &path)
         LIBSSH2_FXF_WRITE | LIBSSH2_FXF_CREAT | LIBSSH2_FXF_EXCL,
         LIBSSH2_SFTP_S_IRUSR | LIBSSH2_SFTP_S_IWUSR | LIBSSH2_SFTP_S_IRGRP | LIBSSH2_SFTP_S_IROTH);
     if (!handle) {
-        emit fileOperationFailed(QStringLiteral("Create file"), path, sftpErrorString(m_sftp));
+        // This is the exact case reported after real-world testing: a
+        // server returned the generic LIBSSH2_FX_FAILURE (4) rather than
+        // LIBSSH2_FX_FILE_ALREADY_EXISTS for a create-file call that
+        // failed because the file already existed (LIBSSH2_FXF_EXCL
+        // above). "SFTP error 4" alone told the person nothing useful —
+        // this is what prompted adding likely-reason context at all.
+        emit fileOperationFailed(QStringLiteral("Create file"), path, sftpErrorString(m_sftp,
+            QStringLiteral("A file with that name may already exist, or you may not have "
+                           "permission to create it here.")));
         return;
     }
     libssh2_sftp_close(handle);   // never written to — an open+immediate close is what "empty file" means here

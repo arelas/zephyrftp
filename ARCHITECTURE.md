@@ -264,13 +264,21 @@ that way, it's flagged explicitly rather than left implied.
   `QApplication::activePopupWidget()` while the context menu's `exec()`
   call was still blocking, letting a `QTimer` fire during it) that the
   new menu items actually render, with a pixel-level check confirming
-  the right number of distinct content rows. **Not verified:**
-  `SftpBackend`'s implementation of these same four operations — no live
-  SFTP server is available in this environment, the same limitation
-  already flagged for transfers, cancel/pause/resume, and pipelining
-  elsewhere in this document. The libssh2 calls it's built on were
-  confirmed against the installed `libssh2_sftp.h` before being used,
-  but "does this actually delete a file on a real server" is unverified.
+  the right number of distinct content rows. **Confirmed against a real
+  server after this note was first written: all four operations work as
+  intended.** That real test also surfaced a genuine bug, not a
+  hypothetical one — creating a file that already existed reported the
+  unhelpful "SFTP error 4" instead of a readable message, because the
+  server returned `LIBSSH2_FX_FAILURE` (the protocol's generic
+  "something went wrong" code) rather than the more specific
+  `LIBSSH2_FX_FILE_ALREADY_EXISTS` that the original mapping handled.
+  Fixed by giving `sftpErrorString()` a second, operation-specific
+  `likelyReason` parameter for exactly this ambiguous case — see the
+  `SftpBackend` architecture entry above for the full explanation. Not
+  re-verified against a live server after that specific fix (the person
+  who found the bug hasn't re-tested this exact scenario yet), but the
+  fix compiles clean and the full existing regression suite still
+  passes.
 
 **Still not verified:** public-key authentication (implemented, but no
 real key file has been tested against it yet — see Known gaps), the
@@ -379,14 +387,27 @@ headless/offscreen runs have been checked).
   installed `libssh2_sftp.h` before use, same discipline as everywhere
   else in this class. `createFile()` uses `LIBSSH2_FXF_EXCL` specifically
   so it fails rather than silently truncating something already at that
-  path. Error reporting for these four uses a new `sftpErrorString()`
-  helper — `libssh2_sftp_last_error()` only returns a numeric
-  `LIBSSH2_FX_*` status code, with no built-in string conversion, so this
-  maps the codes actually plausible here (not-found, permission denied,
+  path. Error reporting for these four uses a `sftpErrorString()` helper
+  — `libssh2_sftp_last_error()` only returns a numeric `LIBSSH2_FX_*`
+  status code, with no built-in string conversion, so this maps the
+  codes actually plausible here (not-found, permission denied,
   already-exists, not-empty, etc. — confirmed against the full
   `LIBSSH2_FX_*` list in the header) to something a person reads
-  directly, falling back to the raw numeric code for anything
-  unmapped rather than swallowing it silently.
+  directly. **Real-world finding, not theoretical:** after testing
+  against a live server, creating a file that already existed surfaced
+  as the unhelpful "SFTP error 4" instead of a readable message — the
+  server had returned `LIBSSH2_FX_FAILURE` (4), the protocol's own
+  generic "something went wrong, no detail given" code, rather than the
+  more specific `LIBSSH2_FX_FILE_ALREADY_EXISTS` (11) that would have
+  made this case self-explanatory through the existing mapping. Real
+  SFTP servers commonly do this — return the generic code instead of a
+  specific one. Since a generic code genuinely doesn't reveal the actual
+  cause, `sftpErrorString()` now takes a second `likelyReason` argument
+  that each of the four call sites supplies with an operation-specific,
+  plainly-hedged guess ("may mean X, or you may not have permission to Y")
+  used only for that ambiguous case — not asserted as certain, since it
+  isn't. Any other, genuinely unmapped code still falls back to the raw
+  number rather than guessing at those too.
 - `ConnectionDialog` — host/port/username form plus a password/private-key
   auth toggle (`QStackedWidget` swaps the relevant fields). Returns a
   single `SftpCredentials` struct (`src/backends/SftpCredentials.h`) that
@@ -658,14 +679,6 @@ ever needs touching again:
 
 ## Known gaps (flagged, not fixed)
 
-- **`SftpBackend`'s file management (delete/rename/create) is unverified
-  against a real server** — `LocalBackend`'s implementation of the same
-  four operations is thoroughly tested (see Verification status), but no
-  live SFTP server is available in this environment. The libssh2 calls
-  are confirmed correct against the installed header, and the pattern
-  matches other already-working SFTP calls in this class, but "does this
-  actually delete/rename/create something on a real server" hasn't been
-  proven.
 - **Directory deletion is never recursive, on either backend, by
   design.** Deleting a non-empty folder fails with a clear error rather
   than removing its contents first. This wasn't an oversight or a
