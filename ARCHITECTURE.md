@@ -370,9 +370,10 @@ this repo's history prior to this pass) built around Tabler Icons (MIT)
 and a fixed four-color semantic system — full rationale in that package's
 own README and `ICON-MAP.md`. The first pass porting this theme was
 scoped to a **visual re-skin of existing features only**; Site Manager
-(saved connections) was added in a later pass and is covered in the
-Architecture section above. Pause/resume and live transfer speed, also
-shown in the mockups, still don't exist in this app.
+(saved connections, including its group organization), pause/resume for
+transfers, and live transfer speed — all shown in the original mockups —
+were added in later passes and are covered in the Architecture section
+above.
 
 - `resources/icons/*.svg` — 28 vendored Tabler Icons SVGs (27 in-app UI
   icons — 18 from the original theming pass, `server-cog`/`folder-plus`/

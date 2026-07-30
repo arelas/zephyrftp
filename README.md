@@ -67,8 +67,10 @@ quick on any recent distro.
    remote server. Double-click a file to send it to the other pane, drag
    files between panes, or select several and right-click → "Transfer
    Selected."
-5. **Watch the Transfers panel** at the bottom for progress. Right-click
-   any transfer to cancel it, or to retry one that failed.
+5. **Watch the Transfers panel** at the bottom for progress and speed.
+   Right-click any transfer to cancel it, pause it (server transfers
+   only — see Known limitations), resume a paused one, or retry
+   something that failed.
 
 ## Known limitations
 
