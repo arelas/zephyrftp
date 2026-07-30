@@ -34,6 +34,66 @@ QString knownHostsFilePath()
     QDir().mkpath(dir);
     return dir + QStringLiteral("/known_hosts");
 }
+
+// RAII: temporarily switches the session to non-blocking mode so
+// downloadFile()/uploadFile()'s read/write loop can pipeline multiple
+// outstanding SFTP requests instead of one-request-wait-response-next —
+// see SftpBackend.h's class doc comment for why this matters (a
+// well-documented ~5-10x real-world throughput penalty in blocking
+// mode, not a guess). Restores blocking mode on destruction regardless
+// of which return path the loop took, so a single missed early-return
+// can't leave the session in the wrong mode for whatever blocking call
+// (sftp_close, the next transfer's sftp_open, etc.) comes after it.
+class ScopedNonBlocking {
+public:
+    explicit ScopedNonBlocking(LIBSSH2_SESSION *session) : m_session(session)
+    {
+        libssh2_session_set_blocking(m_session, 0);
+    }
+    ~ScopedNonBlocking()
+    {
+        libssh2_session_set_blocking(m_session, 1);
+    }
+    ScopedNonBlocking(const ScopedNonBlocking &) = delete;
+    ScopedNonBlocking &operator=(const ScopedNonBlocking &) = delete;
+
+private:
+    LIBSSH2_SESSION *m_session;
+};
+
+// Blocks until the socket is ready in whatever direction libssh2 says it
+// currently needs (read, write, or — during a rekey — potentially the
+// opposite of what the caller was actually trying to do), avoiding a
+// busy-spin CPU loop while retrying an EAGAIN. Uses libssh2_poll()
+// rather than raw select()/fd_set specifically for portability —
+// libssh2_poll() handles the POSIX/Windows gap internally (Windows has
+// no native poll()), avoiding the platform-specific header split
+// (sys/select.h vs winsock2.h) that already caused a real bug earlier
+// in this project's history (the first Windows build failed to compile
+// over exactly this kind of POSIX-only header). Matches libssh2's own
+// canonical waitsocket() pattern from its sftp_write_nonblock.c example,
+// translated to the portable libssh2_poll() API instead of raw select().
+void waitForSocketReady(LIBSSH2_SESSION *session, libssh2_socket_t socket)
+{
+    LIBSSH2_POLLFD pollFd;
+    pollFd.type = LIBSSH2_POLLFD_SOCKET;
+    pollFd.fd.socket = socket;
+    pollFd.events = 0;
+
+    const int dir = libssh2_session_block_directions(session);
+    if (dir & LIBSSH2_SESSION_BLOCK_INBOUND)
+        pollFd.events |= LIBSSH2_POLLFD_POLLIN;
+    if (dir & LIBSSH2_SESSION_BLOCK_OUTBOUND)
+        pollFd.events |= LIBSSH2_POLLFD_POLLOUT;
+
+    // 1-second timeout (not the 10s the canonical example uses) — bounds
+    // how long a cancel/pause request could theoretically wait behind a
+    // stalled poll if the server ever stops responding mid-transfer,
+    // without materially affecting steady-state throughput (a
+    // well-behaved read/write call returns as soon as data/room is
+    // actually available, long before this timeout is reached).
+    libssh2_poll(&pollFd, 1, 1000);
+}
 }
 
 SftpBackend::SftpBackend(SftpCredentials credentials, HostKeyVerifier *hostKeyVerifier,
@@ -401,22 +461,46 @@ void SftpBackend::downloadFile(const QString &remotePath, const QString &localPa
     bool cancelled = false;
     bool paused = false;
 
-    char buf[32 * 1024];
+    // Pipelined, non-blocking read loop — see SftpBackend.h's class doc
+    // comment and ScopedNonBlocking's own comment for the full reasoning.
+    // In short: blocking-mode libssh2 sends one 32KB-capped SFTP READ
+    // packet and waits for its ACK before sending the next, so
+    // round-trip time — not bandwidth — becomes the throughput ceiling.
+    // Non-blocking mode with a generous buffer lets libssh2 pipeline
+    // multiple outstanding READ requests internally instead. Scoped
+    // tightly to just this loop: connect/auth/host-key/directory-listing
+    // and the open/close calls immediately around this block stay
+    // blocking, already-verified code paths, untouched.
     ssize_t n = 0;
-    while ((n = libssh2_sftp_read(handle, buf, sizeof(buf))) > 0) {
-        out.write(buf, n);
-        done += n;
-        emit transferProgress(remotePath, done, totalSize);
+    {
+        ScopedNonBlocking nonBlocking(m_session);
+        const libssh2_socket_t sock = static_cast<libssh2_socket_t>(m_socket->socketDescriptor());
+        char buf[256 * 1024];
 
-        if (m_cancelRequested.loadRelaxed()) {
-            cancelled = true;
-            break;
+        for (;;) {
+            n = libssh2_sftp_read(handle, buf, sizeof(buf));
+
+            if (n == LIBSSH2_ERROR_EAGAIN) {
+                waitForSocketReady(m_session, sock);
+                continue;
+            }
+            if (n <= 0)
+                break;   // 0 = EOF; any other negative here is a real error, checked below
+
+            out.write(buf, n);
+            done += n;
+            emit transferProgress(remotePath, done, totalSize);
+
+            if (m_cancelRequested.loadRelaxed()) {
+                cancelled = true;
+                break;
+            }
+            if (m_pauseRequested.loadRelaxed()) {
+                paused = true;
+                break;
+            }
         }
-        if (m_pauseRequested.loadRelaxed()) {
-            paused = true;
-            break;
-        }
-    }
+    }   // ScopedNonBlocking's destructor restores blocking mode here, before sftp_close below
 
     out.close();
     libssh2_sftp_close(handle);
@@ -474,37 +558,52 @@ void SftpBackend::uploadFile(const QString &localPath, const QString &remotePath
 
     const qint64 totalSize = in.size();
     qint64 done = effectiveOffset;
-    char buf[32 * 1024];
     bool cancelled = false;
     bool paused = false;
 
-    while (!in.atEnd()) {
-        qint64 n = in.read(buf, sizeof(buf));
-        if (n <= 0)
-            break;
+    // Pipelined, non-blocking write loop — same reasoning as
+    // downloadFile()'s read loop above (see SftpBackend.h's class doc
+    // comment). Only the libssh2_sftp_write() calls need EAGAIN
+    // handling — the outer loop's in.read() is a purely local QFile
+    // read, unrelated to network readiness. Scoped tightly to just this
+    // loop; everything around it stays blocking, already-verified code.
+    {
+        ScopedNonBlocking nonBlocking(m_session);
+        const libssh2_socket_t sock = static_cast<libssh2_socket_t>(m_socket->socketDescriptor());
+        char buf[256 * 1024];
 
-        qint64 written = 0;
-        while (written < n) {
-            ssize_t w = libssh2_sftp_write(handle, buf + written, n - written);
-            if (w < 0) {
-                libssh2_sftp_close(handle);
-                emit transferFailed(localPath, QStringLiteral("Write error during transfer"));
-                return;
+        while (!in.atEnd()) {
+            qint64 n = in.read(buf, sizeof(buf));
+            if (n <= 0)
+                break;
+
+            qint64 written = 0;
+            while (written < n) {
+                ssize_t w = libssh2_sftp_write(handle, buf + written, n - written);
+                if (w == LIBSSH2_ERROR_EAGAIN) {
+                    waitForSocketReady(m_session, sock);
+                    continue;
+                }
+                if (w < 0) {
+                    libssh2_sftp_close(handle);
+                    emit transferFailed(localPath, QStringLiteral("Write error during transfer"));
+                    return;
+                }
+                written += w;
             }
-            written += w;
-        }
-        done += n;
-        emit transferProgress(localPath, done, totalSize);
+            done += n;
+            emit transferProgress(localPath, done, totalSize);
 
-        if (m_cancelRequested.loadRelaxed()) {
-            cancelled = true;
-            break;
+            if (m_cancelRequested.loadRelaxed()) {
+                cancelled = true;
+                break;
+            }
+            if (m_pauseRequested.loadRelaxed()) {
+                paused = true;
+                break;
+            }
         }
-        if (m_pauseRequested.loadRelaxed()) {
-            paused = true;
-            break;
-        }
-    }
+    }   // ScopedNonBlocking's destructor restores blocking mode here, before sftp_close below
 
     libssh2_sftp_close(handle);
 

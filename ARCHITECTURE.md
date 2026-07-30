@@ -203,6 +203,30 @@ that way, it's flagged explicitly rather than left implied.
   expected form structure exactly, with Group in the correct second
   position.
 
+- **Pipelined SFTP I/O's mechanics are verified directly; its actual
+  throughput improvement is not — that needs a real server.** Reported
+  after use: ~4MB/s in this app versus ~40MB/s via FileZilla, Termius,
+  and SMB on the same connection. Root-caused against independent
+  external sources (libssh2's own issue tracker, the curl maintainer's
+  own writeups on this exact problem) rather than guessed at — blocking-
+  mode libssh2 sends one 32KB-capped SFTP packet and waits for its ACK
+  before sending the next, making round-trip time the throughput
+  ceiling; real-world reports elsewhere of ~5-10x slowdowns from this
+  exact cause line up with what was reported here. Fixed by pipelining
+  reads/writes through a temporary non-blocking mode switch, modeled on
+  libssh2's own canonical `sftp_write_nonblock.c` example rather than
+  improvised. What's directly verified: a throwaway test (not committed
+  — see its own reasoning below) confirmed the `ScopedNonBlocking` RAII
+  guard actually flips `libssh2_session_get_blocking()` to non-blocking
+  inside its scope and restores blocking mode afterward, through both a
+  normal scope exit and — critically, since `uploadFile()`'s write-error
+  path returns from inside the guard's scope — an early-return path too.
+  What's NOT verified: that this actually closes the reported speed gap
+  on a real connection. No live SFTP server is available in this
+  environment to measure throughput against, the same limitation already
+  flagged for cancel/resume elsewhere in this document. Needs a real
+  re-test on the same setup that reported ~4MB/s.
+
 **Still not verified:** public-key authentication (implemented, but no
 real key file has been tested against it yet — see Known gaps), the
 transfer queue's progress-bar/status-icon rendering with a real active
@@ -240,6 +264,25 @@ headless/offscreen runs have been checked).
   `requestCancel()` (`QAtomicInteger<bool>`, polled inside the same
   read/write loop, both checked every iteration) — see `RemoteBackend`'s
   doc comment on why a queued signal can't do this job instead.
+  The read/write loop itself is pipelined, not blocking-and-serial: a
+  `ScopedNonBlocking` RAII guard (file-local to `SftpBackend.cpp`)
+  temporarily switches the session to non-blocking mode for just that
+  loop, restoring blocking mode on scope exit regardless of which return
+  path was taken (verified directly — see Verification status). This
+  fixes a well-documented libssh2 characteristic: in blocking mode,
+  libssh2 sends one SFTP packet (protocol-capped at 32KB) and waits for
+  its ACK before sending the next, so round-trip time rather than
+  bandwidth becomes the throughput ceiling — reported in this app as
+  ~4MB/s versus ~40MB/s via FileZilla/Termius/SMB on the same
+  connection, in line with real-world reports elsewhere of roughly
+  5-10x slowdowns from this exact cause. `EAGAIN` retries wait via
+  `libssh2_poll()` (not raw `select()`/`fd_set`) specifically for
+  portability — `select()` needs different headers on POSIX vs. Windows
+  (`sys/select.h` vs. `winsock2.h`), the exact category of mistake that
+  broke the first real Windows build of this app; `libssh2_poll()`
+  handles that gap internally. Buffer size for both loops increased from
+  32KB to 256KB to give libssh2's internal pipelining more room to work
+  with, per its own documented behavior.
 - `ConnectionDialog` — host/port/username form plus a password/private-key
   auth toggle (`QStackedWidget` swaps the relevant fields). Returns a
   single `SftpCredentials` struct (`src/backends/SftpCredentials.h`) that
@@ -515,22 +558,28 @@ ever needs touching again:
   drag-and-drop both skip directories entirely (files only) — dragging or
   selecting a folder does nothing, silently, rather than erroring. Would
   need real recursive traversal + a nested queue structure to support.
-- **Cancel and pause/resume are implemented but only automated-tested
-  against a fake backend and against `LocalBackend`, where both are a
-  documented no-op** (`QFile::copy()` can't be interrupted mid-call).
-  `SftpBackend`'s actual mid-transfer interruption — the cancel and pause
-  flags checked inside the libssh2 read/write loops — and its real
-  byte-offset resume logic (the `libssh2_sftp_seek64()` calls, the
-  local-file clamping/trimming against what's actually on disk) all
-  compile and follow patterns proven correct elsewhere in this codebase,
-  but none of it has a real-server test confirming it actually works —
-  `transfer-pause-test` verifies `TransferManager`'s orchestration
-  (status transitions, offset preservation, resume-not-restart) using a
-  fake backend built for exactly that purpose, which is a real and
-  useful thing to have verified, but is a different claim than "resuming
-  a paused SFTP upload actually picks up where it left off on a live
-  server." Needs a slow enough real transfer, paused and resumed by
-  hand, to verify that specific claim.
+- **Cancel, pause/resume, AND pipelined I/O are all implemented but only
+  automated-tested against a fake backend and against `LocalBackend`,
+  where cancel/pause are a documented no-op** (`QFile::copy()` can't be
+  interrupted mid-call). `SftpBackend`'s actual mid-transfer interruption
+  — the cancel and pause flags checked inside the libssh2 read/write
+  loops — its real byte-offset resume logic (the `libssh2_sftp_seek64()`
+  calls, the local-file clamping/trimming against what's actually on
+  disk), and the non-blocking pipelining itself (the actual throughput
+  improvement it's meant to deliver, as opposed to the `ScopedNonBlocking`
+  RAII mechanics, which are verified — see Verification status) all
+  compile and follow patterns proven correct elsewhere in this codebase
+  or against libssh2's own canonical examples, but none of it has a
+  real-server test confirming it actually works — `transfer-pause-test`
+  verifies `TransferManager`'s orchestration (status transitions, offset
+  preservation, resume-not-restart) using a fake backend built for
+  exactly that purpose, which is a real and useful thing to have
+  verified, but is a different claim than "resuming a paused SFTP upload
+  actually picks up where it left off on a live server" or "this
+  actually transfers faster." Needs a slow-enough real transfer, paused
+  and resumed by hand, and a real throughput comparison against the
+  ~4MB/s baseline that prompted the pipelining fix, to verify those
+  specific claims.
 - **Queue item execution is bound to whatever backend is on the pane when
   its turn comes up**, not when it was enqueued. If you queue a transfer,
   then hit Disconnect before it starts, it'll run against whatever backend
