@@ -9,6 +9,38 @@
 #include <QMetaObject>
 
 namespace {
+// Shared by listDirectory() and listDirectoryForEnumeration() — factored
+// out specifically because the permission-bit decoding is easy to get
+// subtly wrong twice; one implementation means both listing paths can't
+// silently drift apart in behavior over time.
+RemoteEntry parseSftpEntry(const QString &name, const LIBSSH2_SFTP_ATTRIBUTES &attrs)
+{
+    RemoteEntry e;
+    e.name = name;
+    e.isDir = LIBSSH2_SFTP_S_ISDIR(attrs.permissions);
+    e.size = static_cast<qint64>(attrs.filesize);
+    e.modified = QDateTime::fromSecsSinceEpoch(static_cast<qint64>(attrs.mtime));
+
+    // Render permission bits the same way `ls -l` does. Literal octal
+    // masks instead of sys/stat.h's S_IRUSR-style macros: those are
+    // POSIX-only (don't exist on MSVC), but the bits themselves are a
+    // fixed SFTP wire-protocol format, not tied to the host OS's stat.h.
+    char perms[10] = "---------";
+    const quint32 m = attrs.permissions;
+    if (m & 0400) perms[0] = 'r';
+    if (m & 0200) perms[1] = 'w';
+    if (m & 0100) perms[2] = 'x';
+    if (m & 0040) perms[3] = 'r';
+    if (m & 0020) perms[4] = 'w';
+    if (m & 0010) perms[5] = 'x';
+    if (m & 0004) perms[6] = 'r';
+    if (m & 0002) perms[7] = 'w';
+    if (m & 0001) perms[8] = 'x';
+    e.permissions = QString::fromLatin1(perms, 9);
+
+    return e;
+}
+
 // libssh2_session_hostkey()'s type constant (LIBSSH2_HOSTKEY_TYPE_*) and
 // the knownhost API's key-type mask bits (LIBSSH2_KNOWNHOST_KEY_*) are NOT
 // the same numbering — confirmed directly against libssh2.h rather than
@@ -434,37 +466,43 @@ void SftpBackend::listDirectory(const QString &path)
         if (name == QLatin1String(".") || name == QLatin1String(".."))
             continue;
 
-        RemoteEntry e;
-        e.name = name;
-        e.isDir = LIBSSH2_SFTP_S_ISDIR(attrs.permissions);
-        e.size = static_cast<qint64>(attrs.filesize);
-        e.modified = QDateTime::fromSecsSinceEpoch(static_cast<qint64>(attrs.mtime));
-
-        // Render permission bits the same way `ls -l` does — decode once
-        // here rather than pushing raw octal up into the model/view.
-        // Literal octal masks instead of sys/stat.h's S_IRUSR-style macros:
-        // those are POSIX-only (don't exist on MSVC), but the bits
-        // themselves are a fixed SFTP wire-protocol format, not tied to
-        // the host OS's stat.h.
-        char perms[10] = "---------";
-        const quint32 m = attrs.permissions;
-        if (m & 0400) perms[0] = 'r';
-        if (m & 0200) perms[1] = 'w';
-        if (m & 0100) perms[2] = 'x';
-        if (m & 0040) perms[3] = 'r';
-        if (m & 0020) perms[4] = 'w';
-        if (m & 0010) perms[5] = 'x';
-        if (m & 0004) perms[6] = 'r';
-        if (m & 0002) perms[7] = 'w';
-        if (m & 0001) perms[8] = 'x';
-        e.permissions = QString::fromLatin1(perms, 9);
-
-        entries.append(e);
+        entries.append(parseSftpEntry(name, attrs));
     }
     libssh2_sftp_closedir(handle);
 
     m_currentPath = target;
     emit directoryListed(m_currentPath, entries);
+}
+
+void SftpBackend::listDirectoryForEnumeration(const QString &path, int requestId)
+{
+    if (!ensureSession())
+        return;
+
+    LIBSSH2_SFTP_HANDLE *handle = libssh2_sftp_opendir(m_sftp, path.toUtf8().constData());
+    if (!handle) {
+        emit enumerationFailed(path, QStringLiteral("Cannot open remote directory: %1").arg(path), requestId);
+        return;
+    }
+
+    // Deliberately does NOT touch m_currentPath — see RemoteBackend's
+    // doc comment on why this needs to be a separate call from
+    // listDirectory() rather than reusing it.
+    QList<RemoteEntry> entries;
+    char nameBuf[512];
+    LIBSSH2_SFTP_ATTRIBUTES attrs;
+
+    int rc = 0;
+    while ((rc = libssh2_sftp_readdir(handle, nameBuf, sizeof(nameBuf), &attrs)) > 0) {
+        const QString name = QString::fromUtf8(nameBuf, rc);
+        if (name == QLatin1String(".") || name == QLatin1String(".."))
+            continue;
+
+        entries.append(parseSftpEntry(name, attrs));
+    }
+    libssh2_sftp_closedir(handle);
+
+    emit directoryEnumerated(path, entries, requestId);
 }
 
 void SftpBackend::downloadFile(const QString &remotePath, const QString &localPath, qint64 resumeOffset)

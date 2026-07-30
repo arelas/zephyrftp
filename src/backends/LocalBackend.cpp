@@ -45,6 +45,34 @@ void LocalBackend::listDirectory(const QString &path)
     emit directoryListed(m_currentPath, entries);
 }
 
+void LocalBackend::listDirectoryForEnumeration(const QString &path, int requestId)
+{
+    QDir dir(path);
+    if (!dir.exists()) {
+        emit enumerationFailed(path, QStringLiteral("No such directory: %1").arg(path), requestId);
+        return;
+    }
+
+    // Deliberately does NOT touch m_currentPath — see RemoteBackend's
+    // doc comment on why this needs to be a separate call from
+    // listDirectory() rather than reusing it.
+    QList<RemoteEntry> entries;
+    const auto infoList = dir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot,
+                                             QDir::DirsFirst | QDir::Name);
+    for (const QFileInfo &info : infoList) {
+        RemoteEntry e;
+        e.name = info.fileName();
+        e.isDir = info.isDir();
+        e.isSymlink = info.isSymLink();
+        e.size = info.isDir() ? 0 : info.size();
+        e.modified = info.lastModified();
+        e.permissions = info.permissions().testFlag(QFileDevice::ReadUser) ? QStringLiteral("r") : QStringLiteral("-");
+        entries.append(e);
+    }
+
+    emit directoryEnumerated(dir.absolutePath(), entries, requestId);
+}
+
 void LocalBackend::downloadFile(const QString &remotePath, const QString &localPath, qint64 resumeOffset)
 {
     Q_UNUSED(resumeOffset);   // never nonzero in practice — see requestPause()'s doc comment

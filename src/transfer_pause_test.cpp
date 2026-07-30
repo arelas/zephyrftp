@@ -59,6 +59,7 @@ public slots:
     void renameEntry(const QString &, const QString &) override {}
     void createDirectory(const QString &) override {}
     void createFile(const QString &) override {}
+    void listDirectoryForEnumeration(const QString &, int) override {}
 
 private slots:
     void tick() {

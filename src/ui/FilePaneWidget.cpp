@@ -314,15 +314,14 @@ QList<RemoteEntry> FilePaneWidget::selectedEntries() const
 
 void FilePaneWidget::showContextMenu(const QPoint &pos)
 {
-    const QStringList fileNames = selectedFileNames();      // files only — for Transfer
-    const QList<RemoteEntry> selected = selectedEntries();  // files + folders — for Rename/Delete
+    const QList<RemoteEntry> selected = selectedEntries();  // files + folders
 
     QMenu menu(this);
 
     QAction *transferAction = menu.addAction(
-        fileNames.size() > 1 ? tr("Transfer %1 Files to Other Pane").arg(fileNames.size())
-                              : tr("Transfer to Other Pane"));
-    transferAction->setEnabled(!fileNames.isEmpty());
+        selected.size() > 1 ? tr("Transfer %1 Items to Other Pane").arg(selected.size())
+                             : tr("Transfer to Other Pane"));
+    transferAction->setEnabled(!selected.isEmpty());
 
     menu.addSeparator();
     QAction *newFileAction = menu.addAction(
@@ -347,7 +346,7 @@ void FilePaneWidget::showContextMenu(const QPoint &pos)
     QAction *chosen = menu.exec(m_view->viewport()->mapToGlobal(pos));
 
     if (chosen == transferAction)
-        emit filesActivated(fileNames);
+        emit filesActivated(selected);
     else if (chosen == newFileAction)
         promptAndCreateFile();
     else if (chosen == newFolderAction)

@@ -66,6 +66,7 @@ public:
     void renameEntry(const QString &oldPath, const QString &newPath) override;
     void createDirectory(const QString &path) override;
     void createFile(const QString &path) override;
+    void listDirectoryForEnumeration(const QString &path, int requestId) override;
 
     QString currentPath() const override;
     bool isLocalFilesystem() const override { return false; }

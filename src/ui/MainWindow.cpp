@@ -34,6 +34,23 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_transferManager, &TransferManager::transferSucceeded,
             this, &MainWindow::onTransferSucceeded);
 
+    connect(m_transferManager, &TransferManager::folderTransferStarted, this, [this](const QString &name) {
+        statusBar()->showMessage(tr("Preparing to transfer \"%1\"...").arg(name));
+    });
+    connect(m_transferManager, &TransferManager::folderTransferFinished,
+            this, [this](const QString &name, int fileCount) {
+        statusBar()->showMessage(
+            fileCount > 0
+                ? tr("\"%1\": %2 file(s) queued for transfer").arg(name).arg(fileCount)
+                : tr("\"%1\": folder structure created (no files to transfer)").arg(name),
+            5000);
+    });
+    connect(m_transferManager, &TransferManager::folderTransferFailed,
+            this, [this](const QString &name, const QString &reason) {
+        QMessageBox::warning(this, tr("Transfer"),
+                              tr("Couldn't transfer \"%1\":\n%2").arg(name, reason));
+    });
+
     statusBar()->showMessage(tr("Ready"));
 }
 
@@ -115,23 +132,17 @@ void MainWindow::onRightFileActivated(const QString &name)
     m_transferManager->enqueue(m_rightPane, m_leftPane, name);
 }
 
-void MainWindow::onLeftFilesActivated(const QStringList &names)
+void MainWindow::onLeftFilesActivated(const QList<RemoteEntry> &entries)
 {
-    // One enqueue() call per file — TransferManager's queue is already
-    // designed to hold many items and process them serially, so a
-    // multi-select "Transfer Selected" is just several single-file
-    // enqueues in a row, not a new code path.
-    for (const QString &name : names)
-        m_transferManager->enqueue(m_leftPane, m_rightPane, name);
+    enqueueEntries(m_leftPane, m_rightPane, entries);
 }
 
-void MainWindow::onRightFilesActivated(const QStringList &names)
+void MainWindow::onRightFilesActivated(const QList<RemoteEntry> &entries)
 {
-    for (const QString &name : names)
-        m_transferManager->enqueue(m_rightPane, m_leftPane, name);
+    enqueueEntries(m_rightPane, m_leftPane, entries);
 }
 
-void MainWindow::onFilesDropped(FilePaneWidget *sourcePane, const QStringList &names)
+void MainWindow::onFilesDropped(FilePaneWidget *sourcePane, const QList<RemoteEntry> &entries)
 {
     // sourcePane is carried explicitly in the signal (the drag's origin);
     // the destination is whichever pane actually received the drop, which
@@ -142,8 +153,18 @@ void MainWindow::onFilesDropped(FilePaneWidget *sourcePane, const QStringList &n
     if (!destPane || destPane == sourcePane)
         return;
 
-    for (const QString &name : names)
-        m_transferManager->enqueue(sourcePane, destPane, name);
+    enqueueEntries(sourcePane, destPane, entries);
+}
+
+void MainWindow::enqueueEntries(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
+                                 const QList<RemoteEntry> &entries)
+{
+    for (const RemoteEntry &entry : entries) {
+        if (entry.isDir)
+            m_transferManager->enqueueFolder(sourcePane, destPane, entry.name);
+        else
+            m_transferManager->enqueue(sourcePane, destPane, entry.name);
+    }
 }
 
 void MainWindow::onTransferSucceeded()

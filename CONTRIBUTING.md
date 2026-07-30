@@ -21,7 +21,7 @@ does and the real, sometimes non-obvious bugs it surfaced along the way.
 
 ## Running the test suites
 
-Six `EXCLUDE_FROM_ALL` CMake targets — not part of a normal `make`, built
+Seven `EXCLUDE_FROM_ALL` CMake targets — not part of a normal `make`, built
 and run explicitly:
 
 ```
@@ -56,6 +56,19 @@ cmake --build build --target file-operations-test
 QT_QPA_PLATFORM=offscreen ./build/file-operations-test
 ```
 
+```
+cmake --build build --target folder-transfer-test
+mkdir -p /tmp/folder_transfer_test/src/myfolder/subdir1 \
+         /tmp/folder_transfer_test/src/myfolder/subdir2/nested \
+         /tmp/folder_transfer_test/src/myfolder/emptydir \
+         /tmp/folder_transfer_test/dst
+echo "hi from a" > /tmp/folder_transfer_test/src/myfolder/a.txt
+echo "hi from b" > /tmp/folder_transfer_test/src/myfolder/subdir1/b.txt
+echo "hi from c" > /tmp/folder_transfer_test/src/myfolder/subdir1/c.txt
+echo "hi from d" > /tmp/folder_transfer_test/src/myfolder/subdir2/nested/d.txt
+QT_QPA_PLATFORM=offscreen ./build/folder-transfer-test
+```
+
 The `XDG_CONFIG_HOME` override on `site-store-test` isn't optional —
 without it, `SiteStore` writes to your actual config directory, and the
 test's own cleanup phase will delete whatever `sites.json` it finds
@@ -66,7 +79,11 @@ own header comment for exactly what it does and doesn't prove.
 `file-operations-test` creates its own scratch tree under
 `/tmp/file_ops_test` and tests `LocalBackend` directly (not through the
 UI, since its prompts can't be driven headlessly) — see its own header
-comment for what it does and doesn't cover.
+comment for what it does and doesn't cover. `folder-transfer-test` needs
+its nested directory structure created by hand first (shown above) —
+unlike the other tests, it doesn't build its own fixture data, since the
+structure itself (multi-level nesting, a genuinely empty leaf directory)
+is part of what's being verified.
 
 All six need to actually pass — not just build — before a change is
 considered done. See ARCHITECTURE.md's "Verification status" section for

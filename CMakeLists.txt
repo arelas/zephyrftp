@@ -40,6 +40,7 @@ set(SOURCES
     src/backends/SftpBackend.cpp
     src/backends/SavedSite.cpp
     src/transfer/TransferManager.cpp
+    src/transfer/FolderEnumerator.cpp
     resources/icons.qrc
     resources/theme.qrc
 )
@@ -108,6 +109,7 @@ qt_add_executable(smoke-test EXCLUDE_FROM_ALL
     src/backends/SftpBackend.cpp
     src/backends/SavedSite.cpp
     src/transfer/TransferManager.cpp
+    src/transfer/FolderEnumerator.cpp
     resources/icons.qrc
     resources/theme.qrc
     ${HEADERS}
@@ -132,6 +134,7 @@ qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
     src/backends/SftpBackend.cpp
     src/backends/SavedSite.cpp
     src/transfer/TransferManager.cpp
+    src/transfer/FolderEnumerator.cpp
     resources/icons.qrc
     resources/theme.qrc
     ${HEADERS}
@@ -172,6 +175,7 @@ qt_add_executable(transfer-pause-test EXCLUDE_FROM_ALL
     src/backends/LocalBackend.cpp
     src/backends/RemoteBackend.h
     src/transfer/TransferManager.cpp
+    src/transfer/FolderEnumerator.cpp
     resources/icons.qrc
     resources/theme.qrc
 )
@@ -186,3 +190,19 @@ qt_add_executable(file-operations-test EXCLUDE_FROM_ALL
 )
 target_include_directories(file-operations-test PRIVATE src)
 target_link_libraries(file-operations-test PRIVATE Qt6::Core)
+
+# --- Whole-folder transfer test (recursive enumeration + mirrored dirs, real LocalBackend) ---
+qt_add_executable(folder-transfer-test EXCLUDE_FROM_ALL
+    src/folder_transfer_test.cpp
+    src/ui/FilePaneWidget.cpp
+    src/ui/FileTreeView.cpp
+    src/ui/IconTheme.cpp
+    src/backends/LocalBackend.cpp
+    src/backends/RemoteBackend.h
+    src/transfer/TransferManager.cpp
+    src/transfer/FolderEnumerator.cpp
+    resources/icons.qrc
+    resources/theme.qrc
+)
+target_include_directories(folder-transfer-test PRIVATE src)
+target_link_libraries(folder-transfer-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)

@@ -83,20 +83,22 @@ signals:
     // this to "transfer to the other pane".
     void fileActivated(const QString &name);
 
-    // Emitted from the right-click "Transfer Selected" context-menu action
-    // — covers multi-select, unlike double-click which only ever acts on
-    // the single row under the cursor. Directories are skipped (recursive
-    // directory transfer isn't implemented); if the selection was only
-    // directories, this fires with an empty list and MainWindow's handler
-    // treats that as a no-op.
-    void filesActivated(const QStringList &names);
+    // Emitted from the right-click "Transfer Selected" context-menu
+    // action — covers multi-select, unlike double-click which only ever
+    // acts on the single row under the cursor. Carries full RemoteEntry
+    // (not just names) specifically so isDir survives to MainWindow,
+    // which routes files to TransferManager::enqueue() and directories
+    // to TransferManager::enqueueFolder() — a mixed selection of both is
+    // valid and handled entry-by-entry.
+    void filesActivated(const QList<RemoteEntry> &entries);
 
-    // Files dropped ONTO this pane FROM a different pane — forwarded
-    // straight through from FileTreeView::filesDroppedFrom. MainWindow
-    // connects both panes' filesDropped signals to one slot, using
-    // sender() to identify which pane received the drop (the destination)
-    // since sourcePane is already carried in the signal itself.
-    void filesDropped(FilePaneWidget *sourcePane, const QStringList &names);
+    // Files (and/or folders) dropped ONTO this pane FROM a different
+    // pane — forwarded straight through from FileTreeView::filesDroppedFrom.
+    // MainWindow connects both panes' filesDropped signals to one slot,
+    // using sender() to identify which pane received the drop (the
+    // destination) since sourcePane is already carried in the signal
+    // itself.
+    void filesDropped(FilePaneWidget *sourcePane, const QList<RemoteEntry> &entries);
 
 private slots:
     void onDirectoryListed(const QString &path, const QList<RemoteEntry> &entries);

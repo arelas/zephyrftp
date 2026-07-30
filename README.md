@@ -30,8 +30,12 @@ move things between them. Think FileZilla or WinSCP, built fresh in Qt6.
   it. If that fingerprint ever changes on a later connection, you get a
   clear warning instead of a silent, invisible risk. This is the same
   protection SSH itself uses, and it's on by default here.
-- **Drag-and-drop or multi-select transfers** — drag files from one pane
-  to the other, or select several at once and right-click → Transfer.
+- **Drag-and-drop or multi-select transfers — whole folders too, not just
+  files.** Drag a folder from one pane to the other (or select several,
+  mixing files and folders freely) and everything inside gets recreated
+  on the other side, nested structure and all, including empty
+  subfolders. Each file inside shows up in the transfer queue like any
+  other transfer — same pause/resume/cancel, same progress and speed.
 - **A real transfer queue** — see what's moving and how fast, pause a
   transfer to a server and pick it back up later without starting over,
   cancel something outright, or retry something that failed, all from
@@ -83,8 +87,6 @@ quick on any recent distro.
 This is young software — a few things intentionally aren't supported yet
 rather than being half-implemented:
 
-- **Whole folders can't be transferred** — only individual files.
-  Selecting or dragging a folder currently does nothing.
 - **Server-to-server transfers aren't supported** — ZephyrFTP always
   transfers between your computer and one server, not between two
   remote servers directly.

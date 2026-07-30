@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include "../backends/RemoteEntry.h"
 
 class FilePaneWidget;
 class TransferManager;
@@ -20,9 +21,9 @@ public:
 private slots:
     void onLeftFileActivated(const QString &name);
     void onRightFileActivated(const QString &name);
-    void onLeftFilesActivated(const QStringList &names);
-    void onRightFilesActivated(const QStringList &names);
-    void onFilesDropped(FilePaneWidget *sourcePane, const QStringList &names);
+    void onLeftFilesActivated(const QList<RemoteEntry> &entries);
+    void onRightFilesActivated(const QList<RemoteEntry> &entries);
+    void onFilesDropped(FilePaneWidget *sourcePane, const QList<RemoteEntry> &entries);
     void onConnectTriggered();
     void onSiteManagerTriggered();
     void onDisconnectTriggered();
@@ -39,6 +40,15 @@ private:
     // given credentials and hands it to the right pane. One tested path
     // for "actually establish a connection" rather than two copies of it.
     void startConnection(const SftpCredentials &credentials);
+
+    // Shared by onLeftFilesActivated/onRightFilesActivated/onFilesDropped
+    // — all three end up with the same "here's a selection of files and/or
+    // folders, transfer them from sourcePane to destPane" request, just
+    // triggered differently (context menu vs. drag-and-drop). Routes each
+    // entry to TransferManager::enqueue() (files) or enqueueFolder()
+    // (directories) — a mixed selection is valid and handled item-by-item.
+    void enqueueEntries(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
+                         const QList<RemoteEntry> &entries);
 
     FilePaneWidget *m_leftPane = nullptr;   // local, by default
     FilePaneWidget *m_rightPane = nullptr;  // remote, once connected

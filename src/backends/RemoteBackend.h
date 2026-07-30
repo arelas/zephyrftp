@@ -90,6 +90,17 @@ public slots:
     // something to overwrite quietly.
     virtual void createFile(const QString &path) = 0;
 
+    // Lists a directory's contents WITHOUT updating currentPath() or
+    // being treated as pane navigation — listDirectory() has that side
+    // effect deliberately (it's what drives FilePaneWidget's own display
+    // and history), which is exactly wrong for recursive folder-transfer
+    // enumeration: walking into a dozen subdirectories to build a
+    // manifest would otherwise hijack the pane's visible listing and
+    // corrupt its navigation history mid-walk. requestId is echoed back
+    // in directoryEnumerated() so a caller managing several outstanding
+    // requests (see FolderEnumerator) can match responses to requests.
+    virtual void listDirectoryForEnumeration(const QString &path, int requestId) = 0;
+
 signals:
     void connected();
     void connectionFailed(const QString &reason);
@@ -109,4 +120,14 @@ signals:
     // code, since the only consumer is a message shown directly to the
     // person who triggered it.
     void fileOperationFailed(const QString &operation, const QString &path, const QString &reason);
+
+    // Response to listDirectoryForEnumeration() — same entry data as
+    // directoryListed(), but routed separately so FilePaneWidget's own
+    // listener (which drives the visible pane) never sees these.
+    void directoryEnumerated(const QString &path, const QList<RemoteEntry> &entries, int requestId);
+    // Enumeration hit a real error (e.g. permission denied partway
+    // through a walk) — carries requestId for the same reason as
+    // directoryEnumerated(), and path identifies which directory failed,
+    // since a recursive walk has many outstanding/attempted paths.
+    void enumerationFailed(const QString &path, const QString &reason, int requestId);
 };

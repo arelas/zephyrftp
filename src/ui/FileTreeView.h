@@ -2,6 +2,7 @@
 
 #include <QTreeView>
 #include <QStringList>
+#include "../backends/RemoteEntry.h"
 
 class FilePaneWidget;
 
@@ -27,11 +28,13 @@ public:
     explicit FileTreeView(FilePaneWidget *owningPane, QWidget *parent = nullptr);
 
 signals:
-    // Emitted on THIS view (the drop target) when files are dropped onto
-    // it from a different pane's FileTreeView. sourcePane identifies where
-    // they came from; FilePaneWidget just forwards this signal upward
-    // (see FilePaneWidget::filesDropped).
-    void filesDroppedFrom(FilePaneWidget *sourcePane, const QStringList &names);
+    // Emitted on THIS view (the drop target) when files/folders are
+    // dropped onto it from a different pane's FileTreeView. sourcePane
+    // identifies where they came from; FilePaneWidget just forwards this
+    // signal upward (see FilePaneWidget::filesDropped). Carries full
+    // RemoteEntry (not just names) so isDir survives to MainWindow's
+    // routing between TransferManager::enqueue()/enqueueFolder().
+    void filesDroppedFrom(FilePaneWidget *sourcePane, const QList<RemoteEntry> &entries);
 
 protected:
     void startDrag(Qt::DropActions supportedActions) override;

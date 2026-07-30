@@ -4,6 +4,7 @@
 #include <QList>
 #include <QElapsedTimer>
 #include "TransferItem.h"
+#include "FolderEnumerator.h"
 
 class RemoteBackend;
 
@@ -22,6 +23,19 @@ public:
     // pane's backend, and appends it to the queue. Starts processing
     // immediately if nothing else is currently running.
     void enqueue(FilePaneWidget *sourcePane, FilePaneWidget *destPane, const QString &fileName);
+
+    // Recursively transfers a whole folder: enumerates it via
+    // FolderEnumerator (against the SOURCE backend), creates the mirrored
+    // directory structure on the destination, then enqueues every file
+    // found through the exact same enqueue() above — a folder transfer
+    // is not a different code path from individual file transfers as far
+    // as the visible queue, pause/resume/cancel, or speed tracking are
+    // concerned; it's just enqueue() called many times with relative
+    // paths instead of bare filenames (which already works correctly
+    // unchanged, since joinPath(dir, "sub/dir/file") produces exactly
+    // the right nested path). Remote-to-remote has the same "not
+    // supported yet" limitation as single-file transfers.
+    void enqueueFolder(FilePaneWidget *sourcePane, FilePaneWidget *destPane, const QString &folderName);
 
     // Cancels by id. If the item is Queued (hasn't started), just marks it
     // Cancelled directly — nothing to interrupt. If it's the currently
@@ -59,6 +73,20 @@ signals:
     void itemUpdated(const TransferItem &item);   // covers both progress and status changes
     void transferSucceeded();   // fired after any item completes — MainWindow uses this to refresh both panes
 
+    // Folder-transfer status, separate from the per-file itemAdded/
+    // itemUpdated above — a folder transfer isn't one queue item, it's
+    // an enumeration phase followed by potentially many. folderTransferStarted
+    // fires once enumeration begins (before any files are known yet, so
+    // MainWindow can show a "Preparing..." message); folderTransferFinished
+    // fires once every discovered file has been handed to enqueue()
+    // (fileCount may be 0 for a folder containing only empty
+    // subdirectories — still not a failure, just nothing for the visible
+    // queue to do); folderTransferFailed fires if enumeration itself
+    // couldn't complete (e.g. a permission error partway through the walk).
+    void folderTransferStarted(const QString &folderName);
+    void folderTransferFinished(const QString &folderName, int fileCount);
+    void folderTransferFailed(const QString &folderName, const QString &reason);
+
 private slots:
     void onBackendProgress(const QString &fileName, qint64 bytesDone, qint64 bytesTotal);
     void onBackendFinished(const QString &fileName);
@@ -69,6 +97,18 @@ private:
     void startNext();
     void connectToBackend(RemoteBackend *backend);
     int indexById(int id) const;
+
+    // Second phase of enqueueFolder(), called once FolderEnumerator
+    // finishes: creates every directory the walk found (dispatched via
+    // QMetaObject::invokeMethod(..., Qt::QueuedConnection), which
+    // preserves FIFO order per target object — so the destination
+    // backend processes them strictly in FolderEnumerator's
+    // parent-before-child order regardless of how long each individual
+    // creation takes; no need to wait for each one's own completion
+    // signal before issuing the next), then hands every file to the
+    // ordinary enqueue() above.
+    void startFolderFileTransfers(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
+                                   const QString &folderName, const QList<EnumeratedItem> &items);
 
     QList<TransferItem> m_items;
     int m_nextId = 1;

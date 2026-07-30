@@ -280,6 +280,30 @@ that way, it's flagged explicitly rather than left implied.
   fix compiles clean and the full existing regression suite still
   passes.
 
+- **Whole-folder transfer is verified end-to-end against real nested
+  directories, not just the individual pieces in isolation.**
+  `src/folder_transfer_test.cpp` (built via the `folder-transfer-test`
+  CMake target) builds a real multi-level directory tree — a root
+  folder with a top-level file, a subdirectory with two files, a
+  subdirectory containing a further-nested subdirectory with a file
+  three levels deep, and a genuinely empty leaf directory (no files, no
+  subdirectories inside it at all) — and calls
+  `TransferManager::enqueueFolder()` against real `FilePaneWidget` +
+  `LocalBackend` instances. 17 checks confirm: `folderTransferStarted`/
+  `folderTransferFinished` fire with the right folder name at the right
+  times; exactly 4 files (not 5 — directories correctly excluded from
+  the count) get added to the visible transfer queue and all 4 reach
+  `Done`; every directory gets created on the destination, including
+  the three-levels-deep one (proving the walk doesn't stop after one
+  level) and — the case most likely to be silently wrong in a buggy
+  implementation — **the genuinely empty directory gets created despite
+  contributing zero files anywhere in its own subtree**, rather than
+  being skipped because nothing "needed" it; and every file's content
+  is verified correct at every nesting depth, not just presence/absence.
+  All 17 passed on the first real run. **Not verified:**
+  `SftpBackend`'s side of the same walk (see the matching Known Gaps
+  entry) — no live SFTP server is available in this environment.
+
 **Still not verified:** public-key authentication (implemented, but no
 real key file has been tested against it yet — see Known gaps), the
 transfer queue's progress-bar/status-icon rendering with a real active
@@ -304,6 +328,15 @@ headless/offscreen runs have been checked).
   clear "not empty" failure rather than either silently no-op'ing or
   wiping out a whole tree; recursive delete is a meaningfully bigger,
   more dangerous feature that wasn't asked for.
+  Also declares `listDirectoryForEnumeration(path, requestId)` +
+  `directoryEnumerated`/`enumerationFailed` — deliberately separate from
+  `listDirectory()`/`directoryListed`, which have the side effect of
+  updating the pane's own `currentPath()` and driving its visible
+  listing. Reusing that for a recursive folder-transfer walk would
+  hijack the pane's display and corrupt its navigation history mid-walk
+  as it stepped into each subdirectory — `requestId` lets a caller
+  managing several outstanding enumeration requests (see
+  `FolderEnumerator`) match responses back to requests.
 - `LocalBackend` — wraps `QDir`/`QFile`. Runs on the GUI thread; local
   listing/copy is fast enough that this hasn't been a problem, but it's a
   design decision worth revisiting if it ever needs to handle slow
@@ -466,8 +499,14 @@ headless/offscreen runs have been checked).
   thread's queue) followed by `thread->quit()` + `thread->wait()`. Passing
   `thread=nullptr` (e.g. for `LocalBackend`) falls back to normal
   parent-child ownership. Right-click on selected rows offers "Transfer
-  Selected" (multi-select, via `filesActivated`), on top of the original
-  double-click-one-file behavior (`fileActivated`). The same context menu
+  Selected" (multi-select, via `filesActivated` — carries full
+  `RemoteEntry`, not bare names, specifically so `isDir` survives to
+  `MainWindow`'s routing between `TransferManager::enqueue()` (files) and
+  `enqueueFolder()` (directories); a mixed selection of both is valid
+  and each entry is routed individually), on top of the original
+  double-click-one-file behavior (`fileActivated`, files only — double-
+  click on a directory means "navigate into it", a different action
+  entirely). The same context menu
   also has New File/New Folder (prompt for a name via `QInputDialog`,
   always enabled), Rename (prompts pre-filled with the current name,
   enabled only for a single selection — renaming several items to one
@@ -515,7 +554,10 @@ headless/offscreen runs have been checked).
   (`dragEnterEvent`/`dropEvent`) are both overridden here instead. The
   dragged `QMimeData` carries the source `FilePaneWidget*` as a raw
   `quintptr` — same-process-only, never meant to leave this app, a
-  legitimate technique for internal Qt drag-and-drop.
+  legitimate technique for internal Qt drag-and-drop — alongside the
+  selected entries encoded as `"<0 or 1>\t<name>"` per line, the leading
+  flag being `isDir`, needed since whole folders can be dragged now, not
+  just files.
 - `TransferManager` — owns the transfer queue, processes it **serially**
   (one item at a time — SftpBackend holds a single libssh2 session, and
   concurrent transfers on the same session aren't safe without more
@@ -546,6 +588,40 @@ headless/offscreen runs have been checked).
   250ms in `onBackendProgress()` (via `QElapsedTimer`) rather than on
   every single progress signal, which for SFTP's 32KB-chunk read/write
   loop would be far too frequent to read as a stable "live" number.
+  `enqueueFolder()` handles whole-folder transfer: enumerates the source
+  folder via `FolderEnumerator` (see below), creates the mirrored
+  directory structure on the destination, then hands every discovered
+  file to the ordinary `enqueue()` above — a genuinely useful design
+  outcome discovered while building this, not planned in advance:
+  `enqueue()`'s existing `joinPath(pane->currentDirectory(), fileName)`
+  logic already produces the correct nested path when `fileName` is
+  actually a relative path like `"photos/subdir/photo.jpg"`, so folder
+  transfer needed no separate file-transfer mechanism at all — every
+  file discovered by the walk rides through the exact same queue,
+  pause/resume/cancel, and speed tracking as any other transfer, for
+  free. Directory creation calls are fired in `FolderEnumerator`'s
+  guaranteed parent-before-child order via
+  `QMetaObject::invokeMethod(..., Qt::QueuedConnection)` without waiting
+  for each one's individual completion — Qt's per-target-object FIFO
+  ordering on queued connections is what guarantees the destination
+  backend processes them in that exact sequence regardless of how long
+  each individual creation takes, so there's nothing to wait on.
+- `FolderEnumerator` (`src/transfer/FolderEnumerator.h/.cpp`) —
+  recursively walks a folder via a backend's
+  `listDirectoryForEnumeration()`, one directory at a time (not several
+  concurrent requests: a real `SftpBackend` has exactly one session, so
+  concurrent calls would just serialize through libssh2 anyway, and
+  `LocalBackend` gains nothing from parallel `QDir` reads either — simple
+  and strictly ordered beats a concurrency scheme that wouldn't actually
+  buy anything). Emits a flat `QList<EnumeratedItem>` manifest on
+  `finished()`, each entry's `relativePath` already reading as "the path
+  this item should have under wherever the caller intends to recreate
+  the folder" (seeded with the root folder's own name, so
+  `TransferManager::enqueueFolder()` doesn't need to do any path
+  rewriting itself). Any enumeration failure aborts the whole walk
+  rather than skipping the failed subdirectory and continuing — silently
+  completing with missing content would look successful while actually
+  being wrong, which is worse than clearly failing.
 - `TransferQueueWidget` — table view mirroring `TransferManager`'s
   `itemAdded`/`itemUpdated` signals, plus a right-click context menu
   (Cancel/Pause/Resume/Retry, each enabled based on the item's current
@@ -699,10 +775,17 @@ ever needs touching again:
   `TransferManager::enqueue()` marks them `Failed` immediately with an
   explanatory message. Would need a stage-through-a-local-temp-file
   fallback (download then upload) to support.
-- **Recursive directory transfer isn't implemented.** Multi-select and
-  drag-and-drop both skip directories entirely (files only) — dragging or
-  selecting a folder does nothing, silently, rather than erroring. Would
-  need real recursive traversal + a nested queue structure to support.
+- **`SftpBackend`'s `listDirectoryForEnumeration()` — the primitive whole-
+  folder transfer's recursive walk depends on — is unverified against a
+  real server.** `LocalBackend`'s implementation is thoroughly tested
+  (see the folder-transfer-test entry in Verification status), including
+  the trickiest cases (multi-level nesting, a genuinely empty leaf
+  directory), but no live SFTP server is available in this environment.
+  The libssh2 calls it's built on (`libssh2_sftp_opendir`/`readdir`) are
+  the same ones `listDirectory()` already uses successfully against a
+  real server, just routed to a different signal — so the underlying
+  protocol operations are proven, but "does a recursive walk over SFTP
+  actually work end-to-end" hasn't been tried.
 - **Cancel and pause/resume are implemented but only automated-tested
   against a fake backend and against `LocalBackend`, where both are a
   documented no-op** (`QFile::copy()` can't be interrupted mid-call).

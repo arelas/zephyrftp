@@ -53,6 +53,79 @@ void TransferManager::enqueue(FilePaneWidget *sourcePane, FilePaneWidget *destPa
         startNext();
 }
 
+void TransferManager::enqueueFolder(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
+                                     const QString &folderName)
+{
+    RemoteBackend *srcBackend = sourcePane->backend();
+    RemoteBackend *dstBackend = destPane->backend();
+
+    // Same limitation as single-file transfers — no stage-through-a-temp
+    // fallback exists for either backend yet.
+    if (!srcBackend->isLocalFilesystem() && !dstBackend->isLocalFilesystem()) {
+        emit folderTransferFailed(folderName, tr("Remote-to-remote transfers aren't supported yet"));
+        return;
+    }
+
+    const QString rootPath = joinPath(sourcePane->currentDirectory(), folderName);
+    auto *enumerator = new FolderEnumerator(srcBackend, rootPath, folderName, this);
+
+    emit folderTransferStarted(folderName);
+
+    connect(enumerator, &FolderEnumerator::finished, this,
+            [this, enumerator, sourcePane, destPane, folderName](const QList<EnumeratedItem> &items) {
+        enumerator->deleteLater();
+        startFolderFileTransfers(sourcePane, destPane, folderName, items);
+    });
+    connect(enumerator, &FolderEnumerator::failed, this,
+            [this, enumerator, folderName](const QString &reason) {
+        enumerator->deleteLater();
+        emit folderTransferFailed(folderName, reason);
+    });
+
+    enumerator->start();
+}
+
+void TransferManager::startFolderFileTransfers(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
+                                                const QString &folderName, const QList<EnumeratedItem> &items)
+{
+    RemoteBackend *dstBackend = destPane->backend();
+
+    // Create every directory first, in FolderEnumerator's guaranteed
+    // parent-before-child order. Not waited on individually — see this
+    // method's doc comment in the header for why the queued-connection
+    // FIFO ordering alone is sufficient here. "Already exists" (e.g. the
+    // destination happens to already have some of this structure) isn't
+    // treated as an error for this bulk path — createDirectory()'s
+    // fileOperationFailed signal for that case simply isn't listened to
+    // here at all, unlike the single right-click "New Folder" action.
+    for (const EnumeratedItem &item : items) {
+        if (!item.isDir)
+            continue;
+        const QString destDirPath = joinPath(destPane->currentDirectory(), item.relativePath);
+        QMetaObject::invokeMethod(dstBackend, "createDirectory", Qt::QueuedConnection,
+                                   Q_ARG(QString, destDirPath));
+    }
+
+    // Every file goes through the ordinary enqueue() — its existing
+    // joinPath(pane->currentDirectory(), fileName) logic already builds
+    // the correct nested path when fileName is actually a relative path
+    // like "photos/subdir/photo.jpg", so no separate file-transfer
+    // mechanism is needed for folders at all.
+    int fileCount = 0;
+    for (const EnumeratedItem &item : items) {
+        if (item.isDir)
+            continue;
+        enqueue(sourcePane, destPane, item.relativePath);
+        fileCount++;
+    }
+
+    // fileCount == 0 is a real, valid outcome (a folder tree containing
+    // only empty subdirectories) — not a failure, the directories were
+    // still created above, there's just nothing left for the visible
+    // transfer queue to do.
+    emit folderTransferFinished(folderName, fileCount);
+}
+
 void TransferManager::startNext()
 {
     if (m_activeIndex != -1)
