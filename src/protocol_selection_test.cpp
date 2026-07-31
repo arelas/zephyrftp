@@ -20,6 +20,7 @@
 #include <QApplication>
 #include <QDebug>
 #include <QSpinBox>
+#include <QAbstractSpinBox>
 #include <QRadioButton>
 #include <QLineEdit>
 #include <QWidget>
@@ -54,8 +55,13 @@ int main(int argc, char *argv[])
 
         auto *portSpin = dialog.findChild<QSpinBox *>(QStringLiteral("portSpin"));
         check("port spin box found", portSpin != nullptr);
-        if (portSpin)
+        if (portSpin) {
             check("default port is 22 for SFTP", portSpin->value() == 22);
+            // Deliberate: a port is typed, not nudged. Guards against a
+            // silent revert, which nothing else in this suite would catch.
+            check("port field has no up/down arrows",
+                  portSpin->buttonSymbols() == QAbstractSpinBox::NoButtons);
+        }
 
         // --- switching to FTP ---
         dialog.setProtocol(Protocol::Ftp);

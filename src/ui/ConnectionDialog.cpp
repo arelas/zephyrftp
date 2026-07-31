@@ -5,6 +5,7 @@
 #include <QHBoxLayout>
 #include <QLineEdit>
 #include <QSpinBox>
+#include <QAbstractSpinBox>
 #include <QRadioButton>
 #include <QButtonGroup>
 #include <QStackedWidget>
@@ -52,6 +53,13 @@ ConnectionDialog::ConnectionDialog(QWidget *parent)
     m_passwordAuthRadio->setObjectName(QStringLiteral("passwordAuthRadio"));
     m_keyAuthRadio->setObjectName(QStringLiteral("keyAuthRadio"));
 
+    // No up/down arrows: a port is typed, not nudged one integer at a
+    // time, so the buttons were pure visual noise. Kept as a QSpinBox
+    // rather than swapped for a QLineEdit specifically to retain what
+    // the widget is actually earning its place with — numeric-only
+    // input and clamping to the valid 1-65535 range. A QLineEdit would
+    // need a QIntValidator bolted on to get back to the same place.
+    m_portSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
     m_portSpin->setRange(1, 65535);
     m_portSpin->setValue(defaultPortFor(Protocol::Sftp));
     m_passwordEdit->setEchoMode(QLineEdit::Password);
