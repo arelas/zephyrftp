@@ -100,10 +100,18 @@ quick on any recent distro.
 This is young software — a few things intentionally aren't supported yet
 rather than being half-implemented:
 
-- **Plain FTP and FTPS aren't available yet, despite the name** —
-  ZephyrFTP currently connects over SFTP only. Support for FTP and FTPS
-  is partly built but isn't finished or selectable, so if you need
-  either one today, this isn't the client for you yet.
+- **FTP and FTPS are selectable but completely untested against a real
+  server.** You can now pick FTP or FTPS in the connection dialog and
+  the Site Manager, and everything behind that choice is implemented —
+  but it has never been run against an actual FTP server, not once. SFTP
+  is the protocol that's been verified against real hardware. Treat FTP
+  and FTPS as unproven, and expect rough edges.
+- **FTPS won't connect to a server with a self-signed certificate.**
+  ZephyrFTP refuses to connect when it can't verify the server's
+  certificate, and there's currently no way to inspect one and choose to
+  trust it (unlike SSH host keys, where you're asked). Erring toward
+  refusing is deliberate; the missing "trust this certificate" prompt
+  is a real gap, not a decision that self-signed certificates are wrong.
 - **Server-to-server transfers aren't supported** — ZephyrFTP always
   transfers between your computer and one server, not between two
   remote servers directly.

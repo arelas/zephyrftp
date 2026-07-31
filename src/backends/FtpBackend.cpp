@@ -1,6 +1,7 @@
 #include "FtpBackend.h"
 
 #include <QSslSocket>
+#include <QSslError>
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
@@ -124,6 +125,26 @@ FtpBackend::FtpReply FtpBackend::sendCommand(const QString &text)
     return readReply();
 }
 
+// Attaches a handler that RECORDS TLS errors so they can be reported in
+// plain language, without ignoring them. This distinction matters: not
+// calling ignoreSslErrors() is what keeps the handshake failing closed
+// on an untrusted certificate, which is the behavior we want. The only
+// thing added here is legibility — without it, a self-signed server
+// certificate (very common on FTPS servers) surfaces as a generic
+// "TLS handshake failed: Unknown error", which tells the user nothing
+// about what to do next.
+static void recordTlsErrors(QSslSocket *socket, QString *sink)
+{
+    QObject::connect(socket, &QSslSocket::sslErrors, socket,
+                     [sink](const QList<QSslError> &errors) {
+        QStringList descriptions;
+        for (const QSslError &error : errors)
+            descriptions << error.errorString();
+        *sink = descriptions.join(QStringLiteral("; "));
+        // Deliberately no ignoreSslErrors() call — see above.
+    });
+}
+
 bool FtpBackend::ensureConnected()
 {
     if (m_connected)
@@ -167,10 +188,20 @@ bool FtpBackend::ensureConnected()
         // what makes explicit FTPS "explicit" (as opposed to implicit
         // FTPS, which is TLS from the very first byte on a separate
         // port — not implemented here, see the class doc comment).
+        QString tlsErrorDetail;
+        recordTlsErrors(m_controlSocket, &tlsErrorDetail);
+
         m_controlSocket->startClientEncryption();
         if (!m_controlSocket->waitForEncrypted(15000)) {
-            emit connectionFailed(QStringLiteral("TLS handshake failed: %1")
-                                   .arg(m_controlSocket->errorString()));
+            // Prefer the certificate-level reason when there is one: it
+            // names the actual problem ("The certificate is self-signed,
+            // and untrusted") instead of the socket's generic failure.
+            const QString reason = tlsErrorDetail.isEmpty()
+                ? m_controlSocket->errorString()
+                : tlsErrorDetail;
+            emit connectionFailed(QStringLiteral(
+                "TLS handshake failed: %1. ZephyrFTP will not connect to a server whose "
+                "certificate it cannot verify.").arg(reason));
             teardown();
             return false;
         }
@@ -304,11 +335,17 @@ QTcpSocket *FtpBackend::openPassiveDataConnection(QString *errorOut)
         // A FRESH TLS handshake, not a reused session from the control
         // connection — see the class doc comment's known-gap note on
         // why some strict FTPS server configurations may reject this.
+        QString tlsErrorDetail;
+        recordTlsErrors(dataSocket, &tlsErrorDetail);
+
         dataSocket->startClientEncryption();
         if (!dataSocket->waitForEncrypted(15000)) {
             if (errorOut) {
+                const QString reason = tlsErrorDetail.isEmpty()
+                    ? dataSocket->errorString()
+                    : tlsErrorDetail;
                 *errorOut = QStringLiteral("Data connection TLS handshake failed: %1")
-                    .arg(dataSocket->errorString());
+                    .arg(reason);
             }
             delete dataSocket;
             return nullptr;

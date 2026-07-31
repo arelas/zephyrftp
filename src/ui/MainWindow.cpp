@@ -7,6 +7,8 @@
 #include "IconTheme.h"
 #include "../backends/LocalBackend.h"
 #include "../backends/SftpBackend.h"
+#include "../backends/FtpBackend.h"
+#include "../backends/ConnectionRequest.h"
 #include "../backends/SftpCredentials.h"
 #include "../transfer/TransferManager.h"
 
@@ -228,18 +230,22 @@ void MainWindow::onConnectTriggered()
     if (dialog.exec() != QDialog::Accepted)
         return;
 
-    const SftpCredentials creds = dialog.credentials();
+    const ConnectionRequest request = dialog.connectionRequest();
 
-    if (creds.host.isEmpty()) {
+    if (request.host().isEmpty()) {
         QMessageBox::warning(this, tr("Connect"), tr("Host cannot be empty."));
         return;
     }
-    if (creds.authMethod == SftpAuthMethod::PublicKey && creds.privateKeyPath.isEmpty()) {
+    // Key-auth validation only applies to SFTP — the dialog hides the auth
+    // choice entirely for FTP/FTPS, so there's no key path to check there.
+    if (request.protocol == Protocol::Sftp
+        && request.sftp.authMethod == SftpAuthMethod::PublicKey
+        && request.sftp.privateKeyPath.isEmpty()) {
         QMessageBox::warning(this, tr("Connect"), tr("Select a private key file."));
         return;
     }
 
-    startConnection(creds);
+    startConnection(request);
 }
 
 void MainWindow::onSiteManagerTriggered()
@@ -251,22 +257,53 @@ void MainWindow::onSiteManagerTriggered()
     // SiteManagerDialog has already validated the host and prompted for
     // any password/passphrase by the time it accepts — nothing left to
     // check here, unlike onConnectTriggered above.
-    startConnection(dialog.credentialsToConnect());
+    startConnection(dialog.connectionRequestToConnect());
 }
 
-void MainWindow::startConnection(const SftpCredentials &credentials)
+void MainWindow::startConnection(const ConnectionRequest &request)
 {
-    // No parent: SftpBackend is about to be moved to a worker thread, and
-    // Qt refuses to reparent an object across thread boundaries. FilePaneWidget
-    // owns its lifetime manually from here via setBackend()'s deleteLater +
-    // quit()/wait() teardown path instead of the usual QObject parent-child chain.
-    auto *backend = new SftpBackend(credentials, m_hostKeyVerifier);
+    // No parent on the backend: it's about to be moved to a worker thread,
+    // and Qt refuses to reparent an object across thread boundaries.
+    // FilePaneWidget owns its lifetime manually from here via setBackend()'s
+    // deleteLater + quit()/wait() teardown path instead of the usual
+    // QObject parent-child chain.
+    //
+    // Both branches produce a RemoteBackend*, which is the entire point of
+    // that interface — everything downstream of this switch (the pane, the
+    // transfer manager, the queue widget) is protocol-agnostic and stays
+    // that way. This function is the only place in the UI layer that knows
+    // concrete backend types exist.
+    RemoteBackend *backend = nullptr;
+    switch (request.protocol) {
+    case Protocol::Sftp:
+        backend = new SftpBackend(request.sftp, m_hostKeyVerifier);
+        break;
+    case Protocol::Ftp:
+    case Protocol::Ftps:
+        // No host-key verifier equivalent is passed: FTPS authenticates the
+        // server with an X.509 certificate validated by QSslSocket against
+        // the system trust store, not with a TOFU-style key fingerprint.
+        // Plain FTP authenticates the server not at all — which is exactly
+        // what "unencrypted" means, and why the connection dialog labels it
+        // that way rather than leaving the user to infer it.
+        backend = new FtpBackend(request.ftp);
+        break;
+    }
+
+    if (!backend) {
+        // Unreachable while Protocol has exactly the three values above,
+        // but an unhandled future enum value silently connecting to
+        // nothing would be far worse than a visible message.
+        statusBar()->showMessage(tr("Unsupported protocol — cannot connect."), 5000);
+        return;
+    }
+
     auto *thread = new QThread(this);   // the QThread *controller* object is fine
                                          // to parent normally — it's backend that
                                          // can't be, since IT is what moves.
     backend->moveToThread(thread);
 
-    statusBar()->showMessage(tr("Connecting to %1...").arg(credentials.host));
+    statusBar()->showMessage(tr("Connecting to %1...").arg(request.host()));
     m_rightPane->setBackend(backend, thread);
 }
 

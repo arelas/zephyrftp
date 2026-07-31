@@ -85,6 +85,17 @@ void SiteManagerDialog::buildUi()
     connect(m_groupCombo->lineEdit(), &QLineEdit::editingFinished, this, &SiteManagerDialog::onFieldEdited);
     connect(m_groupCombo, &QComboBox::currentIndexChanged, this, &SiteManagerDialog::onFieldEdited);
 
+    m_protocolCombo = new QComboBox(this);
+    m_protocolCombo->addItem(displayNameFor(Protocol::Sftp), int(Protocol::Sftp));
+    m_protocolCombo->addItem(displayNameFor(Protocol::Ftp),  int(Protocol::Ftp));
+    m_protocolCombo->addItem(displayNameFor(Protocol::Ftps), int(Protocol::Ftps));
+    // Two connections, deliberately: onProtocolChanged() updates which
+    // fields are visible, onFieldEdited() persists the change. Folding
+    // both into one slot would tangle "what the form looks like" with
+    // "what's written to disk".
+    connect(m_protocolCombo, &QComboBox::currentIndexChanged, this, &SiteManagerDialog::onProtocolChanged);
+    connect(m_protocolCombo, &QComboBox::currentIndexChanged, this, &SiteManagerDialog::onFieldEdited);
+
     m_hostEdit = new QLineEdit(this);
     connect(m_hostEdit, &QLineEdit::editingFinished, this, &SiteManagerDialog::onFieldEdited);
 
@@ -104,7 +115,9 @@ void SiteManagerDialog::buildUi()
     m_passwordAuthRadio->setChecked(true);
     connect(m_passwordAuthRadio, &QRadioButton::toggled, this, &SiteManagerDialog::updateAuthFieldsVisibility);
 
-    auto *authRadioRow = new QHBoxLayout;
+    m_authRowWidget = new QWidget(this);
+    auto *authRadioRow = new QHBoxLayout(m_authRowWidget);
+    authRadioRow->setContentsMargins(0, 0, 0, 0);
     authRadioRow->addWidget(m_passwordAuthRadio);
     authRadioRow->addWidget(m_keyAuthRadio);
     authRadioRow->addStretch();
@@ -171,10 +184,12 @@ void SiteManagerDialog::buildUi()
     auto *form = new QFormLayout;
     form->addRow(tr("Site name:"), m_nameEdit);
     form->addRow(tr("Group:"), m_groupCombo);
+    form->addRow(tr("Protocol:"), m_protocolCombo);
     form->addRow(tr("Host:"), m_hostEdit);
     form->addRow(tr("Port:"), m_portSpin);
     form->addRow(tr("Username:"), m_usernameEdit);
-    form->addRow(tr("Authentication:"), authRadioRow);
+    m_authRowLabel = new QLabel(tr("Authentication:"), this);
+    form->addRow(m_authRowLabel, m_authRowWidget);
     form->addRow(tr("Starting directory:"), dirFieldColumn);
 
     auto *rightLayout = new QVBoxLayout;
@@ -208,8 +223,28 @@ void SiteManagerDialog::buildUi()
     mainLayout->addWidget(splitter, 1);
     mainLayout->addLayout(buttonRow);
 
-    updateAuthFieldsVisibility();
+    onProtocolChanged();   // establishes initial field visibility for the default protocol
     updateStartingDirVisibility();
+}
+
+void SiteManagerDialog::onProtocolChanged()
+{
+    const Protocol selected = Protocol(m_protocolCombo->currentData().toInt());
+    const bool keyAuthAvailable = supportsKeyAuth(selected);
+
+    // Same rule as ConnectionDialog: force Password for protocols with no
+    // key auth, so a stale "Private key" selection can't be committed to
+    // a saved FTP site where it would be meaningless.
+    if (!keyAuthAvailable) {
+        const QSignalBlocker blocker(m_passwordAuthRadio);
+        m_passwordAuthRadio->setChecked(true);
+    }
+
+    m_authRowWidget->setVisible(keyAuthAvailable);
+    m_authRowLabel->setVisible(keyAuthAvailable);
+    m_authFieldsStack->setVisible(keyAuthAvailable);
+
+    updateAuthFieldsVisibility();
 }
 
 void SiteManagerDialog::rebuildTree()
@@ -322,11 +357,17 @@ void SiteManagerDialog::loadSiteIntoForm(const SavedSite &site)
     const QSignalBlocker b10(m_startingDirEdit);
     const QSignalBlocker b11(m_groupCombo);
     const QSignalBlocker b12(m_groupCombo->lineEdit());
+    const QSignalBlocker b13(m_protocolCombo);
 
     m_nameEdit->setText(site.name);
     m_groupCombo->setCurrentText(site.group);
+    const int protocolIndex = m_protocolCombo->findData(int(site.protocol));
+    if (protocolIndex >= 0)
+        m_protocolCombo->setCurrentIndex(protocolIndex);
     m_hostEdit->setText(site.host);
-    m_portSpin->setValue(site.port > 0 ? site.port : 22);
+    // Fall back to the default for THIS site's protocol, not a hardcoded
+    // 22 — a saved FTP site with a missing/zero port should land on 21.
+    m_portSpin->setValue(site.port > 0 ? site.port : defaultPortFor(site.protocol));
     m_usernameEdit->setText(site.username);
     if (site.authMethod == SftpAuthMethod::PublicKey)
         m_keyAuthRadio->setChecked(true);
@@ -340,7 +381,10 @@ void SiteManagerDialog::loadSiteIntoForm(const SavedSite &site)
         m_specificDirRadio->setChecked(true);
     m_startingDirEdit->setText(site.startingDirectory);
 
-    updateAuthFieldsVisibility();
+    // Covers updateAuthFieldsVisibility() too — and unlike calling that
+    // alone, it also applies the protocol's own show/hide rules, which
+    // is what makes selecting a saved FTP site hide the auth row.
+    onProtocolChanged();
     updateStartingDirVisibility();
 }
 
@@ -355,6 +399,7 @@ void SiteManagerDialog::commitFormToSelectedSite()
 
     site->name = m_nameEdit->text().trimmed().isEmpty() ? tr("Untitled Site") : m_nameEdit->text().trimmed();
     site->group = newGroup;
+    site->protocol = Protocol(m_protocolCombo->currentData().toInt());
     site->host = m_hostEdit->text().trimmed();
     site->port = m_portSpin->value();
     site->username = m_usernameEdit->text();
@@ -451,43 +496,45 @@ void SiteManagerDialog::onDeleteSite()
 
 void SiteManagerDialog::onConnectClicked()
 {
-    SftpCredentials creds;
+    ConnectionRequest request;
 
     if (SavedSite *site = selectedSite()) {
         commitFormToSelectedSite();   // capture any not-yet-committed edits first
-        creds = site->toCredentials();
+        request = site->toConnectionRequest();
     } else {
         // No saved site selected — the form is being used as a one-off,
-        // unsaved connection, same as the original ConnectionDialog.
-        creds.host = m_hostEdit->text().trimmed();
-        creds.port = m_portSpin->value();
-        creds.username = m_usernameEdit->text();
-        creds.authMethod = m_passwordAuthRadio->isChecked() ? SftpAuthMethod::Password : SftpAuthMethod::PublicKey;
-        creds.privateKeyPath = m_privateKeyPathEdit->text().trimmed();
-        creds.useHomeDirectory = m_homeDirRadio->isChecked();
-        creds.startingDirectory = m_startingDirEdit->text().trimmed();
+        // unsaved connection. Built as a scratch SavedSite rather than
+        // assembling credentials by hand so that BOTH paths go through
+        // the same toConnectionRequest() conversion; when that mapping
+        // changes, it can't drift between the saved and unsaved cases.
+        SavedSite scratch;
+        scratch.protocol = Protocol(m_protocolCombo->currentData().toInt());
+        scratch.host = m_hostEdit->text().trimmed();
+        scratch.port = m_portSpin->value();
+        scratch.username = m_usernameEdit->text();
+        scratch.authMethod = m_keyAuthRadio->isChecked() ? SftpAuthMethod::PublicKey : SftpAuthMethod::Password;
+        scratch.privateKeyPath = m_privateKeyPathEdit->text().trimmed();
+        scratch.useHomeDirectory = m_homeDirRadio->isChecked();
+        scratch.startingDirectory = m_startingDirEdit->text().trimmed();
+        request = scratch.toConnectionRequest();
     }
 
-    if (creds.host.isEmpty()) {
+    if (request.host().isEmpty()) {
         QMessageBox::warning(this, tr("Connect"), tr("Host cannot be empty."));
         return;
     }
-    if (!creds.useHomeDirectory && creds.startingDirectory.isEmpty()) {
+    if (!request.useHomeDirectory() && request.startingDirectory().isEmpty()) {
         QMessageBox::warning(this, tr("Connect"), tr("Enter a starting directory, or choose Home directory."));
         return;
     }
 
-    if (creds.authMethod == SftpAuthMethod::Password) {
-        bool ok = false;
-        const QString password = QInputDialog::getText(
-            this, tr("Password"),
-            tr("Password for %1@%2:").arg(creds.username, creds.host),
-            QLineEdit::Password, QString(), &ok);
-        if (!ok)
-            return;   // cancelled the prompt — stay in the dialog rather than connecting with no password
-        creds.password = password;
-    } else {
-        if (creds.privateKeyPath.isEmpty()) {
+    // The prompt-for-secrets step, which is where SavedSite's
+    // no-passwords-on-disk rule actually gets honored — toConnectionRequest()
+    // deliberately leaves every secret empty, so without this the
+    // connection would go out with a blank password.
+    if (request.protocol == Protocol::Sftp
+        && request.sftp.authMethod == SftpAuthMethod::PublicKey) {
+        if (request.sftp.privateKeyPath.isEmpty()) {
             QMessageBox::warning(this, tr("Connect"), tr("Select a private key file."));
             return;
         }
@@ -498,9 +545,27 @@ void SiteManagerDialog::onConnectClicked()
             QLineEdit::Password, QString(), &ok);
         if (!ok)
             return;
-        creds.passphrase = passphrase;
+        request.sftp.passphrase = passphrase;
+    } else {
+        // Password auth — SFTP with a password, or FTP/FTPS, which have
+        // no other option. Same prompt either way; only the struct the
+        // result lands in differs.
+        bool ok = false;
+        const QString password = QInputDialog::getText(
+            this, tr("Password"),
+            tr("Password for %1@%2:").arg(
+                request.protocol == Protocol::Sftp ? request.sftp.username : request.ftp.username,
+                request.host()),
+            QLineEdit::Password, QString(), &ok);
+        if (!ok)
+            return;   // cancelled the prompt — stay in the dialog rather than connecting with no password
+
+        if (request.protocol == Protocol::Sftp)
+            request.sftp.password = password;
+        else
+            request.ftp.password = password;
     }
 
-    m_pendingCredentials = creds;
+    m_pendingRequest = request;
     accept();
 }

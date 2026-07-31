@@ -3,6 +3,7 @@
 #include <QString>
 #include <QList>
 #include "SftpCredentials.h"
+#include "ConnectionRequest.h"
 
 // A saved connection profile — everything ConnectionDialog collects,
 // plus a display name and an optional group for organizing the site
@@ -28,9 +29,18 @@ struct SavedSite {
     QString name;     // display name, e.g. "Pivot Parking"
     QString group;    // e.g. "Clients" — empty means ungrouped, shown at the tree root
 
+    // Which protocol this site connects with. Defaults to Sftp, which is
+    // also what every site saved before this field existed reads back as
+    // — see protocolFromKey()'s comment for why that's the correct
+    // migration rather than merely a convenient default.
+    Protocol protocol = Protocol::Sftp;
+
     QString host;
     int port = 22;
     QString username;
+    // Only meaningful when protocol == Sftp; FTP and FTPS have no
+    // key-based auth at all (see supportsKeyAuth()). Left at Password
+    // for those, and ignored.
     SftpAuthMethod authMethod = SftpAuthMethod::Password;
     QString privateKeyPath;   // only meaningful when authMethod == PublicKey
 
@@ -43,11 +53,13 @@ struct SavedSite {
     bool useHomeDirectory = true;
     QString startingDirectory;
 
-    // Builds an SftpCredentials for connecting. password is left empty
-    // when authMethod == Password — the caller (SiteManagerDialog) is
-    // responsible for prompting and filling it in before actually
-    // connecting; this struct has no way to carry one.
-    SftpCredentials toCredentials() const;
+    // Builds the right credentials for this site's protocol, wrapped in
+    // a ConnectionRequest. The password is ALWAYS left empty, for every
+    // protocol — the caller (SiteManagerDialog) prompts for it and fills
+    // it in before connecting; this struct has no way to carry one, by
+    // design. That property is what site-store-test asserts against the
+    // actual bytes on disk.
+    ConnectionRequest toConnectionRequest() const;
 };
 
 // Loads/saves the full site list as JSON under

@@ -12,9 +12,12 @@
 #include <QFileDialog>
 #include <QDialogButtonBox>
 #include <QWidget>
+#include <QComboBox>
+#include <QLabel>
 
 ConnectionDialog::ConnectionDialog(QWidget *parent)
     : QDialog(parent)
+    , m_protocolCombo(new QComboBox(this))
     , m_hostEdit(new QLineEdit(this))
     , m_portSpin(new QSpinBox(this))
     , m_usernameEdit(new QLineEdit(this))
@@ -24,11 +27,33 @@ ConnectionDialog::ConnectionDialog(QWidget *parent)
     , m_passwordEdit(new QLineEdit(this))
     , m_privateKeyPathEdit(new QLineEdit(this))
     , m_passphraseEdit(new QLineEdit(this))
+    , m_authRowWidget(nullptr)
+    , m_authRowLabel(nullptr)
 {
-    setWindowTitle(tr("Connect to SFTP Server"));
+    setWindowTitle(tr("Connect to Server"));
+
+    // Order matters only for presentation; the stored data is the enum,
+    // not the index, so reordering here can't corrupt anything.
+    m_protocolCombo->addItem(displayNameFor(Protocol::Sftp), QVariant::fromValue(int(Protocol::Sftp)));
+    m_protocolCombo->addItem(displayNameFor(Protocol::Ftp),  QVariant::fromValue(int(Protocol::Ftp)));
+    m_protocolCombo->addItem(displayNameFor(Protocol::Ftps), QVariant::fromValue(int(Protocol::Ftps)));
+
+    // Object names exist for one reason: tests locate these fields by
+    // name rather than by position in findChildren()'s list, which would
+    // silently start testing the wrong widget the moment a field is
+    // added or reordered.
+    m_protocolCombo->setObjectName(QStringLiteral("protocolCombo"));
+    m_hostEdit->setObjectName(QStringLiteral("hostEdit"));
+    m_portSpin->setObjectName(QStringLiteral("portSpin"));
+    m_usernameEdit->setObjectName(QStringLiteral("usernameEdit"));
+    m_passwordEdit->setObjectName(QStringLiteral("passwordEdit"));
+    m_privateKeyPathEdit->setObjectName(QStringLiteral("privateKeyPathEdit"));
+    m_passphraseEdit->setObjectName(QStringLiteral("passphraseEdit"));
+    m_passwordAuthRadio->setObjectName(QStringLiteral("passwordAuthRadio"));
+    m_keyAuthRadio->setObjectName(QStringLiteral("keyAuthRadio"));
 
     m_portSpin->setRange(1, 65535);
-    m_portSpin->setValue(22);
+    m_portSpin->setValue(defaultPortFor(Protocol::Sftp));
     m_passwordEdit->setEchoMode(QLineEdit::Password);
     m_passphraseEdit->setEchoMode(QLineEdit::Password);
     m_passphraseEdit->setPlaceholderText(tr("(leave blank if the key has no passphrase)"));
@@ -39,7 +64,12 @@ ConnectionDialog::ConnectionDialog(QWidget *parent)
     m_passwordAuthRadio->setChecked(true);
     connect(m_passwordAuthRadio, &QRadioButton::toggled, this, &ConnectionDialog::updateAuthFieldsVisibility);
 
-    auto *authRadioLayout = new QHBoxLayout;
+    // Wrapped in a plain QWidget rather than added as a bare layout so
+    // the whole row can be hidden as a unit for FTP/FTPS.
+    m_authRowWidget = new QWidget(this);
+    m_authRowWidget->setObjectName(QStringLiteral("authRowWidget"));
+    auto *authRadioLayout = new QHBoxLayout(m_authRowWidget);
+    authRadioLayout->setContentsMargins(0, 0, 0, 0);
     authRadioLayout->addWidget(m_passwordAuthRadio);
     authRadioLayout->addWidget(m_keyAuthRadio);
     authRadioLayout->addStretch();
@@ -67,10 +97,16 @@ ConnectionDialog::ConnectionDialog(QWidget *parent)
     m_authFieldsStack->addWidget(keyPage);         // index 1
 
     auto *form = new QFormLayout;
+    form->addRow(tr("Protocol:"), m_protocolCombo);
     form->addRow(tr("Host:"), m_hostEdit);
     form->addRow(tr("Port:"), m_portSpin);
     form->addRow(tr("Username:"), m_usernameEdit);
-    form->addRow(tr("Authentication:"), authRadioLayout);
+
+    m_authRowLabel = new QLabel(tr("Authentication:"), this);
+    form->addRow(m_authRowLabel, m_authRowWidget);
+
+    connect(m_protocolCombo, &QComboBox::currentIndexChanged,
+            this, &ConnectionDialog::onProtocolChanged);
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
@@ -81,8 +117,57 @@ ConnectionDialog::ConnectionDialog(QWidget *parent)
     layout->addWidget(m_authFieldsStack);
     layout->addWidget(buttons);
 
-    updateAuthFieldsVisibility();
+    onProtocolChanged();   // establishes the initial (SFTP) field visibility
     m_hostEdit->setFocus();
+}
+
+bool ConnectionDialog::portIsUntouchedDefault() const
+{
+    // "Untouched" means the current value is the default for *any* of the
+    // protocols, not just the currently selected one. Checking only the
+    // current protocol's default would mean switching SFTP->FTP->SFTP
+    // leaves the port stuck at 21, since 21 isn't 22 and would look
+    // deliberately chosen on the way back.
+    const int current = m_portSpin->value();
+    return current == defaultPortFor(Protocol::Sftp)
+        || current == defaultPortFor(Protocol::Ftp)
+        || current == defaultPortFor(Protocol::Ftps);
+}
+
+Protocol ConnectionDialog::protocol() const
+{
+    return Protocol(m_protocolCombo->currentData().toInt());
+}
+
+void ConnectionDialog::setProtocol(Protocol protocol)
+{
+    const int index = m_protocolCombo->findData(int(protocol));
+    if (index >= 0)
+        m_protocolCombo->setCurrentIndex(index);
+}
+
+void ConnectionDialog::onProtocolChanged()
+{
+    const Protocol selected = protocol();
+
+    // Only adjust a port the user hasn't deliberately set — see
+    // portIsUntouchedDefault().
+    if (portIsUntouchedDefault())
+        m_portSpin->setValue(defaultPortFor(selected));
+
+    // FTP/FTPS have no key auth, so the choice is hidden rather than
+    // shown-and-ignored. Force the selection back to Password on the way
+    // out so credentials() can't produce a key-auth request for a
+    // protocol that has no such concept, even if the user had picked
+    // "Private key" under SFTP a moment earlier.
+    const bool keyAuthAvailable = supportsKeyAuth(selected);
+    if (!keyAuthAvailable)
+        m_passwordAuthRadio->setChecked(true);
+
+    m_authRowWidget->setVisible(keyAuthAvailable);
+    m_authRowLabel->setVisible(keyAuthAvailable);
+
+    updateAuthFieldsVisibility();
 }
 
 void ConnectionDialog::updateAuthFieldsVisibility()
@@ -97,21 +182,33 @@ void ConnectionDialog::browseForPrivateKey()
         m_privateKeyPathEdit->setText(path);
 }
 
-SftpCredentials ConnectionDialog::credentials() const
+ConnectionRequest ConnectionDialog::connectionRequest() const
 {
-    SftpCredentials creds;
-    creds.host = m_hostEdit->text().trimmed();
-    creds.port = m_portSpin->value();
-    creds.username = m_usernameEdit->text();
+    ConnectionRequest request;
+    request.protocol = protocol();
 
-    if (m_passwordAuthRadio->isChecked()) {
-        creds.authMethod = SftpAuthMethod::Password;
-        creds.password = m_passwordEdit->text();
+    if (request.protocol == Protocol::Sftp) {
+        SftpCredentials &creds = request.sftp;
+        creds.host = m_hostEdit->text().trimmed();
+        creds.port = m_portSpin->value();
+        creds.username = m_usernameEdit->text();
+
+        if (m_passwordAuthRadio->isChecked()) {
+            creds.authMethod = SftpAuthMethod::Password;
+            creds.password = m_passwordEdit->text();
+        } else {
+            creds.authMethod = SftpAuthMethod::PublicKey;
+            creds.privateKeyPath = m_privateKeyPathEdit->text().trimmed();
+            creds.passphrase = m_passphraseEdit->text();
+        }
     } else {
-        creds.authMethod = SftpAuthMethod::PublicKey;
-        creds.privateKeyPath = m_privateKeyPathEdit->text().trimmed();
-        creds.passphrase = m_passphraseEdit->text();
+        FtpCredentials &creds = request.ftp;
+        creds.host = m_hostEdit->text().trimmed();
+        creds.port = m_portSpin->value();
+        creds.username = m_usernameEdit->text();
+        creds.password = m_passwordEdit->text();
+        creds.ftpsMode = protocolToFtpsMode(request.protocol);
     }
 
-    return creds;
+    return request;
 }

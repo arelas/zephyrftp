@@ -114,6 +114,7 @@ qt_add_executable(smoke-test EXCLUDE_FROM_ALL
     src/ui/SiteManagerDialog.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
+    src/backends/FtpBackend.cpp   # MainWindow.cpp constructs one — see startConnection()
     src/backends/SavedSite.cpp
     src/transfer/TransferManager.cpp
     src/transfer/FolderEnumerator.cpp
@@ -140,6 +141,7 @@ qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
     src/ui/SiteManagerDialog.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
+    src/backends/FtpBackend.cpp   # MainWindow.cpp constructs one — see startConnection()
     src/backends/SavedSite.cpp
     src/transfer/TransferManager.cpp
     src/transfer/FolderEnumerator.cpp
@@ -240,3 +242,17 @@ qt_add_executable(ftp-parsing-test EXCLUDE_FROM_ALL
 )
 target_include_directories(ftp-parsing-test PRIVATE src)
 target_link_libraries(ftp-parsing-test PRIVATE Qt6::Core Qt6::Network)
+
+# Protocol-selection wiring: ConnectionDialog's protocol choice, and
+# SavedSite's persistence of it. Needs Widgets (it constructs a real
+# ConnectionDialog) and Svg (IconTheme, pulled in transitively). Note
+# RemoteBackend.h listed explicitly — see CONTRIBUTING.md's build gotcha
+# on AUTOMOC and Q_OBJECT headers in test targets.
+qt_add_executable(protocol-selection-test EXCLUDE_FROM_ALL
+    src/protocol_selection_test.cpp
+    src/ui/ConnectionDialog.cpp
+    src/backends/SavedSite.cpp
+    src/backends/RemoteBackend.h
+)
+target_include_directories(protocol-selection-test PRIVATE src)
+target_link_libraries(protocol-selection-test PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)

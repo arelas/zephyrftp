@@ -375,6 +375,41 @@ that way, it's flagged explicitly rather than left implied.
   reachable without a live server, and no FTP or FTPS server is
   reachable from this environment.
 
+- **The protocol-selection wiring is verified, including the two ways it
+  could silently do the wrong thing.** `src/protocol_selection_test.cpp`
+  (built via the `protocol-selection-test` target) drives a real
+  `ConnectionDialog` through all three protocols and runs 36 assertions
+  over the result: the port follows the protocol (22/21/21) but a
+  user-typed port survives a protocol switch untouched; the request is
+  tagged correctly and populates the matching credential struct while
+  leaving the other empty; plain FTP sets `FtpsMode::None` so it can't
+  accidentally claim TLS; selecting private-key auth and then switching
+  to FTP clears the selection and drops the key path rather than
+  carrying it into a protocol with no such concept. It also covers
+  `SavedSite`'s side: protocol survives a real `SiteStore` JSON
+  round-trip, a hand-written legacy `sites.json` with no `protocol` key
+  at all reads back as SFTP, and a saved FTP site still writes no
+  password/passphrase/secret key to disk — the no-secrets-on-disk rule
+  restated for the one protocol that has no key-based alternative.
+  **Two assertions in this test's first draft passed vacuously and were
+  caught before it shipped**, which is worth recording because both
+  failure modes are easy to reproduce elsewhere: one had a stray
+  `|| true` making it unconditionally green, and the other asserted a
+  widget was hidden using `isVisible()` — which returns false for
+  *every* widget on a dialog that is never shown, so it would have
+  passed had the code hidden nothing at all. Probing both branches and
+  finding identical values is what exposed it; `isVisibleTo(&dialog)`
+  discriminates properly, and both the positive and negative case are
+  now asserted, since a one-sided check can't tell "correctly hidden"
+  from "always hidden."
+- **The three dialog states were verified visually, not just
+  structurally.** `ConnectionDialog` was rendered offscreen under the
+  real stylesheet in each protocol state and the PNGs actually looked
+  at. The auth row genuinely collapses for FTP/FTPS rather than leaving
+  a stranded "Authentication:" label or dead space — confirmed by the
+  dialog's own height dropping from 292px to 266px, which is the kind of
+  claim a structural assertion alone doesn't establish.
+
 **Still not verified:** public-key authentication (implemented, but no
 real key file has been tested against it yet — see Known gaps), the
 transfer queue's progress-bar/status-icon rendering with a real active
@@ -541,6 +576,29 @@ headless/offscreen runs have been checked).
   single largest real-world fragility source for any FTP client. Passive
   mode only — no active/`PORT` fallback. FTPS is explicit only (`AUTH
   TLS` upgrading an existing plaintext control connection).
+- `Protocol` / `ConnectionRequest` (`src/backends/Protocol.h`,
+  `ConnectionRequest.h`) — the seam between "the user picked a protocol"
+  and "construct the matching backend." `Protocol` is a three-value enum
+  (Sftp/Ftp/Ftps) with small helpers hanging off it: the conventional
+  port, the combo-box label, whether key auth applies, and stable string
+  keys for JSON. `ConnectionRequest` pairs a `Protocol` tag with both
+  credential structs, only the relevant one populated.
+  Deliberately NOT one merged credentials struct: `SftpCredentials` and
+  `FtpCredentials` genuinely diverge (key path, passphrase and auth
+  method are meaningless for FTP; `FtpsMode` is meaningless for SFTP),
+  and merging them would produce a type where half the fields are dead
+  depending on a value stored elsewhere in the same object — exactly the
+  shape that invites someone to read `privateKeyPath` on an FTP
+  connection and get an empty string that means nothing. The three
+  fields both structs really do share (`host`, and the
+  `useHomeDirectory`/`startingDirectory` pair) get accessors on
+  `ConnectionRequest` so validation code doesn't re-branch on the tag to
+  read something protocol-independent.
+  `MainWindow::startConnection()` is the ONLY place in the UI layer that
+  names a concrete backend type: it switches on the tag, produces a
+  `RemoteBackend *`, and everything downstream (pane, transfer manager,
+  queue widget) stays protocol-agnostic — which is what `RemoteBackend`
+  was for in the first place.
 - `ConnectionDialog` — host/port/username form plus a password/private-key
   auth toggle (`QStackedWidget` swaps the relevant fields). Returns a
   single `SftpCredentials` struct (`src/backends/SftpCredentials.h`) that
@@ -931,23 +989,36 @@ ever needs touching again:
 
 ## Known gaps (flagged, not fixed)
 
-- **FTP/FTPS has a complete backend but no UI, so it does nothing for a
-  user today.** `FtpBackend` implements the whole `RemoteBackend`
-  interface, but `ConnectionDialog` and `SiteManagerDialog` offer only
-  SFTP as a protocol, and `MainWindow` has no path that constructs an
-  `FtpBackend` — `startConnection()` takes an `SftpCredentials` and spins
-  up an `SftpBackend` specifically. Nothing is silently half-wired; the
-  feature simply isn't reachable. Closing this is a UI and wiring job
-  roughly comparable in scope to the backend already written, and it's
-  the single largest piece of unfinished work in the project.
-- **No part of FTP/FTPS has touched a real server.** The listing parsers
-  are directly tested (see `ftp-parsing-test` in Verification status),
-  but the control connection, PASV handling, the `AUTH TLS` upgrade, and
-  actual transfers have never been exercised against a live FTP or FTPS
-  server — none is reachable from this environment, the same limitation
-  that applies to every SFTP-specific path here. Given that `LIST`'s
-  format isn't standardized, expect real servers to surface parser cases
-  the sample data didn't.
+- **FTP/FTPS is now selectable and wired end to end, but no part of it
+  has ever touched a real server.** The listing parsers
+  are directly tested (`ftp-parsing-test`) and the UI-to-backend wiring
+  is directly tested (`protocol-selection-test`), but the control
+  connection, PASV handling, the `AUTH TLS` upgrade, and actual
+  transfers have never been exercised against a live FTP or FTPS server
+  — none is reachable from this environment, the same limitation that
+  applies to every SFTP-specific path here. What the two tests together
+  establish is that picking FTP constructs an `FtpBackend` with the
+  right credentials and that its parsers handle realistic listing
+  output; what happens after the first socket write is entirely
+  unproven. Given that `LIST`'s format isn't standardized, expect real
+  servers to surface parser cases the sample data didn't. **This is now
+  the highest-value thing to verify in the whole project**, because it's
+  the only major feature where a user can reach a code path that has
+  never run against the thing it talks to.
+- **FTPS rejects untrusted certificates with no way to proceed, unlike
+  SSH host keys, which get a real trust prompt.** `FtpBackend` never
+  calls `ignoreSslErrors()` and never weakens `setPeerVerifyMode`, so
+  `QSslSocket` validates the server certificate against the system trust
+  store and the handshake fails closed on anything it can't verify. That
+  is the right default and matches this project's refusal to trust
+  silently — but self-signed certificates are common on FTPS servers,
+  and today those servers simply cannot be connected to at all. The
+  error message names the actual certificate problem rather than a
+  generic socket failure, so the user at least learns why; there is
+  still no equivalent of `HostKeyVerifier`'s trust-on-first-use prompt
+  for certificates. Building one is a real design decision with new
+  security surface, deliberately not made unilaterally — it is the
+  clearest asymmetry in the app's current security model.
 - **FTPS data connections don't reuse the control connection's TLS
   session.** Each data connection performs a fresh TLS handshake. RFC
   4217 permits servers to *require* session reuse as an anti-hijacking

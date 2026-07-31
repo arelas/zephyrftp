@@ -8,7 +8,28 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **FTP and FTPS can now be selected** in both the connection dialog and
+  the Site Manager, and saved per site. The backend behind them already
+  existed; what landed here is the protocol choice and everything it
+  drives — the port defaulting to 21 (or 22 for SFTP) unless you've
+  typed your own, the authentication choice disappearing for protocols
+  that only do passwords, and the right backend actually being
+  constructed when you connect. FTPS means explicit TLS (`AUTH TLS`) on
+  the normal FTP port.
+  **Not yet verified against a real FTP or FTPS server** — see the
+  README's Known limitations, which says so plainly rather than letting
+  the feature's presence imply otherwise.
+
+### Changed
+
+- Sites saved before this release load unchanged and read back as SFTP,
+  which is what they were — no migration step, nothing to re-enter.
+- FTPS certificate failures now name the actual problem (for example, a
+  self-signed certificate) instead of reporting a generic TLS error.
+  ZephyrFTP still refuses to connect in that case; only the explanation
+  improved.
 
 ## [0.1.0] — first tagged release
 

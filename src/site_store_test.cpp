@@ -75,18 +75,18 @@ int main(int argc, char *argv[])
     if (!fieldsOk) allPass = false;
 
     // --- Security property: no password ever appears in the file, and
-    // toCredentials() never fabricates one from thin air ---
-    const SftpCredentials passwordCreds = passwordSite.toCredentials();
-    const bool credsPasswordEmpty = passwordCreds.password.isEmpty();
-    qDebug() << "[test] toCredentials() leaves password empty for a Password-auth site:" << credsPasswordEmpty;
+    // toConnectionRequest() never fabricates one from thin air ---
+    const ConnectionRequest passwordRequest = passwordSite.toConnectionRequest();
+    const bool credsPasswordEmpty = passwordRequest.sftp.password.isEmpty();
+    qDebug() << "[test] toConnectionRequest() leaves password empty for a Password-auth site:" << credsPasswordEmpty;
     if (!credsPasswordEmpty) allPass = false;
 
     // passwordSite was set up with useHomeDirectory=false and a specific
-    // path above — confirm toCredentials() actually carries that choice
-    // through rather than silently defaulting back to home-dir.
-    const bool startingDirOk = !passwordCreds.useHomeDirectory
-        && passwordCreds.startingDirectory == "/uploads/incoming";
-    qDebug() << "[test] toCredentials() carries the starting-directory choice through:" << startingDirOk;
+    // path above — confirm toConnectionRequest() actually carries that
+    // choice through rather than silently defaulting back to home-dir.
+    const bool startingDirOk = !passwordRequest.useHomeDirectory()
+        && passwordRequest.startingDirectory() == "/uploads/incoming";
+    qDebug() << "[test] toConnectionRequest() carries the starting-directory choice through:" << startingDirOk;
     if (!startingDirOk) allPass = false;
 
     // Read the raw file and confirm no plausible secret-bearing key name

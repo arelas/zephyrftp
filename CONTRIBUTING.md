@@ -19,9 +19,18 @@ Windows builds run via GitHub Actions (`.github/workflows/windows-build.yml`) �
 see ARCHITECTURE.md's "Windows builds (CI)" section for what that pipeline
 does and the real, sometimes non-obvious bugs it surfaced along the way.
 
+### A build gotcha worth knowing before it costs you an hour
+
+Any test target that pulls in a `Q_OBJECT` header (`RemoteBackend.h` is
+the usual one) without also compiling a `.cpp` that uses it must list
+that header explicitly in the target's sources. Otherwise AUTOMOC never
+generates its vtable and you get a link error that points nowhere near
+the actual cause. This has bitten essentially every new test target
+added to this project — check it first when a new target won't link.
+
 ## Running the test suites
 
-Nine `EXCLUDE_FROM_ALL` CMake targets — not part of a normal `make`, built
+Ten `EXCLUDE_FROM_ALL` CMake targets — not part of a normal `make`, built
 and run explicitly:
 
 ```
@@ -81,6 +90,11 @@ cmake --build build --target ftp-parsing-test
 QT_QPA_PLATFORM=offscreen ./build/ftp-parsing-test
 ```
 
+```
+cmake --build build --target protocol-selection-test
+XDG_CONFIG_HOME=/tmp/zephyrftp_proto_config QT_QPA_PLATFORM=offscreen ./build/protocol-selection-test
+```
+
 The `rm -rf` lines on `transfer-queue-test` and `folder-transfer-test`
 aren't optional either, and they're the reason those two commands start
 by deleting a directory: `mkdir -p` won't clear a destination that
@@ -119,8 +133,15 @@ is the point: it's the only part of the FTP/FTPS feature that *can* be
 verified here, and it deliberately claims nothing about the rest of the
 protocol. See its header comment and ARCHITECTURE.md's Known gaps for
 what's still unproven.
+`protocol-selection-test` needs the same `XDG_CONFIG_HOME` isolation
+`site-store-test` does, and for the same reason: it exercises SiteStore
+against real files, so without the override it writes — and its
+migration phase deliberately overwrites — whatever `sites.json` is in
+your actual config directory. It constructs a real `ConnectionDialog`
+and drives its protocol combo, so it needs a `QApplication` and the
+offscreen platform, not just `QCoreApplication`.
 
-All nine need to actually pass — not just build — before a change is
+All ten need to actually pass — not just build — before a change is
 considered done. See ARCHITECTURE.md's "Verification status" section for
 what each test actually proves and why it exists.
 
@@ -158,6 +179,25 @@ real display available — say so explicitly rather than letting it read
 as proven. ARCHITECTURE.md's "Known gaps" and "Still not verified"
 sections exist for exactly this, and are meant to stay accurate, not
 aspirational.
+
+Two specific habits that follow from all this:
+
+- **Verify visual changes visually.** "It compiles and sets the right
+  stylesheet" has repeatedly not meant "it looks right." The pattern
+  used throughout this project: render the widget offscreen, save a PNG,
+  sample actual pixel colors, and *look at the image*. That's how the
+  dialogs-ignoring-the-dark-theme bug and the illegible-16px-icon bug
+  were both caught. It's fiddlier than a plain assert, which is exactly
+  why it's worth writing down as an expectation rather than leaving to
+  discretion.
+- **Parse CI YAML before trusting it.** The workflow file has caused
+  more than its share of real failures — Windows PowerShell quoting
+  quirks, vcpkg pinning, a `GITHUB_TOKEN` permissions gap that 403'd on
+  release creation. Run it through a parser
+  (`python3 -c "import yaml,sys; yaml.safe_load(open('.github/workflows/windows-build.yml'))"`)
+  before calling a change done, and when there's a choice between two
+  approaches, prefer the one with fewer new failure modes over the one
+  that's more clever.
 
 ## Code conventions
 

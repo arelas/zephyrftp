@@ -6,7 +6,7 @@
 class FilePaneWidget;
 class TransferManager;
 class HostKeyVerifier;
-struct SftpCredentials;
+struct ConnectionRequest;
 
 // Top-level window: two FilePaneWidgets side by side (commander style),
 // a docked transfer queue along the bottom, and a toolbar for
@@ -38,10 +38,11 @@ private:
     void buildTransferQueue();
 
     // Shared by both the plain "Connect..." dialog and the Site Manager's
-    // Connect button — spins up an SftpBackend + worker QThread for the
-    // given credentials and hands it to the right pane. One tested path
-    // for "actually establish a connection" rather than two copies of it.
-    void startConnection(const SftpCredentials &credentials);
+    // Connect button — picks the backend matching the request's protocol,
+    // spins it up on a worker QThread, and hands it to the right pane.
+    // One tested path for "actually establish a connection" rather than
+    // one per protocol per entry point.
+    void startConnection(const ConnectionRequest &request);
 
     // Shared by onLeftFilesActivated/onRightFilesActivated/onFilesDropped
     // — all three end up with the same "here's a selection of files and/or

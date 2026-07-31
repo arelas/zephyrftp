@@ -12,6 +12,8 @@ class QRadioButton;
 class QStackedWidget;
 class QPushButton;
 class QComboBox;
+class QLabel;
+class QWidget;
 
 // Saved-connections manager — a tree of sites (optionally grouped into
 // folders) on the left, a details form on the right, matching the design
@@ -33,8 +35,9 @@ public:
 
     // Valid only after exec() returns QDialog::Accepted (i.e. Connect was
     // clicked and any required password/passphrase prompt was completed,
-    // not cancelled). Fully populated, ready to hand to SftpBackend.
-    SftpCredentials credentialsToConnect() const { return m_pendingCredentials; }
+    // not cancelled). Fully populated, ready to hand to whichever backend
+    // its protocol selects.
+    ConnectionRequest connectionRequestToConnect() const { return m_pendingRequest; }
 
 private slots:
     void onTreeSelectionChanged();
@@ -45,6 +48,7 @@ private slots:
     void onConnectClicked();
     void updateAuthFieldsVisibility();
     void updateStartingDirVisibility();
+    void onProtocolChanged();
 
 private:
     void buildUi();
@@ -69,6 +73,7 @@ private:
 
     QLineEdit *m_nameEdit;
     QComboBox *m_groupCombo;   // editable — pick an existing group or type a new one; blank = ungrouped
+    QComboBox *m_protocolCombo;
     QLineEdit *m_hostEdit;
     QSpinBox *m_portSpin;
     QLineEdit *m_usernameEdit;
@@ -76,10 +81,14 @@ private:
     QRadioButton *m_keyAuthRadio;
     QStackedWidget *m_authFieldsStack;
     QLineEdit *m_privateKeyPathEdit;   // page 1 — no passphrase field here; prompted at connect time instead
+    // Hidden as a unit for FTP/FTPS, which have no key auth — same
+    // reasoning as ConnectionDialog's identically-named members.
+    QWidget *m_authRowWidget;
+    QLabel *m_authRowLabel;
 
     QRadioButton *m_homeDirRadio;
     QRadioButton *m_specificDirRadio;
     QLineEdit *m_startingDirEdit;      // enabled only when m_specificDirRadio is checked
 
-    SftpCredentials m_pendingCredentials;
+    ConnectionRequest m_pendingRequest;
 };
