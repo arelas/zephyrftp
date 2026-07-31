@@ -38,6 +38,7 @@ set(SOURCES
     src/ui/SiteManagerDialog.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
+    src/backends/FtpBackend.cpp
     src/backends/SavedSite.cpp
     src/transfer/TransferManager.cpp
     src/transfer/FolderEnumerator.cpp
@@ -86,6 +87,12 @@ set_target_properties(zephyrftp PROPERTIES WIN32_EXECUTABLE ON)
 
 target_include_directories(zephyrftp PRIVATE src)
 
+# Makes the version set in this file's project() declaration above
+# actually reach the compiled binary — CMake's PROJECT_VERSION has no
+# effect on the C++ source without being wired through explicitly like
+# this. Used by MainWindow for the window title and About dialog.
+target_compile_definitions(zephyrftp PRIVATE APP_VERSION="${PROJECT_VERSION}")
+
 target_link_libraries(zephyrftp PRIVATE
     Qt6::Widgets
     Qt6::Network
@@ -115,6 +122,7 @@ qt_add_executable(smoke-test EXCLUDE_FROM_ALL
     ${HEADERS}
 )
 target_include_directories(smoke-test PRIVATE src)
+target_compile_definitions(smoke-test PRIVATE APP_VERSION="${PROJECT_VERSION}")
 target_link_libraries(smoke-test PRIVATE
     Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET}
 )
@@ -140,6 +148,7 @@ qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
     ${HEADERS}
 )
 target_include_directories(transfer-queue-test PRIVATE src)
+target_compile_definitions(transfer-queue-test PRIVATE APP_VERSION="${PROJECT_VERSION}")
 target_link_libraries(transfer-queue-test PRIVATE
     Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET}
 )
@@ -222,3 +231,12 @@ qt_add_executable(conflict-resolution-test EXCLUDE_FROM_ALL
 )
 target_include_directories(conflict-resolution-test PRIVATE src)
 target_link_libraries(conflict-resolution-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
+
+# --- FTP directory-listing parser test (MLSD/LIST, realistic sample data — no real server available) ---
+qt_add_executable(ftp-parsing-test EXCLUDE_FROM_ALL
+    src/ftp_parsing_test.cpp
+    src/backends/FtpBackend.cpp
+    src/backends/RemoteBackend.h
+)
+target_include_directories(ftp-parsing-test PRIVATE src)
+target_link_libraries(ftp-parsing-test PRIVATE Qt6::Core Qt6::Network)

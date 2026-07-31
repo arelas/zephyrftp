@@ -171,3 +171,20 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: zephyrftp-windows-x64.zip
+          # Derived from the tag itself (e.g. "v0.1.0") rather than
+          # hardcoded — avoids a name that silently goes stale the next
+          # time this fires on a different tag.
+          name: ZephyrFTP ${{ github.ref_name }}
+          # This project is pre-1.0 (see CHANGELOG.md/README.md) —
+          # marks every release built from this workflow as a
+          # GitHub "Pre-release" rather than "Latest release" until
+          # that changes. Update/remove once the project actually
+          # reaches a 1.0.0 tag.
+          prerelease: true
+          # GitHub's own auto-generated notes (commits/PRs since the
+          # previous tag) rather than trying to slice a specific
+          # section out of CHANGELOG.md in a PowerShell step — CHANGELOG.md
+          # stays the permanent, human-curated record in the repo;
+          # this is just the release page's own summary, and doing it
+          # this way adds zero new CI failure modes.
+          generate_release_notes: true

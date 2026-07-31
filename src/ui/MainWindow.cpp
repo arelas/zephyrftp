@@ -10,8 +10,20 @@
 #include "../backends/SftpCredentials.h"
 #include "../transfer/TransferManager.h"
 
+// Set via target_compile_definitions() in CMakeLists.txt, from this
+// project's project(VERSION ...) declaration — but defended here rather
+// than assumed, since it's easy for a future CMake target that also
+// happens to compile this file (a test harness constructing a real
+// MainWindow, say) to forget to set it, which would otherwise be a hard
+// build failure rather than a graceful "well, we don't know" fallback.
+#ifndef APP_VERSION
+#define APP_VERSION "dev"
+#endif
+
 #include <QSplitter>
 #include <QToolBar>
+#include <QMenuBar>
+#include <QMenu>
 #include <QStatusBar>
 #include <QAction>
 #include <QThread>
@@ -21,12 +33,13 @@
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
-    setWindowTitle(tr("ZephyrFTP"));
+    setWindowTitle(tr("ZephyrFTP v%1").arg(QStringLiteral(APP_VERSION)));
     resize(1100, 650);
 
     m_transferManager = new TransferManager(this);
     m_hostKeyVerifier = new HostKeyVerifier(this);
 
+    buildMenuBar();
     buildToolbar();
     buildLayout();
     buildTransferQueue();
@@ -55,6 +68,18 @@ MainWindow::MainWindow(QWidget *parent)
     });
 
     statusBar()->showMessage(tr("Ready"));
+}
+
+void MainWindow::buildMenuBar()
+{
+    // A real menu bar, not just the toolbar — the toolbar was never
+    // meant to be the only way into every action (About specifically
+    // has no natural toolbar icon; "info circle" would be one more icon
+    // competing for space for something used rarely, not during normal
+    // work).
+    QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
+    QAction *aboutAction = helpMenu->addAction(tr("&About ZephyrFTP..."));
+    connect(aboutAction, &QAction::triggered, this, &MainWindow::onAboutTriggered);
 }
 
 void MainWindow::buildToolbar()
@@ -178,6 +203,23 @@ void MainWindow::onTransferSucceeded()
     // no-op refresh, which is harmless.
     m_leftPane->navigateTo(m_leftPane->currentDirectory());
     m_rightPane->navigateTo(m_rightPane->currentDirectory());
+}
+
+void MainWindow::onAboutTriggered()
+{
+    // QMessageBox::about() rather than a custom dialog — this is
+    // exactly the kind of simple, rarely-used, no-real-interaction
+    // dialog it's built for; a hand-rolled QDialog subclass would just
+    // be more code doing the same thing.
+    QMessageBox::about(this, tr("About ZephyrFTP"),
+        tr("<h3>ZephyrFTP</h3>"
+           "<p>Version %1 — alpha software. Expect rough edges; see "
+           "<a href=\"https://github.com/arelas/zephyrftp/blob/main/README.md#known-limitations\">"
+           "Known limitations</a> in the README.</p>"
+           "<p>A dual-pane SFTP client.</p>"
+           "<p>MIT licensed. &copy; Bad Cluster.<br>"
+           "<a href=\"https://github.com/arelas/zephyrftp\">github.com/arelas/zephyrftp</a></p>")
+            .arg(QStringLiteral(APP_VERSION)));
 }
 
 void MainWindow::onConnectTriggered()

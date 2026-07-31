@@ -29,10 +29,12 @@ private slots:
     void onDisconnectTriggered();
     void onRefreshTriggered();
     void onTransferSucceeded();
+    void onAboutTriggered();
 
 private:
     void buildLayout();
     void buildToolbar();
+    void buildMenuBar();
     void buildTransferQueue();
 
     // Shared by both the plain "Connect..." dialog and the Site Manager's

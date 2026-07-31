@@ -758,7 +758,20 @@ headless/offscreen runs have been checked).
   `LocalBackend`. Double-clicking a file in either pane calls
   `TransferManager::enqueue()` with that pane as source and the other as
   destination; `TransferManager::transferSucceeded` triggers a refresh of
-  both panes' listings.
+  both panes' listings. A minimal `QMenuBar` (`buildMenuBar()`) holds a
+  single Help → About action — `QMessageBox::about()`, not a hand-rolled
+  dialog, since it's exactly the simple/rare use case that's built for.
+  Both the window title and the About dialog show the actual build's
+  version, via an `APP_VERSION` preprocessor define wired through
+  `target_compile_definitions()` in `CMakeLists.txt` from this project's
+  own `project(VERSION ...)` declaration — `MainWindow.cpp` defends
+  against a future test target that compiles this file without
+  remembering to set that define (`#ifndef APP_VERSION` falls back to
+  `"dev"`) rather than letting that be a silent hard build failure the
+  way it was the first time this was added, before the fallback existed
+  (two existing test targets — `smoke-test`, `transfer-queue-test` — also
+  construct a real `MainWindow` and needed the same define added
+  explicitly once this was caught).
 
 ## Design system
 
@@ -842,7 +855,19 @@ only the first run pays the ~8.5 minute openssl/zlib/libssh2 build) +
 Ninja, then `windeployqt` plus a wildcard copy of vcpkg's own DLLs to
 bundle everything the exe needs. Runs on every push to `main` and on
 `v*` tags; tag pushes also attach the build as a zipped GitHub Release
-asset (untested — no tag has been pushed yet).
+asset — marked `prerelease: true` (this project is pre-1.0, see
+`CHANGELOG.md`), named from the tag itself (`ZephyrFTP ${{ github.ref_name }}`,
+not hardcoded, so it can't silently go stale), with
+`generate_release_notes: true` for the release page's own summary
+(GitHub's own commit/PR-based notes, not an attempt to slice a specific
+section out of `CHANGELOG.md` via a PowerShell step — deliberately kept
+simple given this project's track record of Windows-CI-specific
+surprises; `CHANGELOG.md` stays the separate, permanent, human-curated
+record in the repo). **Still genuinely untested end-to-end** — the YAML
+itself was validated by actually parsing it (confirmed the release
+step's `with:` block matches what was intended, not just eyeballed),
+but no tag has actually been pushed and run through this workflow for
+real yet.
 
 **Confirmed working end-to-end**, not just "builds without error": the
 resulting `.exe` has actually been run on real Windows, launches as a
