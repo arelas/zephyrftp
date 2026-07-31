@@ -355,6 +355,26 @@ that way, it's flagged explicitly rather than left implied.
   same limitation already flagged for every other SFTP-specific path in
   this project.
 
+- **FTP's directory-listing parsers are verified directly, in isolation
+  from any network I/O.** `src/ftp_parsing_test.cpp` (built via the
+  `ftp-parsing-test` CMake target) runs 36 assertions against
+  `FtpBackend::parseMlsdLine()` and `parseListLine()` using sample lines
+  modeled on real server output formats rather than invented syntax. It
+  covers MLSD's standardized fields (type, size, `Modify` timestamps
+  parsed to the right `QDateTime`), MLSD's `cdir`/`pdir` entries being
+  filtered out rather than returned as real files, and the
+  best-effort `LIST` fallback's various shapes. These two parsers are
+  pure functions, deliberately factored out and made `public`
+  specifically so they could be tested this way — the same reasoning
+  that made `FilePaneWidget::parentOfPath()` public. This is the
+  highest-risk part of the FTP feature isolated and proven, which is
+  worth having, but it is a narrow claim.
+  **Not verified:** everything else about FTP/FTPS — the control
+  connection's command/reply cycling, PASV response parsing, the
+  `AUTH TLS` handshake, and any actual file transfer. None of it is
+  reachable without a live server, and no FTP or FTPS server is
+  reachable from this environment.
+
 **Still not verified:** public-key authentication (implemented, but no
 real key file has been tested against it yet — see Known gaps), the
 transfer queue's progress-bar/status-icon rendering with a real active
@@ -505,6 +525,22 @@ headless/offscreen runs have been checked).
   used only for that ambiguous case — not asserted as certain, since it
   isn't. Any other, genuinely unmapped code still falls back to the raw
   number rather than guessing at those too.
+- `FtpBackend` (`src/backends/FtpBackend.h/.cpp`) — FTP and explicit FTPS,
+  hand-rolled directly on `QTcpSocket`/`QSslSocket`. Implements the full
+  `RemoteBackend` interface and runs on a dedicated worker thread under
+  the same threading contract as `SftpBackend`. **Not reachable from the
+  UI yet** — nothing constructs one; see Known gaps. The
+  no-bundled-library decision mirrors `SftpBackend`'s direct-on-libssh2
+  approach, and for FTP specifically it was checked rather than assumed:
+  libcurl's own documentation confirms it doesn't parse `LIST` output
+  either, leaving that to callers — so the one big thing a library might
+  have bought here didn't actually apply. Directory listings try `MLSD`
+  (RFC 3659, standardized and machine-parseable) first and fall back to
+  best-effort `LIST` parsing on a 500/502 reply; `LIST`'s output format
+  is not standardized across server implementations, which makes it the
+  single largest real-world fragility source for any FTP client. Passive
+  mode only — no active/`PORT` fallback. FTPS is explicit only (`AUTH
+  TLS` upgrading an existing plaintext control connection).
 - `ConnectionDialog` — host/port/username form plus a password/private-key
   auth toggle (`QStackedWidget` swaps the relevant fields). Returns a
   single `SftpCredentials` struct (`src/backends/SftpCredentials.h`) that
@@ -895,6 +931,30 @@ ever needs touching again:
 
 ## Known gaps (flagged, not fixed)
 
+- **FTP/FTPS has a complete backend but no UI, so it does nothing for a
+  user today.** `FtpBackend` implements the whole `RemoteBackend`
+  interface, but `ConnectionDialog` and `SiteManagerDialog` offer only
+  SFTP as a protocol, and `MainWindow` has no path that constructs an
+  `FtpBackend` — `startConnection()` takes an `SftpCredentials` and spins
+  up an `SftpBackend` specifically. Nothing is silently half-wired; the
+  feature simply isn't reachable. Closing this is a UI and wiring job
+  roughly comparable in scope to the backend already written, and it's
+  the single largest piece of unfinished work in the project.
+- **No part of FTP/FTPS has touched a real server.** The listing parsers
+  are directly tested (see `ftp-parsing-test` in Verification status),
+  but the control connection, PASV handling, the `AUTH TLS` upgrade, and
+  actual transfers have never been exercised against a live FTP or FTPS
+  server — none is reachable from this environment, the same limitation
+  that applies to every SFTP-specific path here. Given that `LIST`'s
+  format isn't standardized, expect real servers to surface parser cases
+  the sample data didn't.
+- **FTPS data connections don't reuse the control connection's TLS
+  session.** Each data connection performs a fresh TLS handshake. RFC
+  4217 permits servers to *require* session reuse as an anti-hijacking
+  measure, so strict configurations may reject those data connections.
+  Known and deliberate rather than overlooked, but untested either way.
+- **FTP is passive-mode only.** There is no active/`PORT` fallback, so a
+  server that requires active mode won't work at all.
 - **`SftpBackend::checkExists()` — the primitive destination-conflict
   detection depends on — is unverified against a real server.**
   `LocalBackend`'s implementation is thoroughly tested (see

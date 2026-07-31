@@ -21,7 +21,7 @@ does and the real, sometimes non-obvious bugs it surfaced along the way.
 
 ## Running the test suites
 
-Eight `EXCLUDE_FROM_ALL` CMake targets — not part of a normal `make`, built
+Nine `EXCLUDE_FROM_ALL` CMake targets — not part of a normal `make`, built
 and run explicitly:
 
 ```
@@ -31,6 +31,7 @@ QT_QPA_PLATFORM=offscreen ./build/smoke-test
 
 ```
 cmake --build build --target transfer-queue-test
+rm -rf /tmp/transfer_test
 mkdir -p /tmp/transfer_test/src_dir /tmp/transfer_test/dst_dir
 head -c 500000 /dev/urandom > /tmp/transfer_test/src_dir/testfile.bin
 QT_QPA_PLATFORM=offscreen ./build/transfer-queue-test
@@ -58,6 +59,7 @@ QT_QPA_PLATFORM=offscreen ./build/file-operations-test
 
 ```
 cmake --build build --target folder-transfer-test
+rm -rf /tmp/folder_transfer_test
 mkdir -p /tmp/folder_transfer_test/src/myfolder/subdir1 \
          /tmp/folder_transfer_test/src/myfolder/subdir2/nested \
          /tmp/folder_transfer_test/src/myfolder/emptydir \
@@ -73,6 +75,21 @@ QT_QPA_PLATFORM=offscreen ./build/folder-transfer-test
 cmake --build build --target conflict-resolution-test
 QT_QPA_PLATFORM=offscreen ./build/conflict-resolution-test
 ```
+
+```
+cmake --build build --target ftp-parsing-test
+QT_QPA_PLATFORM=offscreen ./build/ftp-parsing-test
+```
+
+The `rm -rf` lines on `transfer-queue-test` and `folder-transfer-test`
+aren't optional either, and they're the reason those two commands start
+by deleting a directory: `mkdir -p` won't clear a destination that
+already holds the previous run's output, so without the teardown both
+suites pass the first time and fail every time after — one because a
+phase re-transfers a file already sitting at the destination, the other
+because `dst/myfolder` already exists. That failure looks exactly like a
+code regression and isn't one, so run the setup as written rather than
+skipping straight to the binary.
 
 The `XDG_CONFIG_HOME` override on `site-store-test` isn't optional —
 without it, `SiteStore` writes to your actual config directory, and the
@@ -95,8 +112,15 @@ is still blocking, toggles its real checkbox, clicks its real button) —
 it's not a mock of the dialog, so this is the one test in this list
 where "this compiles and calls the right functions" was never good
 enough to have shipped; see its own header comment for the reasoning.
+`ftp-parsing-test` needs no fixtures or environment setup at all — it
+calls `FtpBackend`'s two directory-listing parsers as pure functions
+against sample data, with no network I/O and no server. That narrowness
+is the point: it's the only part of the FTP/FTPS feature that *can* be
+verified here, and it deliberately claims nothing about the rest of the
+protocol. See its header comment and ARCHITECTURE.md's Known gaps for
+what's still unproven.
 
-All eight need to actually pass — not just build — before a change is
+All nine need to actually pass — not just build — before a change is
 considered done. See ARCHITECTURE.md's "Verification status" section for
 what each test actually proves and why it exists.
 

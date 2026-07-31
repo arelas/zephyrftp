@@ -100,6 +100,10 @@ quick on any recent distro.
 This is young software — a few things intentionally aren't supported yet
 rather than being half-implemented:
 
+- **Plain FTP and FTPS aren't available yet, despite the name** —
+  ZephyrFTP currently connects over SFTP only. Support for FTP and FTPS
+  is partly built but isn't finished or selectable, so if you need
+  either one today, this isn't the client for you yet.
 - **Server-to-server transfers aren't supported** — ZephyrFTP always
   transfers between your computer and one server, not between two
   remote servers directly.

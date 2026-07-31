@@ -34,7 +34,7 @@ empty subdirectories), destination conflict resolution (Overwrite/Skip
 for files, Write Into/Skip for folders, with an "apply to all"
 option), file management (create/rename/delete — deliberately
 non-recursive for folder deletion), a real dark theme, real host-key
-TOFU verification. Ten automated test suites, all passing.
+TOFU verification. Nine automated test suites, all passing.
 
 **FTP/FTPS backend exists but isn't wired up yet.**
 `src/backends/FtpBackend.h/.cpp` implements the full `RemoteBackend`
@@ -44,8 +44,8 @@ before choosing this, so the one big thing a library might have
 bought didn't actually apply). MLSD tried first for directory
 listings, LIST as best-effort fallback. Passive mode only. Explicit
 FTPS only (`AUTH TLS`). The directory-listing parsers — the highest-risk
-part, since FTP's LIST format isn't standardized — are verified via 34
-tests against realistic sample data (`ftp-parsing-test`). **What's
+part, since FTP's LIST format isn't standardized — are verified via 36
+assertions against realistic sample data (`ftp-parsing-test`). **What's
 missing:** no UI to actually select FTP/FTPS as a protocol
 (`ConnectionDialog`/`SiteManagerDialog` only offer SFTP right now), no
 `MainWindow` wiring to construct an `FtpBackend`, and zero live-network
