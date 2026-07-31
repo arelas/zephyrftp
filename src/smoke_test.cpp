@@ -58,7 +58,7 @@ int main(int argc, char *argv[]) {
         qDebug() << "[smoke test] thread->wait() returned, isFinished() ="
                   << thread->isFinished();
         qDebug() << (failureSignalReceived ? "[smoke test] PASS" : "[smoke test] FAIL: no connectionFailed signal received");
-        app.quit();
+        app.exit(failureSignalReceived ? 0 : 1);
     });
 
     return app.exec();

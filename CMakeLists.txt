@@ -9,13 +9,14 @@ set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network Concurrent Svg)
 
-# libssh2 discovery differs by platform: pkg-config is standard on
-# Linux/macOS, but Windows builds (via this repo's CI) get libssh2 through
-# vcpkg, which ships a CMake config package instead of a .pc file.
-# UNVERIFIED: the Windows branch's target name (Libssh2::libssh2) matches
-# vcpkg's libssh2 port as of this writing, but hasn't been proven against a
-# real Windows build yet — that happens the first time the CI workflow runs.
-if(WIN32)
+# libssh2 discovery differs by toolchain, not just by OS: MSVC+vcpkg
+# (this repo's current CI) ships a CMake config package instead of a .pc
+# file, but MinGW's libssh2 — both native mingw-w64 and Fedora's
+# mingw64-cross toolchain used for local cross-compilation — ships a
+# standard .pc file same as Linux/macOS, discoverable via pkg-config found
+# in the mingw sysroot. CMake sets MINGW true for any GCC-targeting-Windows
+# toolchain regardless of host, which is exactly the split needed here.
+if(WIN32 AND NOT MINGW)
     find_package(Libssh2 CONFIG REQUIRED)
     set(LIBSSH2_TARGET Libssh2::libssh2)
 else()

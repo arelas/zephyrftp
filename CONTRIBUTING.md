@@ -18,6 +18,97 @@ Dependencies (Debian/Ubuntu): `cmake build-essential qt6-base-dev qt6-svg-dev li
 Windows builds run via GitHub Actions (`.github/workflows/windows-build.yml`) —
 see ARCHITECTURE.md's "Windows builds (CI)" section for what that pipeline
 does and the real, sometimes non-obvious bugs it surfaced along the way.
+That workflow still builds with MSVC+vcpkg; it hasn't been migrated to
+the MinGW cross-compilation path below yet.
+
+### Cross-compiling for Windows locally (MinGW, from Fedora)
+
+This is a separate path from CI, useful for testing a Windows build
+without waiting on GitHub Actions. Dependencies (Fedora):
+`mingw64-gcc-c++ mingw64-qt6-qtbase mingw64-qt6-qtsvg mingw64-libssh2
+mingw64-cmake wine` — `wine` is only needed for the local verification
+step below, not the build itself.
+
+```
+mingw64-cmake -S . -B build-win
+cmake --build build-win --target zephyrftp
+```
+
+Same pattern for the test targets, e.g. `cmake --build build-win --target
+smoke-test`.
+
+**libssh2 discovery is toolchain-specific, not just OS-specific.**
+`CMakeLists.txt`'s Windows branch originally assumed vcpkg's libssh2
+port, which ships a CMake config package (`Libssh2Config.cmake`) — that
+doesn't exist in the mingw64 sysroot, which ships a `.pc` file instead,
+same as Linux/macOS. The `WIN32` check that picks between them is
+actually `WIN32 AND NOT MINGW`: CMake sets `MINGW` true for any
+GCC-targeting-Windows toolchain regardless of host, which is exactly the
+split needed here — native MSVC+vcpkg still gets the CONFIG path, both
+native mingw-w64 and this Fedora cross toolchain get pkg-config.
+
+**AUTOMOC/AUTORCC didn't need explicit host-tool pointing here, but
+watch for it.** The obvious risk with cross-compiling a Qt app is that
+`moc`/`rcc`/`uic` need to run natively on the host at build time even
+though everything else targets Windows. In practice this worked with no
+extra CMake flags, because `qt6-qtbase-devel` (the *host* Fedora
+package, not `mingw64-qt6-qtbase`) happened to already be installed and
+CMake's default cross-compile program search (host `PATH`, not the
+mingw sysroot) found its `moc`/`rcc` on its own. If a fresh machine
+doesn't have `qt6-qtbase-devel` installed, expect this to break, and
+expect the fix to be pointing `QT_HOST_PATH` (or the individual
+`QT_MOC_EXECUTABLE`/etc. cache vars) at wherever that host Qt lives —
+that hasn't actually been needed here, so it's unverified, flagged
+rather than assumed.
+
+**There is no windeployqt for this toolchain.** `tools/collect-win-runtime.sh
+<build-dir>` is the substitute: it walks `objdump -p` import tables
+recursively (the same information windeployqt itself works from) from
+the mingw sysroot to compute the transitive DLL closure a set of `.exe`s
+actually need, then copies those DLLs plus the specific Qt plugins this
+app uses (platforms, the SVG icon engine, the native style, all three
+TLS backends since FtpBackend drives FTPS through `QSslSocket`) into the
+right plugin subdirectories next to each exe. Run it after building:
+
+```
+tools/collect-win-runtime.sh build-win
+```
+
+**Local verification: `wine`, but with a real caveat.** With the DLLs
+collected, `wine ./build-win/smoke-test.exe` (and the other nine test
+`.exe`s, same env vars and fixture setup as the Linux commands above —
+`QT_QPA_PLATFORM=offscreen` still applies) is the local check. One thing
+that will cost real time if it's not known going in: **`qDebug()` output
+does not reach the terminal under this Wine setup at all** — confirmed
+directly with an isolated single-file Qt program: plain `fprintf(stderr,
+...)` shows up, `qDebug()` from the same process doesn't, and it isn't
+going through `OutputDebugString` either. Root cause not chased further
+than that (a Wine console-emulation gap, not something in this project's
+control), but the practical upshot is: **judge pass/fail here by exit
+code, not by reading PASS/FAIL text**, which is why every test target's
+`main()` needs to actually `return`/`app.exit()` a nonzero code on
+failure — `smoke_test.cpp` didn't (it always returned `app.exec()`'s
+natural 0 regardless of outcome, the one test target that didn't follow
+the same `app.exit(allPass ? 0 : 1)` pattern every sibling test uses)
+and was fixed to match once this surfaced.
+
+This local Wine pass **did catch a genuine, Windows-specific bug**, not
+just prove the environment works: `site_store_test.cpp`'s empty-store
+check (load-with-no-file-yet should return an empty list) failed for
+real on Windows. Cause: the test opens the written `sites.json` earlier
+to inspect its raw JSON, reads it, but never closed that `QFile` before
+later deleting the same path — invisible on Linux, where `unlink()`
+doesn't care whether a file is still open, but real on Windows, where
+`DeleteFile` fails outright while any handle to the file remains open.
+Fixed by closing the handle before the delete. All ten test targets pass
+under `wine` (by exit code) as of this writing.
+
+**Wine is not a substitute for a real Windows machine**, just a faster
+local loop than CI — it doesn't prove real GPU/Direct3D rendering, and
+its own console I/O has already shown it isn't perfectly Windows-faithful
+(see the `qDebug()` caveat above). Treat a real Windows run as the actual
+source of truth the way ARCHITECTURE.md already does for the rest of
+this project's Windows-specific claims.
 
 ### A build gotcha worth knowing before it costs you an hour
 

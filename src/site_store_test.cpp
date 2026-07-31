@@ -101,6 +101,12 @@ int main(int argc, char *argv[])
     QFile rawFile(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) + "/sites.json");
     rawFile.open(QIODevice::ReadOnly);
     const QByteArray rawBytes = rawFile.readAll();
+    // Closed explicitly rather than left for end-of-scope: the empty-store
+    // check below deletes this same file, and on Windows DeleteFile()
+    // fails while any handle to it is still open (unlike POSIX unlink(),
+    // which doesn't care) — caught by actually running this test on
+    // Windows, not by reasoning about the code.
+    rawFile.close();
     const QJsonDocument rawDoc = QJsonDocument::fromJson(rawBytes);
     bool noPasswordKey = rawDoc.isArray();
     if (rawDoc.isArray()) {
