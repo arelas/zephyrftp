@@ -21,7 +21,7 @@ does and the real, sometimes non-obvious bugs it surfaced along the way.
 
 ## Running the test suites
 
-Seven `EXCLUDE_FROM_ALL` CMake targets — not part of a normal `make`, built
+Eight `EXCLUDE_FROM_ALL` CMake targets — not part of a normal `make`, built
 and run explicitly:
 
 ```
@@ -69,6 +69,11 @@ echo "hi from d" > /tmp/folder_transfer_test/src/myfolder/subdir2/nested/d.txt
 QT_QPA_PLATFORM=offscreen ./build/folder-transfer-test
 ```
 
+```
+cmake --build build --target conflict-resolution-test
+QT_QPA_PLATFORM=offscreen ./build/conflict-resolution-test
+```
+
 The `XDG_CONFIG_HOME` override on `site-store-test` isn't optional —
 without it, `SiteStore` writes to your actual config directory, and the
 test's own cleanup phase will delete whatever `sites.json` it finds
@@ -83,9 +88,15 @@ comment for what it does and doesn't cover. `folder-transfer-test` needs
 its nested directory structure created by hand first (shown above) —
 unlike the other tests, it doesn't build its own fixture data, since the
 structure itself (multi-level nesting, a genuinely empty leaf directory)
-is part of what's being verified.
+is part of what's being verified. `conflict-resolution-test` actually
+drives the real conflict dialog (finds it via
+`QApplication::activeModalWidget()` while its `QMessageBox::exec()` call
+is still blocking, toggles its real checkbox, clicks its real button) —
+it's not a mock of the dialog, so this is the one test in this list
+where "this compiles and calls the right functions" was never good
+enough to have shipped; see its own header comment for the reasoning.
 
-All six need to actually pass — not just build — before a change is
+All eight need to actually pass — not just build — before a change is
 considered done. See ARCHITECTURE.md's "Verification status" section for
 what each test actually proves and why it exists.
 

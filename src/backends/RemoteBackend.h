@@ -101,6 +101,15 @@ public slots:
     // requests (see FolderEnumerator) can match responses to requests.
     virtual void listDirectoryForEnumeration(const QString &path, int requestId) = 0;
 
+    // Checks whether something already exists at path, without listing a
+    // whole directory — used by TransferManager to detect a destination
+    // conflict (a file or folder already there) before actually starting
+    // a transfer or creating a directory, so it can ask Overwrite/Skip
+    // (files) or Write Into/Skip (folders) instead of silently
+    // overwriting, which was the previous behavior. requestId is echoed
+    // back in existsChecked(), same reason as listDirectoryForEnumeration()'s.
+    virtual void checkExists(const QString &path, int requestId) = 0;
+
 signals:
     void connected();
     void connectionFailed(const QString &reason);
@@ -130,4 +139,8 @@ signals:
     // directoryEnumerated(), and path identifies which directory failed,
     // since a recursive walk has many outstanding/attempted paths.
     void enumerationFailed(const QString &path, const QString &reason, int requestId);
+
+    // Response to checkExists(). isDir is meaningless when exists is
+    // false — nothing to have a type.
+    void existsChecked(const QString &path, bool exists, bool isDir, int requestId);
 };

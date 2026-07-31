@@ -36,6 +36,13 @@ move things between them. Think FileZilla or WinSCP, built fresh in Qt6.
   on the other side, nested structure and all, including empty
   subfolders. Each file inside shows up in the transfer queue like any
   other transfer — same pause/resume/cancel, same progress and speed.
+- **You're asked before anything gets overwritten.** If a file already
+  exists at the destination, you'll be asked to Overwrite or Skip it —
+  with a checkbox to apply that answer to everything else in the same
+  batch, so you're not clicking through a dialog for every file. Folders
+  work the same way: if a folder with that name already exists, you
+  choose to write into it (merging with what's already there) or skip it
+  entirely.
 - **A real transfer queue** — see what's moving and how fast, pause a
   transfer to a server and pick it back up later without starting over,
   cancel something outright, or retry something that failed, all from
@@ -80,7 +87,7 @@ quick on any recent distro.
 5. **Watch the Transfers panel** at the bottom for progress and speed.
    Right-click any transfer to cancel it, pause it (server transfers
    only — see Known limitations), resume a paused one, or retry
-   something that failed.
+   something that failed or that you skipped.
 
 ## Known limitations
 

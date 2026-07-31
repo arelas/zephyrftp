@@ -206,3 +206,19 @@ qt_add_executable(folder-transfer-test EXCLUDE_FROM_ALL
 )
 target_include_directories(folder-transfer-test PRIVATE src)
 target_link_libraries(folder-transfer-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
+
+# --- Destination conflict resolution test (Overwrite/Skip, Write Into/Skip, real dialog interaction) ---
+qt_add_executable(conflict-resolution-test EXCLUDE_FROM_ALL
+    src/conflict_resolution_test.cpp
+    src/ui/FilePaneWidget.cpp
+    src/ui/FileTreeView.cpp
+    src/ui/IconTheme.cpp
+    src/backends/LocalBackend.cpp
+    src/backends/RemoteBackend.h
+    src/transfer/TransferManager.cpp
+    src/transfer/FolderEnumerator.cpp
+    resources/icons.qrc
+    resources/theme.qrc
+)
+target_include_directories(conflict-resolution-test PRIVATE src)
+target_link_libraries(conflict-resolution-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)

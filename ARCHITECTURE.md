@@ -304,6 +304,57 @@ that way, it's flagged explicitly rather than left implied.
   `SftpBackend`'s side of the same walk (see the matching Known Gaps
   entry) — no live SFTP server is available in this environment.
 
+- **Destination conflict resolution — Overwrite/Skip for files, Write
+  Into/Skip for folders, and the "apply to all" remembered-decision
+  mechanism — is verified by actually driving the real dialog, not a
+  mock of one.** `src/conflict_resolution_test.cpp` (built via the
+  `conflict-resolution-test` CMake target) schedules a `QTimer` to fire
+  *during* `askConflict()`'s still-blocking `QMessageBox::exec()` call
+  (`exec()` pumps the event loop internally, which is what makes this
+  possible at all — the same technique already proven for capturing an
+  open context menu earlier in this project's development), finds the
+  live dialog via `QApplication::activeModalWidget()`, toggles its real
+  checkbox, and clicks its real button by matching text. Four phases,
+  all passing reliably (confirmed 5/5 clean runs, not just once): file
+  conflict resolved Overwrite-with-apply-to-all (confirms the *second*
+  conflicting file gets overwritten automatically with no second
+  prompt, and that both files' content on disk actually changed, not
+  just that their status reached Done); file conflict resolved
+  Skip-with-apply-to-all in a **separate** batch (confirms both that the
+  skip mechanism itself works and — a real, deliberately-checked
+  claim, not assumed — that the remembered decision from the *previous*
+  phase did NOT leak into this one once the queue had drained between
+  them); folder conflict resolved Skip (confirms enumeration never even
+  starts — `folderTransferStarted` never fires — since paying for a
+  recursive walk of the source before knowing whether it'll be used at
+  all would be wasteful); folder conflict resolved Write Into (confirms
+  a genuine merge: the new file arrives, and a pre-existing, unrelated
+  file already in that destination folder is left completely alone,
+  not replaced).
+  **Two real, non-hypothetical bugs surfaced and fixed while building
+  this test, neither in the feature itself:** an *existing* test
+  (`transfer-queue-test`) legitimately triggered a real conflict it
+  wasn't written to expect — it deliberately re-transfers the same file
+  to the same destination to test cancel-while-queued behavior, which
+  now correctly produces a conflict prompt that a headless test can't
+  click through, hanging the whole run. Fixed by removing the
+  destination file first, keeping that test focused on what it's
+  actually about (cancellation) rather than entangling it with conflict
+  resolution, which has its own dedicated coverage. Separately, this
+  new test itself initially failed intermittently in a way that looked
+  like a logic bug but wasn't: `QApplication`'s default
+  `quitOnLastWindowClosed` behavior was ending the test's event loop the
+  moment the *first* dialog closed (it was effectively the only visible
+  window, since the test's panes are never shown), and a later phase's
+  timing was tight enough to occasionally miss — both root-caused by
+  actually investigating (adding diagnostic output, confirming the
+  failure was timing-sensitive rather than logical) rather than
+  papering over with a longer sleep and hoping.
+  **Not verified:** `SftpBackend`'s `checkExists()` against a real
+  server — no live SFTP server is available in this environment, the
+  same limitation already flagged for every other SFTP-specific path in
+  this project.
+
 **Still not verified:** public-key authentication (implemented, but no
 real key file has been tested against it yet — see Known gaps), the
 transfer queue's progress-bar/status-icon rendering with a real active
@@ -337,6 +388,19 @@ headless/offscreen runs have been checked).
   as it stepped into each subdirectory — `requestId` lets a caller
   managing several outstanding enumeration requests (see
   `FolderEnumerator`) match responses back to requests.
+  Also declares `checkExists(path, requestId)` + `existsChecked(path,
+  exists, isDir, requestId)` — a lightweight existence check
+  `TransferManager` uses to detect a destination conflict before
+  starting a transfer or creating a directory, rather than the previous
+  behavior of silently overwriting. `SftpBackend`'s implementation uses
+  `libssh2_sftp_stat()` (signature confirmed against the installed
+  header before use, same discipline as everywhere else in this class);
+  a non-zero return is treated as "doesn't exist" rather than trying to
+  distinguish a genuine not-found from other stat failures, since
+  libssh2 doesn't give a reliable way to do that without walking the
+  same ambiguous-error-code territory `sftpErrorString()` already has to
+  navigate (see that helper's own comment on `LIBSSH2_FX_FAILURE`) —
+  not worth the complexity for an existence check specifically.
 - `LocalBackend` — wraps `QDir`/`QFile`. Runs on the GUI thread; local
   listing/copy is fast enough that this hasn't been a problem, but it's a
   design decision worth revisiting if it ever needs to handle slow
@@ -606,6 +670,50 @@ headless/offscreen runs have been checked).
   ordering on queued connections is what guarantees the destination
   backend processes them in that exact sequence regardless of how long
   each individual creation takes, so there's nothing to wait on.
+  **Conflict resolution** happens in two places, deliberately different
+  in scope. Files: `startNext()` calls `checkExists()` on the
+  destination right before an item would actually start (no visible
+  status change yet), and only calls the new `dispatchActiveItem()` —
+  the actual backend dispatch, split out from what used to be
+  `startNext()`'s own body — once that comes back clean or the person
+  chooses Overwrite. Folders: `enqueueFolder()` checks the root folder's
+  own existence *before* paying for a full recursive enumeration of the
+  source at all — if it's going to be skipped, there's no reason to walk
+  the source tree first. Choosing Write Into does **not** check every
+  nested subdirectory individually; it means exactly what it says — merge
+  into whatever's already there, the same way most file managers handle
+  copying a folder onto an existing one — while files found inside still
+  get their own individual conflict check as their turn comes up in the
+  ordinary queue. Both flows share one `askConflict()` dialog (a
+  `QMessageBox` with a custom checkbox via `setCheckBox()`) and one
+  `ConflictResolution` enum (`Ask`/`AlwaysOverwrite`/`AlwaysSkip`), but
+  file and directory decisions are tracked as two **independent**
+  members (`m_fileConflictResolution`/`m_directoryConflictResolution`),
+  matching the two separate checkboxes/decisions a person actually gets
+  asked about — checking "apply to all" for files doesn't silently also
+  answer a folder conflict. Both reset back to `Ask` whenever the queue
+  fully drains (the existing "nothing left to run" path in `startNext()`),
+  so a fresh batch of transfers gets fresh decisions rather than quietly
+  inheriting a choice from an unrelated earlier transfer.
+  A subtlety worth knowing if this code is touched again: the file- and
+  folder-conflict checks use two *separate* pending-request-id trackers
+  (`m_pendingFileConflictCheckId`/`m_pendingFolderConflictCheckId`)
+  rather than one shared one, because they can genuinely overlap —
+  `askConflict()`'s `QMessageBox::exec()` is modal but still pumps the
+  event loop internally (that's what makes a modal dialog work at all),
+  so a brand-new drag-and-drop can trigger `enqueueFolder()` while an
+  earlier conflict dialog from a different check is still on screen. The
+  shared `onDestinationExistsChecked()` slot routes each response by
+  checking which of the two ids it matches, so the two flows can't
+  corrupt each other's state even when interleaved. Relatedly,
+  `ensureExistsCheckConnected()` connects a backend's `existsChecked`
+  signal via `Qt::UniqueConnection` and is **never explicitly
+  disconnected** — unlike `connectToBackend()`'s progress/finished/
+  failed wiring, which does need teardown between transfers to avoid
+  double-delivery, `existsChecked`'s `requestId` already disambiguates
+  responses on its own, so there's no double-delivery risk to avoid, and
+  tearing the connection down here would risk losing a response if two
+  different backends both have checks in flight at once.
 - `FolderEnumerator` (`src/transfer/FolderEnumerator.h/.cpp`) —
   recursively walks a folder via a backend's
   `listDirectoryForEnumeration()`, one directory at a time (not several
@@ -628,7 +736,14 @@ headless/offscreen runs have been checked).
   status — Pause additionally checks the item's direction, since
   `LocalBackend`'s `requestPause()` is a documented no-op and offering
   Pause for a local-to-local transfer would just silently do nothing)
-  that calls straight back into the manager. A Speed column shows
+  that calls straight back into the manager. `TransferStatus::Skipped`
+  (a conflict resolved as "skip") shares `Cancelled`'s icon and muted
+  gray color — both mean "didn't happen, not an error" — distinguished
+  only by the status text next to it, rather than inventing a fifth
+  accent color the design's four-color system doesn't really have room
+  for. Retry is enabled for Skipped the same as Failed/Cancelled — a
+  skip applied automatically via "apply to all" is still worth being
+  able to reverse for one specific item. A Speed column shows
   `TransferManager`'s sampled rate, formatted B/s -> KB/s -> MB/s. All
   state still lives in the manager — this is a view, not a second source
   of truth.
@@ -755,6 +870,17 @@ ever needs touching again:
 
 ## Known gaps (flagged, not fixed)
 
+- **`SftpBackend::checkExists()` — the primitive destination-conflict
+  detection depends on — is unverified against a real server.**
+  `LocalBackend`'s implementation is thoroughly tested (see
+  `conflict-resolution-test` in Verification status), but no live SFTP
+  server is available in this environment. It's built on
+  `libssh2_sftp_stat()`, the same underlying call other already-working
+  SFTP paths in this codebase rely on for similar purposes, just routed
+  differently — so the protocol operation itself is proven, but "does a
+  conflict check actually work against a live server, including the
+  ambiguous-stat-failure fallback treating any error as 'doesn't
+  exist'" hasn't been tried.
 - **Directory deletion is never recursive, on either backend, by
   design.** Deleting a non-empty folder fails with a clear error rather
   than removing its contents first. This wasn't an oversight or a

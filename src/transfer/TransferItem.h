@@ -17,7 +17,14 @@ enum class TransferStatus {
     Paused,
     Done,
     Failed,
-    Cancelled
+    Cancelled,
+    // Never attempted at all — a destination conflict was resolved as
+    // "skip" (either directly, or via a remembered "apply to all"
+    // choice from an earlier conflict in the same queue). Deliberately
+    // distinct from Cancelled (a person explicitly stopped something
+    // already running) and Failed (something went wrong) — this is
+    // neither; it's the queue correctly doing what it was told.
+    Skipped
 };
 
 // One row in the transfer queue. Holds the source/dest pane pointers

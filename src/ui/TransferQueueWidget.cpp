@@ -74,6 +74,7 @@ QString TransferQueueWidget::statusText(const TransferItem &item)
                                               ? tr("Failed")
                                               : tr("Failed: %1").arg(item.errorMessage);
     case TransferStatus::Cancelled:   return tr("Cancelled");
+    case TransferStatus::Skipped:     return tr("Skipped");
     }
     return {};
 }
@@ -91,6 +92,12 @@ QIcon TransferQueueWidget::statusIcon(const TransferItem &item)
     if (item.status == TransferStatus::Failed)
         return IconTheme::tintedIcon(":/icons/alert-triangle.svg", IconTheme::Red);
     if (item.status == TransferStatus::Cancelled)
+        return IconTheme::tintedIcon(":/icons/x.svg", IconTheme::GrayMuted);
+    if (item.status == TransferStatus::Skipped)
+        // Same icon/color as Cancelled — both mean "didn't happen, not an
+        // error" — distinguished by the status text next to it, not a
+        // separate accent color the design's four-color system doesn't
+        // really have room for a fifth meaning in anyway.
         return IconTheme::tintedIcon(":/icons/x.svg", IconTheme::GrayMuted);
     if (item.status == TransferStatus::Paused)
         return IconTheme::tintedIcon(":/icons/player-pause.svg", IconTheme::Amber);
@@ -127,6 +134,7 @@ QColor TransferQueueWidget::statusTextColor(TransferStatus status)
     case TransferStatus::Done:        return IconTheme::Green;
     case TransferStatus::Failed:      return IconTheme::Red;
     case TransferStatus::Cancelled:   return IconTheme::GrayMuted;
+    case TransferStatus::Skipped:     return IconTheme::GrayMuted;
     }
     return IconTheme::Gray;
 }
@@ -221,6 +229,9 @@ void TransferQueueWidget::onItemUpdated(const TransferItem &item)
     case TransferStatus::Queued:
         chunkColor = IconTheme::Gray;
         break;
+    case TransferStatus::Skipped:
+        chunkColor = IconTheme::GrayMuted;
+        break;
     }
     progressBar->setStyleSheet(
         QStringLiteral("QProgressBar::chunk { background-color: %1; border-radius: 3px; }")
@@ -276,7 +287,8 @@ void TransferQueueWidget::showContextMenu(const QPoint &pos)
     resumeAction->setEnabled(status == TransferStatus::Paused);
     QAction *retryAction = menu.addAction(
         IconTheme::tintedIcon(":/icons/refresh.svg", IconTheme::Amber), tr("Retry"));
-    retryAction->setEnabled(status == TransferStatus::Failed || status == TransferStatus::Cancelled);
+    retryAction->setEnabled(status == TransferStatus::Failed || status == TransferStatus::Cancelled
+                             || status == TransferStatus::Skipped);
 
     QAction *chosen = menu.exec(m_table->viewport()->mapToGlobal(pos));
     if (chosen == cancelAction)

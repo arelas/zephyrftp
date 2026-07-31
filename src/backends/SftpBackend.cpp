@@ -505,6 +505,35 @@ void SftpBackend::listDirectoryForEnumeration(const QString &path, int requestId
     emit directoryEnumerated(path, entries, requestId);
 }
 
+void SftpBackend::checkExists(const QString &path, int requestId)
+{
+    if (!ensureSession()) {
+        // ensureSession() already emitted a real connectionFailed with
+        // specifics — reporting "doesn't exist" here would be a
+        // misleading guess about something that's actually a connection
+        // problem, not a fact about the path.
+        emit existsChecked(path, false, false, requestId);
+        return;
+    }
+
+    LIBSSH2_SFTP_ATTRIBUTES attrs;
+    const int rc = libssh2_sftp_stat(m_sftp, path.toUtf8().constData(), &attrs);
+    if (rc != 0) {
+        // Non-zero here almost always means "doesn't exist" for our
+        // purposes — a genuine permission/connection problem would have
+        // already surfaced via ensureSession() above, and libssh2 itself
+        // doesn't give a way to reliably distinguish "not found" from
+        // other stat failures without walking sftpErrorString()'s same
+        // ambiguous-code territory (see that helper's own comment on
+        // LIBSSH2_FX_FAILURE) — not worth the complexity for an
+        // existence check specifically.
+        emit existsChecked(path, false, false, requestId);
+        return;
+    }
+
+    emit existsChecked(path, true, LIBSSH2_SFTP_S_ISDIR(attrs.permissions), requestId);
+}
+
 void SftpBackend::downloadFile(const QString &remotePath, const QString &localPath, qint64 resumeOffset)
 {
     if (!ensureSession())

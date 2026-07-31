@@ -73,6 +73,12 @@ void LocalBackend::listDirectoryForEnumeration(const QString &path, int requestI
     emit directoryEnumerated(dir.absolutePath(), entries, requestId);
 }
 
+void LocalBackend::checkExists(const QString &path, int requestId)
+{
+    const QFileInfo info(path);
+    emit existsChecked(path, info.exists(), info.isDir(), requestId);
+}
+
 void LocalBackend::downloadFile(const QString &remotePath, const QString &localPath, qint64 resumeOffset)
 {
     Q_UNUSED(resumeOffset);   // never nonzero in practice — see requestPause()'s doc comment

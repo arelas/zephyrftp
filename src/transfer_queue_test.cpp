@@ -136,6 +136,13 @@ int main(int argc, char *argv[])
     // ---- Phase 2: cancel a queued (not-yet-started) item ----
     QTimer::singleShot(1400, &app, [&]() {
         QFile::remove(dstDir + "/testfile2.bin");   // clean slate in case a prior run left it
+        // testfile.bin already exists at this destination from phase 1 —
+        // remove it first so re-queueing the same transfer doesn't hit
+        // the (correct, intentional) new destination-conflict prompt
+        // this test isn't set up to handle. Conflict resolution has its
+        // own dedicated coverage; this phase is specifically about
+        // cancelling a queued item, not about overwrite behavior.
+        QFile::remove(dstDir + "/testfile.bin");
 
         // Back-to-back, synchronous, no event-loop turn between them: the
         // first becomes InProgress immediately (nothing else running),

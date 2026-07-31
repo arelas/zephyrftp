@@ -3,6 +3,11 @@
 #include "../backends/RemoteBackend.h"
 
 #include <QMetaObject>
+#include <QMessageBox>
+#include <QCheckBox>
+#include <QPushButton>
+#include <QFileInfo>
+#include <QWidget>
 
 namespace {
 QString joinPath(const QString &dir, const QString &name)
@@ -66,6 +71,31 @@ void TransferManager::enqueueFolder(FilePaneWidget *sourcePane, FilePaneWidget *
         return;
     }
 
+    // Check for a destination conflict on the folder's own root BEFORE
+    // paying for a full recursive enumeration of the source — if this is
+    // going to be skipped, there's no point walking the source tree
+    // first. Nested subdirectories that happen to already exist on the
+    // destination are NOT checked individually; "Write Into" here means
+    // exactly that — merge into whatever's already there, the same way
+    // most file managers handle copying a folder onto an existing one.
+    // Only files actually get their own per-item conflict prompt (see
+    // startNext()), since asking about every nested subdirectory
+    // individually would be far more prompting than this is worth.
+    const QString destFolderPath = joinPath(destPane->currentDirectory(), folderName);
+    ensureExistsCheckConnected(dstBackend);
+    m_pendingFolderConflictCheckId = m_nextConflictCheckId++;
+    m_pendingFolderSourcePane = sourcePane;
+    m_pendingFolderDestPane = destPane;
+    m_pendingFolderName = folderName;
+
+    QMetaObject::invokeMethod(dstBackend, "checkExists", Qt::QueuedConnection,
+                               Q_ARG(QString, destFolderPath), Q_ARG(int, m_pendingFolderConflictCheckId));
+}
+
+void TransferManager::startFolderEnumeration(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
+                                              const QString &folderName)
+{
+    RemoteBackend *srcBackend = sourcePane->backend();
     const QString rootPath = joinPath(sourcePane->currentDirectory(), folderName);
     auto *enumerator = new FolderEnumerator(srcBackend, rootPath, folderName, this);
 
@@ -94,8 +124,9 @@ void TransferManager::startFolderFileTransfers(FilePaneWidget *sourcePane, FileP
     // parent-before-child order. Not waited on individually — see this
     // method's doc comment in the header for why the queued-connection
     // FIFO ordering alone is sufficient here. "Already exists" (e.g. the
-    // destination happens to already have some of this structure) isn't
-    // treated as an error for this bulk path — createDirectory()'s
+    // destination happens to already have some of this structure —
+    // expected now that Write Into is an explicit, deliberate choice) is
+    // not treated as an error for this bulk path — createDirectory()'s
     // fileOperationFailed signal for that case simply isn't listened to
     // here at all, unlike the single right-click "New Folder" action.
     for (const EnumeratedItem &item : items) {
@@ -110,7 +141,11 @@ void TransferManager::startFolderFileTransfers(FilePaneWidget *sourcePane, FileP
     // joinPath(pane->currentDirectory(), fileName) logic already builds
     // the correct nested path when fileName is actually a relative path
     // like "photos/subdir/photo.jpg", so no separate file-transfer
-    // mechanism is needed for folders at all.
+    // mechanism is needed for folders at all. Each file still gets its
+    // own overwrite/skip conflict check individually when its turn comes
+    // up in startNext() — Write Into only resolved the TOP-LEVEL
+    // folder's own conflict, not every file that might already exist
+    // inside it.
     int fileCount = 0;
     for (const EnumeratedItem &item : items) {
         if (item.isDir)
@@ -137,71 +172,94 @@ void TransferManager::startNext()
 
         m_activeIndex = i;
         TransferItem &item = m_items[i];
-        item.status = TransferStatus::InProgress;
-        item.speedBytesPerSec = 0;
-        emit itemUpdated(item);
 
-        m_speedSampleTimer.start();
-        m_speedSampleBytesAtLastSample = item.bytesDone;   // nonzero when resuming a Paused item
-
-        RemoteBackend *srcBackend = item.sourcePane->backend();
-        RemoteBackend *dstBackend = item.destPane->backend();
-
-        RemoteBackend *executor = nullptr;
-        const char *methodName = nullptr;
-        QString argA, argB;
-
-        switch (item.direction) {
-        case TransferDirection::LocalToRemote:
-            // uploadFile(localPath, remotePath) — runs on the remote side's backend
-            executor = dstBackend;
-            methodName = "uploadFile";
-            argA = item.sourcePath;
-            argB = item.destPath;
-            break;
-        case TransferDirection::RemoteToLocal:
-            // downloadFile(remotePath, localPath) — runs on the remote side's backend
-            executor = srcBackend;
-            methodName = "downloadFile";
-            argA = item.sourcePath;
-            argB = item.destPath;
-            break;
-        case TransferDirection::LocalToLocal:
-            // Either backend is a plain LocalBackend here; uploadFile's
-            // (localPath, remotePath) signature just becomes (src, dst)
-            // for LocalBackend's QFile::copy-based implementation.
-            executor = dstBackend;
-            methodName = "uploadFile";
-            argA = item.sourcePath;
-            argB = item.destPath;
-            break;
-        case TransferDirection::Unsupported:
-            // Shouldn't reach here — enqueue() marks these Failed up front
-            // so they never get queued as Queued in the first place.
-            break;
-        }
-
-        if (!executor) {
-            item.status = TransferStatus::Failed;
-            item.errorMessage = tr("Internal error: no backend to execute this transfer");
-            emit itemUpdated(item);
-            m_activeIndex = -1;
-            continue;   // try the next queued item instead of getting stuck
-        }
-
-        connectToBackend(executor);
-        // item.bytesDone doubles as the resume offset — 0 for a fresh
-        // item, nonzero when re-starting a previously Paused one (see
-        // resumeItem(), which deliberately does NOT reset bytesDone the
-        // way retryItem() resets it to 0).
-        QMetaObject::invokeMethod(executor, methodName, Qt::QueuedConnection,
-                                   Q_ARG(QString, argA), Q_ARG(QString, argB),
-                                   Q_ARG(qint64, item.bytesDone));
+        // Check the destination for a conflict before doing anything
+        // visible (no InProgress status yet, nothing dispatched to a
+        // backend) — dispatchActiveItem() only runs once this comes back
+        // clean, or the conflict is resolved as Overwrite.
+        RemoteBackend *destBackend = item.destPane->backend();
+        ensureExistsCheckConnected(destBackend);
+        m_pendingFileConflictCheckId = m_nextConflictCheckId++;
+        QMetaObject::invokeMethod(destBackend, "checkExists", Qt::QueuedConnection,
+                                   Q_ARG(QString, item.destPath), Q_ARG(int, m_pendingFileConflictCheckId));
         return;
     }
 
-    // Nothing left to run.
+    // Nothing left to run — a fresh batch of transfers should get fresh
+    // conflict decisions rather than silently inheriting a choice from
+    // an unrelated earlier transfer.
     m_activeIndex = -1;
+    m_fileConflictResolution = ConflictResolution::Ask;
+    m_directoryConflictResolution = ConflictResolution::Ask;
+}
+
+void TransferManager::dispatchActiveItem()
+{
+    if (m_activeIndex < 0 || m_activeIndex >= m_items.size())
+        return;
+
+    TransferItem &item = m_items[m_activeIndex];
+    item.status = TransferStatus::InProgress;
+    item.speedBytesPerSec = 0;
+    emit itemUpdated(item);
+
+    m_speedSampleTimer.start();
+    m_speedSampleBytesAtLastSample = item.bytesDone;   // nonzero when resuming a Paused item
+
+    RemoteBackend *srcBackend = item.sourcePane->backend();
+    RemoteBackend *dstBackend = item.destPane->backend();
+
+    RemoteBackend *executor = nullptr;
+    const char *methodName = nullptr;
+    QString argA, argB;
+
+    switch (item.direction) {
+    case TransferDirection::LocalToRemote:
+        // uploadFile(localPath, remotePath) — runs on the remote side's backend
+        executor = dstBackend;
+        methodName = "uploadFile";
+        argA = item.sourcePath;
+        argB = item.destPath;
+        break;
+    case TransferDirection::RemoteToLocal:
+        // downloadFile(remotePath, localPath) — runs on the remote side's backend
+        executor = srcBackend;
+        methodName = "downloadFile";
+        argA = item.sourcePath;
+        argB = item.destPath;
+        break;
+    case TransferDirection::LocalToLocal:
+        // Either backend is a plain LocalBackend here; uploadFile's
+        // (localPath, remotePath) signature just becomes (src, dst)
+        // for LocalBackend's QFile::copy-based implementation.
+        executor = dstBackend;
+        methodName = "uploadFile";
+        argA = item.sourcePath;
+        argB = item.destPath;
+        break;
+    case TransferDirection::Unsupported:
+        // Shouldn't reach here — enqueue() marks these Failed up front
+        // so they never get queued as Queued in the first place.
+        break;
+    }
+
+    if (!executor) {
+        item.status = TransferStatus::Failed;
+        item.errorMessage = tr("Internal error: no backend to execute this transfer");
+        emit itemUpdated(item);
+        m_activeIndex = -1;
+        startNext();   // try the next queued item instead of getting stuck
+        return;
+    }
+
+    connectToBackend(executor);
+    // item.bytesDone doubles as the resume offset — 0 for a fresh
+    // item, nonzero when re-starting a previously Paused one (see
+    // resumeItem(), which deliberately does NOT reset bytesDone the
+    // way retryItem() resets it to 0).
+    QMetaObject::invokeMethod(executor, methodName, Qt::QueuedConnection,
+                               Q_ARG(QString, argA), Q_ARG(QString, argB),
+                               Q_ARG(qint64, item.bytesDone));
 }
 
 void TransferManager::cancelItem(int id)
@@ -241,7 +299,8 @@ void TransferManager::retryItem(int id)
         return;
 
     TransferItem &item = m_items[idx];
-    if (item.status != TransferStatus::Failed && item.status != TransferStatus::Cancelled)
+    if (item.status != TransferStatus::Failed && item.status != TransferStatus::Cancelled
+        && item.status != TransferStatus::Skipped)
         return;
 
     item.status = TransferStatus::Queued;
@@ -296,6 +355,121 @@ void TransferManager::connectToBackend(RemoteBackend *backend)
     connect(backend, &RemoteBackend::transferPaused, this, &TransferManager::onBackendPaused);
 
     m_currentBackend = backend;
+}
+
+void TransferManager::ensureExistsCheckConnected(RemoteBackend *backend)
+{
+    connect(backend, &RemoteBackend::existsChecked, this, &TransferManager::onDestinationExistsChecked,
+            Qt::UniqueConnection);
+}
+
+bool TransferManager::askConflict(const QString &name, bool isDirectory, bool &applyToAll)
+{
+    QMessageBox box(qobject_cast<QWidget *>(parent()));
+    box.setIcon(QMessageBox::Question);
+    box.setWindowTitle(isDirectory ? tr("Folder Already Exists") : tr("File Already Exists"));
+    box.setText(isDirectory
+        ? tr("A folder named \"%1\" already exists at the destination.").arg(name)
+        : tr("A file named \"%1\" already exists at the destination.").arg(name));
+
+    QPushButton *proceedButton = box.addButton(
+        isDirectory ? tr("Write Into") : tr("Overwrite"), QMessageBox::AcceptRole);
+    QPushButton *skipButton = box.addButton(tr("Skip"), QMessageBox::RejectRole);
+    box.setDefaultButton(skipButton);   // the safer choice if Enter is pressed without reading
+
+    auto *checkbox = new QCheckBox(
+        isDirectory ? tr("Do this for all remaining folder conflicts in this transfer")
+                    : tr("Do this for all remaining file conflicts in this transfer"));
+    box.setCheckBox(checkbox);
+
+    box.exec();
+
+    applyToAll = checkbox->isChecked();
+    return box.clickedButton() == proceedButton;
+}
+
+void TransferManager::onDestinationExistsChecked(const QString &path, bool exists, bool isDir, int requestId)
+{
+    Q_UNUSED(path);
+    Q_UNUSED(isDir);   // a genuine type mismatch (e.g. uploading a file where a folder of that
+                       // name already exists) isn't specifically detected here — it surfaces as
+                       // a normal backend error when the transfer is actually attempted, same as
+                       // it always has, rather than trying to guess the right resolution for a
+                       // case Overwrite/Skip doesn't really describe anyway
+
+    if (requestId == m_pendingFolderConflictCheckId) {
+        m_pendingFolderConflictCheckId = -1;
+        FilePaneWidget *sourcePane = m_pendingFolderSourcePane;
+        FilePaneWidget *destPane = m_pendingFolderDestPane;
+        const QString folderName = m_pendingFolderName;
+
+        if (!exists) {
+            startFolderEnumeration(sourcePane, destPane, folderName);
+            return;
+        }
+
+        bool proceed;
+        if (m_directoryConflictResolution == ConflictResolution::AlwaysOverwrite) {
+            proceed = true;
+        } else if (m_directoryConflictResolution == ConflictResolution::AlwaysSkip) {
+            proceed = false;
+        } else {
+            bool applyToAll = false;
+            proceed = askConflict(folderName, /*isDirectory=*/true, applyToAll);
+            if (applyToAll) {
+                m_directoryConflictResolution =
+                    proceed ? ConflictResolution::AlwaysOverwrite : ConflictResolution::AlwaysSkip;
+            }
+        }
+
+        if (proceed)
+            startFolderEnumeration(sourcePane, destPane, folderName);
+        else
+            emit folderTransferSkipped(folderName);
+        return;
+    }
+
+    if (requestId == m_pendingFileConflictCheckId) {
+        m_pendingFileConflictCheckId = -1;
+        if (m_activeIndex < 0 || m_activeIndex >= m_items.size())
+            return;   // active item disappeared somehow — defensive, shouldn't happen
+
+        TransferItem &item = m_items[m_activeIndex];
+
+        if (!exists) {
+            dispatchActiveItem();
+            return;
+        }
+
+        bool proceed;
+        if (m_fileConflictResolution == ConflictResolution::AlwaysOverwrite) {
+            proceed = true;
+        } else if (m_fileConflictResolution == ConflictResolution::AlwaysSkip) {
+            proceed = false;
+        } else {
+            bool applyToAll = false;
+            proceed = askConflict(QFileInfo(item.destPath).fileName(), /*isDirectory=*/false, applyToAll);
+            if (applyToAll) {
+                m_fileConflictResolution =
+                    proceed ? ConflictResolution::AlwaysOverwrite : ConflictResolution::AlwaysSkip;
+            }
+        }
+
+        if (proceed) {
+            dispatchActiveItem();
+        } else {
+            item.status = TransferStatus::Skipped;
+            item.speedBytesPerSec = 0;
+            emit itemUpdated(item);
+            m_activeIndex = -1;
+            startNext();
+        }
+        return;
+    }
+
+    // requestId matches neither pending check — a stale/unrelated
+    // response (e.g. from a check that's since been superseded). Nothing
+    // to do; not an error, just ignored.
 }
 
 void TransferManager::onBackendProgress(const QString &fileName, qint64 bytesDone, qint64 bytesTotal)

@@ -50,6 +50,9 @@ MainWindow::MainWindow(QWidget *parent)
         QMessageBox::warning(this, tr("Transfer"),
                               tr("Couldn't transfer \"%1\":\n%2").arg(name, reason));
     });
+    connect(m_transferManager, &TransferManager::folderTransferSkipped, this, [this](const QString &name) {
+        statusBar()->showMessage(tr("Skipped \"%1\" — a folder with that name already exists").arg(name), 5000);
+    });
 
     statusBar()->showMessage(tr("Ready"));
 }

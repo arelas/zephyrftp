@@ -61,6 +61,16 @@ public slots:
     void createFile(const QString &) override {}
     void listDirectoryForEnumeration(const QString &, int) override {}
 
+    // Must actually respond (not just satisfy the interface) — startNext()
+    // now always issues a checkExists() call before dispatching a
+    // transfer, and waits for existsChecked() before proceeding. A no-op
+    // stub here would leave that wait unanswered forever, hanging every
+    // test that exercises a real transfer through this fake.
+    void checkExists(const QString &path, int requestId) override
+    {
+        emit existsChecked(path, false, false, requestId);
+    }
+
 private slots:
     void tick() {
         if (m_cancelRequested) {
