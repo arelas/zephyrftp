@@ -81,12 +81,12 @@ before being attached — see ARCHITECTURE.md's "Windows and Linux builds
 1. **Launch the app.** The left pane shows your local files right away —
    ZephyrFTP works as a plain two-pane local file manager even before
    you connect to anything.
-2. **Open the Connection menu** in the toolbar and choose **Connect...**
-   for a one-off connection — fill in the server's host, port (22 by
-   default), your username, and either a password or a private key file.
-   If it's a server you'll come back to, choose **Sites...** instead:
-   same information, but saved for next time (a "New Site" button, and a
-   tree on the left to organize them).
+2. **Click Connect** in the toolbar (or the **Connection** menu) for a
+   one-off connection — fill in the server's host, port (22 by default),
+   your username, and either a password or a private key file. If it's a
+   server you'll come back to, use **Sites** instead: same information,
+   but saved for next time (a "New Site" button, and a tree on the left
+   to organize them).
 3. **First connection to a new server?** You'll be asked to confirm its
    identity fingerprint. This is expected and normal — it's the same
    prompt any SSH client shows the first time. Confirming it once means
