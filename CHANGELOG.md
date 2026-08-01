@@ -8,6 +8,16 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.2.1] — Linux builds now published alongside Windows
+
+### Added
+
+- **A Linux build is now attached to every release**, alongside the
+  Windows one — `zephyrftp-linux-x64.tar.gz`, a single dynamically
+  linked binary (needs system Qt6/libssh2 already installed; see the
+  README's Download section for exact packages). Built and tested by CI
+  the same way the Windows build is, not just compiled.
+
 ## [0.2.0] — FTP/FTPS wired to the UI, Windows CI moved off MSVC+vcpkg
 
 ### Added
@@ -84,6 +94,7 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.1
 [0.2.0]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.0
 [0.1.0]: https://github.com/arelas/zephyrftp/releases/tag/v0.1.0
