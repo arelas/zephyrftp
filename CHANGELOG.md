@@ -8,7 +8,7 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
-## [0.2.6] — Optional password saving, via your OS's own credential store
+## [0.2.6] — Optional password saving; relicensed to GPL-3.0-or-later
 
 ### Added
 
@@ -20,6 +20,12 @@ in the README), so anything may still change between 0.x releases.
   uses), and you're still asked to confirm it every time you connect
   (just pre-filled, never silent). Unchecking the box removes anything
   saved for that site immediately.
+
+### Changed
+
+- **License changed from MIT to GPL-3.0-or-later.** See
+  [LICENSE](LICENSE). The vendored Tabler Icons set is unaffected,
+  still under its own original MIT license.
 
 ## [0.2.5] — Fix a real crash closing the app while connected
 
