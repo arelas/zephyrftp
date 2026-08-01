@@ -8,6 +8,21 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.2.4] — Real cancel/pause/resume and transfer-queue rendering verified
+
+### Added
+
+- **SFTP cancel and pause/resume verified against a real server**, in
+  both directions — not just `TransferManager`'s orchestration against
+  a fake backend. A genuinely interrupted, genuinely resumed,
+  byte-for-byte-correct transfer confirmed for real using
+  `tools/local-test-servers/`. Dev-only tooling; nothing shipped
+  changed.
+- **The transfer queue's progress bars and status icons confirmed
+  rendering correctly with a real active transfer** (previously only
+  checked with an empty queue). Also dev-only — a one-off verification
+  pass, not new tooling kept in the repo.
+
 ## [0.2.3] — FTP/FTPS and public-key SFTP auth verified against a real server
 
 ### Added
@@ -124,7 +139,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.4
 [0.2.3]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.3
 [0.2.2]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.2
 [0.2.1]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.1
