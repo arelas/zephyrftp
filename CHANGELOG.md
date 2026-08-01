@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.2.0] — FTP/FTPS wired to the UI, Windows CI moved off MSVC+vcpkg
+
 ### Added
 
 - **FTP and FTPS can now be selected** in both the connection dialog and
@@ -30,6 +32,12 @@ in the README), so anything may still change between 0.x releases.
   self-signed certificate) instead of reporting a generic TLS error.
   ZephyrFTP still refuses to connect in that case; only the explanation
   improved.
+- The Windows build (this release's `.exe`) now comes from MinGW
+  cross-compilation on Linux CI instead of MSVC+vcpkg on a Windows
+  runner — same test suite, now actually run under `wine` as part of
+  the build rather than only linked. No user-visible behavior change;
+  noted here because it's a real change in how the shipped binary is
+  produced.
 
 ## [0.1.0] — first tagged release
 
@@ -76,5 +84,6 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.0
 [0.1.0]: https://github.com/arelas/zephyrftp/releases/tag/v0.1.0
