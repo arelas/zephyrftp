@@ -31,6 +31,7 @@
 #include <QThread>
 #include <QMessageBox>
 #include <QDockWidget>
+#include <QCloseEvent>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -332,6 +333,17 @@ void MainWindow::onDisconnectTriggered()
     // thread quit()/wait()/delete sequence.
     m_rightPane->setBackend(new LocalBackend(), nullptr);
     statusBar()->showMessage(tr("Disconnected"), 3000);
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    // Same teardown as Disconnect (see MainWindow.h's doc comment on
+    // why this needs to happen at all): if the right pane is still on a
+    // thread-owning backend, this blocks briefly while that thread's
+    // quit()/wait() completes — same tradeoff Disconnect already has
+    // mid-transfer, not a new one introduced here.
+    m_rightPane->setBackend(new LocalBackend(), nullptr);
+    QMainWindow::closeEvent(event);
 }
 
 void MainWindow::onRefreshTriggered()

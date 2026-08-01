@@ -18,6 +18,22 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(QWidget *parent = nullptr);
 
+protected:
+    // Without this, closing the window while connected to a server is a
+    // hard crash: startConnection() parents the worker QThread to this
+    // window (`new QThread(this)`), and closing/quitting destroys this
+    // window through Qt's ordinary child-object cleanup — which reaches
+    // that QThread while its thread is still running, and QThread's own
+    // destructor calls qFatal() in exactly that case ("QThread:
+    // Destroyed while thread is still running"). Confirmed via a real
+    // coredump, not theorized: the crash's stack trace is
+    // `~QWidget -> QObjectPrivate::deleteChildren -> ~QThread` end to
+    // end. Swapping the right pane back to a plain LocalBackend reuses
+    // FilePaneWidget::setBackend()'s already-correct teardown
+    // (deleteLater() + thread->quit() + thread->wait()) rather than
+    // duplicating that logic here.
+    void closeEvent(QCloseEvent *event) override;
+
 private slots:
     void onLeftFileActivated(const QString &name);
     void onRightFileActivated(const QString &name);

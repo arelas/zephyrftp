@@ -8,6 +8,15 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.2.5] — Fix a real crash closing the app while connected
+
+### Fixed
+
+- **Closing the app while connected to a server no longer crashes.**
+  It previously aborted (SIGABRT) every time — confirmed from a real
+  crash report, not a hypothetical. The connection's background thread
+  wasn't being shut down cleanly before the window closed; it now is.
+
 ## [0.2.4] — Real cancel/pause/resume and transfer-queue rendering verified
 
 ### Added
@@ -139,7 +148,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.5
 [0.2.4]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.4
 [0.2.3]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.3
 [0.2.2]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.2

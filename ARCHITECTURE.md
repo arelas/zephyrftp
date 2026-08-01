@@ -909,6 +909,31 @@ headless/offscreen runs have been checked).
   (two existing test targets — `smoke-test`, `transfer-queue-test` — also
   construct a real `MainWindow` and needed the same define added
   explicitly once this was caught).
+  **Real, reported crash, fixed:** closing the app while connected to a
+  server used to abort with SIGABRT every time — confirmed from an
+  actual coredump (`journalctl`/`coredumpctl`), not a hypothetical.
+  `startConnection()` parents the worker `QThread` to `this` (the
+  window itself is a perfectly normal, safe parent for the *controller*
+  object — see that method's own comment on why the backend can't be
+  parented the same way), and closing/quitting destroys the window
+  through Qt's ordinary child-object cleanup, which reaches that
+  `QThread` while its thread is still running — `QThread`'s own
+  destructor calls `qFatal()` in exactly that case ("QThread: Destroyed
+  while thread is still running"). Root-caused by reproducing it
+  directly (a throwaway harness built the identical
+  `FilePaneWidget`+`SftpBackend`+`QThread`-parented-to-a-window shape
+  against a real local test server and crashed with the exact same
+  stack trace as the real coredump), then fixed with a `closeEvent()`
+  override that swaps the right pane back to a plain `LocalBackend`
+  before the window is allowed to close — reusing
+  `FilePaneWidget::setBackend()`'s already-correct teardown
+  (`deleteLater()` + `thread->quit()` + `thread->wait()`) rather than
+  duplicating that logic. Re-verified with the same harness, modified
+  to apply the fix: no crash, confirmed across multiple runs. Same
+  tradeoff Disconnect already accepted mid-transfer (a blocking wait if
+  the worker thread is stuck in a non-interruptible call) now also
+  applies at close time — not a new risk, just the same one closing a
+  gap where it hadn't been applied yet.
 
 ## Design system
 
