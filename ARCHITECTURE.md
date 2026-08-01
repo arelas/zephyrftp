@@ -1100,17 +1100,20 @@ along the way — worth knowing about if it ever needs touching again.
   Known and deliberate rather than overlooked, but untested either way.
 - **FTP is passive-mode only.** There is no active/`PORT` fallback, so a
   server that requires active mode won't work at all.
-- **`SftpBackend::checkExists()` — the primitive destination-conflict
-  detection depends on — is unverified against a real server.**
-  `LocalBackend`'s implementation is thoroughly tested (see
-  `conflict-resolution-test` in Verification status), but no live SFTP
-  server is available in this environment. It's built on
-  `libssh2_sftp_stat()`, the same underlying call other already-working
-  SFTP paths in this codebase rely on for similar purposes, just routed
-  differently — so the protocol operation itself is proven, but "does a
-  conflict check actually work against a live server, including the
-  ambiguous-stat-failure fallback treating any error as 'doesn't
-  exist'" hasn't been tried.
+- **`SftpBackend::checkExists()` is now confirmed against a real
+  server, for all three cases that matter.** Extended into
+  `verify_sftp_pubkey.cpp` (see the public-key auth entry below for the
+  harness itself): three concurrent `checkExists()` calls, matched back
+  by `requestId` — the same disambiguation contract `TransferManager`
+  relies on for real, exercised with more than one call in flight at
+  once, not just the single best case — against a real existing file
+  (`exists=true, isDir=false`), a real existing directory
+  (`exists=true, isDir=true`), and a path that genuinely doesn't exist
+  (`exists=false`). All three confirmed correct. **Not covered by
+  this**: the ambiguous-stat-failure fallback specifically (a
+  permission-denied-but-actually-exists case, say) still hasn't been
+  distinguished from genuine nonexistence against a real server — the
+  three cases above don't exercise that ambiguity, only the clean ones.
 - **Directory deletion is never recursive, on either backend, by
   design.** Deleting a non-empty folder fails with a clear error rather
   than removing its contents first. This wasn't an oversight or a
@@ -1146,17 +1149,23 @@ along the way — worth knowing about if it ever needs touching again.
   `TransferManager::enqueue()` marks them `Failed` immediately with an
   explanatory message. Would need a stage-through-a-local-temp-file
   fallback (download then upload) to support.
-- **`SftpBackend`'s `listDirectoryForEnumeration()` — the primitive whole-
-  folder transfer's recursive walk depends on — is unverified against a
-  real server.** `LocalBackend`'s implementation is thoroughly tested
-  (see the folder-transfer-test entry in Verification status), including
-  the trickiest cases (multi-level nesting, a genuinely empty leaf
-  directory), but no live SFTP server is available in this environment.
-  The libssh2 calls it's built on (`libssh2_sftp_opendir`/`readdir`) are
-  the same ones `listDirectory()` already uses successfully against a
-  real server, just routed to a different signal — so the underlying
-  protocol operations are proven, but "does a recursive walk over SFTP
-  actually work end-to-end" hasn't been tried.
+- **`SftpBackend`'s `listDirectoryForEnumeration()` and the full
+  `FolderEnumerator` recursive walk are now confirmed against a real
+  server, including the trickiest cases.** Same harness as the
+  public-key auth entry below: `tools/local-test-servers/start-sftp-pubkey.sh`
+  seeds a real multi-level tree on the server (mirroring
+  `folder-transfer-test.cpp`'s local fixture exactly — nesting three
+  levels deep, plus a genuinely empty leaf directory), and
+  `verify_sftp_pubkey.cpp` runs a real `FolderEnumerator` — not just the
+  bare primitive — against it over the actual `SftpBackend`. Confirms
+  all 4 real files found (directories correctly excluded from that
+  count), the file three levels deep found (the walk doesn't stop after
+  one level), the genuinely empty directory included despite
+  contributing zero files, and all 5 real directories found. Confirmed
+  reliably across multiple repeated runs, including a from-scratch
+  first-ever connection. **Not covered by this**: an enumeration failure
+  partway through a walk against a real server (permission denied on a
+  subdirectory, say) — only the successful-walk path has been tried.
 - **Cancel and pause/resume are implemented but only automated-tested
   against a fake backend and against `LocalBackend`, where both are a
   documented no-op** (`QFile::copy()` can't be interrupted mid-call).

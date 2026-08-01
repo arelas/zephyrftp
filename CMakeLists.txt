@@ -267,6 +267,7 @@ qt_add_executable(verify-sftp-pubkey EXCLUDE_FROM_ALL
     src/ui/HostKeyVerifier.cpp
     src/backends/SftpBackend.cpp
     src/backends/RemoteBackend.h
+    src/transfer/FolderEnumerator.cpp
 )
 target_include_directories(verify-sftp-pubkey PRIVATE src)
 target_link_libraries(verify-sftp-pubkey PRIVATE

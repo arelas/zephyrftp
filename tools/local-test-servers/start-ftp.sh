@@ -10,6 +10,14 @@ PASSIVE_PORTS="${FTP_TEST_PASSIVE_PORTS:-2130-2140}"
 USER="ftpuser"
 PASSWORD="ftppass"
 
+# See start-sftp-pubkey.sh's matching comment: stop a prior instance
+# THIS script started before its pid file gets wiped below, or a re-run
+# orphans it holding the port.
+if [ -f "$SCRATCH/server.pid" ]; then
+    kill "$(cat "$SCRATCH/server.pid")" 2>/dev/null || true
+    sleep 0.2
+fi
+
 rm -rf "$SCRATCH"
 mkdir -p "$SCRATCH/root/uploads"
 echo "hello from the local ftp test server" > "$SCRATCH/root/sample.txt"

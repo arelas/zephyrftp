@@ -1,10 +1,14 @@
-// Exercises SftpBackend's PublicKey auth path against a REAL server —
-// not a mock, not just "the code compiles" — closing the "public-key
-// authentication has never been tried against a real key file" gap
-// flagged in ARCHITECTURE.md. Needs tools/local-test-servers/start-sftp-pubkey.sh
-// already running; this is NOT one of the ten fully-self-contained
-// EXCLUDE_FROM_ALL test targets (it has an external precondition those
-// deliberately don't), so it isn't part of that suite or CI.
+// Exercises SftpBackend against a REAL server — not a mock, not just
+// "the code compiles" — closing three gaps flagged in ARCHITECTURE.md's
+// Known gaps: (1) public-key auth had never been tried against a real
+// key file, (2) checkExists() — the destination-conflict-detection
+// primitive — was unverified against a real server, (3) so was
+// listDirectoryForEnumeration(), the primitive the whole-folder-transfer
+// recursive walk depends on. Needs
+// tools/local-test-servers/start-sftp-pubkey.sh already running; this is
+// NOT one of the ten fully-self-contained EXCLUDE_FROM_ALL test targets
+// (it has an external precondition those deliberately don't), so it
+// isn't part of that suite or CI.
 //
 // Run with:
 //   tools/local-test-servers/start-sftp-pubkey.sh
@@ -23,6 +27,7 @@
 #include "ui/HostKeyVerifier.h"
 #include "backends/SftpBackend.h"
 #include "backends/SftpCredentials.h"
+#include "transfer/FolderEnumerator.h"
 
 namespace {
 // The host-key TOFU prompt is a real, synchronous, blocking-queued
@@ -55,6 +60,13 @@ void autoAcceptHostKeyPrompt()
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
+    // No QMainWindow is ever shown here — the host-key trust dialog is
+    // the only top-level window this process ever displays, and Qt's
+    // default quitOnLastWindowClosed would auto-quit the instant it's
+    // closed (i.e. the moment the TOFU prompt is answered), well before
+    // connectToHost() actually finishes. Same real issue already caught
+    // and documented in conflict_resolution_test.cpp.
+    app.setQuitOnLastWindowClosed(false);
 
     bool allPass = true;
     auto check = [&](const char *label, bool condition) {
@@ -83,6 +95,20 @@ int main(int argc, char *argv[])
     bool uploadOk = false;
     bool downloadOk = false;
     QString failureReason;
+
+    // --- checkExists() phase state ---
+    bool existsFileChecked = false, existsFileResult = false, existsFileIsDir = true;
+    bool existsDirChecked = false, existsDirResult = false, existsDirIsDir = false;
+    bool existsMissingChecked = false, existsMissingResult = true;
+    constexpr int kExistsFileRequestId = 101;
+    constexpr int kExistsDirRequestId = 102;
+    constexpr int kExistsMissingRequestId = 103;
+
+    // --- FolderEnumerator phase state ---
+    bool enumerationDone = false;
+    bool enumerationOk = false;
+    QList<EnumeratedItem> enumeratedItems;
+    QString enumerationFailureReason;
 
     const QString localDownloadPath = "/tmp/zephyrftp_verify_sftp_download.txt";
     const QString localUploadSourcePath = "/tmp/zephyrftp_verify_sftp_upload_source.txt";
@@ -123,9 +149,22 @@ int main(int argc, char *argv[])
                                            Q_ARG(QString, localUploadSourcePath),
                                            Q_ARG(QString, "uploads/verify_roundtrip.txt"),
                                            Q_ARG(qint64, 0));
-            } else if (fileName == localUploadSourcePath) {
+            } else if (fileName == localUploadSourcePath && !uploadOk) {
                 uploadOk = true;
-                qApp->quit();
+                // Three checkExists() calls in flight at once, matched
+                // back by requestId in existsChecked below — exercises
+                // the same requestId-disambiguation contract
+                // TransferManager relies on for real, not just a single
+                // best-case call.
+                QMetaObject::invokeMethod(backend, "checkExists", Qt::QueuedConnection,
+                                           Q_ARG(QString, "sample.txt"),
+                                           Q_ARG(int, kExistsFileRequestId));
+                QMetaObject::invokeMethod(backend, "checkExists", Qt::QueuedConnection,
+                                           Q_ARG(QString, "testfolder"),
+                                           Q_ARG(int, kExistsDirRequestId));
+                QMetaObject::invokeMethod(backend, "checkExists", Qt::QueuedConnection,
+                                           Q_ARG(QString, "this_does_not_exist_at_all.xyz"),
+                                           Q_ARG(int, kExistsMissingRequestId));
             }
         });
 
@@ -133,6 +172,55 @@ int main(int argc, char *argv[])
         [&](const QString &fileName, const QString &reason) {
             failureReason = QStringLiteral("transfer of %1 failed: %2").arg(fileName, reason);
             qApp->quit();
+        });
+
+    FolderEnumerator *enumerator = nullptr;
+
+    QObject::connect(backend, &RemoteBackend::existsChecked, &app,
+        [&](const QString &, bool exists, bool isDir, int requestId) {
+            switch (requestId) {
+            case kExistsFileRequestId:
+                existsFileChecked = true;
+                existsFileResult = exists;
+                existsFileIsDir = isDir;
+                break;
+            case kExistsDirRequestId:
+                existsDirChecked = true;
+                existsDirResult = exists;
+                existsDirIsDir = isDir;
+                break;
+            case kExistsMissingRequestId:
+                existsMissingChecked = true;
+                existsMissingResult = exists;
+                break;
+            default:
+                return;
+            }
+
+            if (existsFileChecked && existsDirChecked && existsMissingChecked) {
+                // Real recursive walk against the real server — same
+                // class TransferManager::enqueueFolder() uses, same
+                // requestId-per-call contract as above, now exercising
+                // SftpBackend::listDirectoryForEnumeration() specifically
+                // (never listDirectory() — see RemoteBackend's own doc
+                // comment on why those two must stay separate).
+                enumerator = new FolderEnumerator(backend, "testfolder", "testfolder", &app);
+                QObject::connect(enumerator, &FolderEnumerator::finished, &app,
+                    [&](const QList<EnumeratedItem> &items) {
+                        enumerationDone = true;
+                        enumerationOk = true;
+                        enumeratedItems = items;
+                        qApp->quit();
+                    });
+                QObject::connect(enumerator, &FolderEnumerator::failed, &app,
+                    [&](const QString &reason) {
+                        enumerationDone = true;
+                        enumerationOk = false;
+                        enumerationFailureReason = reason;
+                        qApp->quit();
+                    });
+                enumerator->start();
+            }
         });
 
     thread->start();
@@ -172,6 +260,45 @@ int main(int argc, char *argv[])
     const QString roundtripContent = QString::fromUtf8(roundtrip.readAll());
     check("uploaded file genuinely landed server-side with correct content",
           roundtripContent == "uploaded via SftpBackend PublicKey auth verification harness\n");
+
+    // --- checkExists() against a real server ---
+    check("checkExists() on a real existing FILE reports exists=true, isDir=false",
+          existsFileChecked && existsFileResult && !existsFileIsDir);
+    check("checkExists() on a real existing DIRECTORY reports exists=true, isDir=true",
+          existsDirChecked && existsDirResult && existsDirIsDir);
+    check("checkExists() on a genuinely nonexistent path reports exists=false",
+          existsMissingChecked && !existsMissingResult);
+
+    // --- listDirectoryForEnumeration() / FolderEnumerator recursive walk
+    // against a real server, over a real multi-level tree with a
+    // genuinely empty leaf directory (same fixture shape
+    // folder-transfer-test.cpp uses against LocalBackend) ---
+    check("FolderEnumerator finished (not failed) walking a real remote folder",
+          enumerationDone && enumerationOk);
+    if (!enumerationOk && !enumerationFailureReason.isEmpty())
+        fprintf(stderr, "enumeration failure reason: %s\n", qPrintable(enumerationFailureReason));
+
+    int fileCount = 0, dirCount = 0;
+    bool sawEmptyDir = false, sawThreeLevelsDeep = false;
+    for (const EnumeratedItem &item : enumeratedItems) {
+        if (item.isDir) {
+            dirCount++;
+            if (item.relativePath == "testfolder/emptydir")
+                sawEmptyDir = true;
+        } else {
+            fileCount++;
+            if (item.relativePath == "testfolder/subdir2/nested/d.txt")
+                sawThreeLevelsDeep = true;
+        }
+    }
+    check("walk found exactly 4 real files (directories correctly excluded from that count)",
+          fileCount == 4);
+    check("walk found the file three levels deep (subdir2/nested/d.txt) — walk doesn't stop after one level",
+          sawThreeLevelsDeep);
+    check("walk included the genuinely empty leaf directory despite it contributing zero files",
+          sawEmptyDir);
+    check("walk found all 5 real directories (testfolder itself, subdir1, subdir2, subdir2/nested, emptydir)",
+          dirCount == 5);
 
     backend->deleteLater();
     thread->quit();

@@ -18,9 +18,32 @@ set -euo pipefail
 SCRATCH="${SFTP_TEST_SCRATCH:-/tmp/zephyrftp-local-test-servers/sftp}"
 PORT="${SFTP_TEST_PORT:-2222}"
 
+# Stop any instance THIS script previously started before wiping its pid
+# file below — otherwise a re-run while an old one is still alive leaves
+# it orphaned, silently holding the port (its own config/pid file just
+# vanished under it, but the process itself keeps running), and the new
+# sshd then fails to bind with a confusing "already in use" error that
+# doesn't obviously point back here.
+if [ -f "$SCRATCH/sshd.pid" ]; then
+    kill "$(cat "$SCRATCH/sshd.pid")" 2>/dev/null || true
+    sleep 0.2
+fi
+
 rm -rf "$SCRATCH"
 mkdir -p "$SCRATCH/root" "$SCRATCH/root/uploads"
 echo "hello from the local sftp test server" > "$SCRATCH/root/sample.txt"
+
+# A real nested tree — mirrors folder-transfer-test.cpp's local fixture
+# (multi-level nesting, a genuinely empty leaf directory) so the same
+# shape can be walked via listDirectoryForEnumeration()/FolderEnumerator
+# against a real server, not just LocalBackend.
+mkdir -p "$SCRATCH/root/testfolder/subdir1" \
+         "$SCRATCH/root/testfolder/subdir2/nested" \
+         "$SCRATCH/root/testfolder/emptydir"
+echo "hi from a" > "$SCRATCH/root/testfolder/a.txt"
+echo "hi from b" > "$SCRATCH/root/testfolder/subdir1/b.txt"
+echo "hi from c" > "$SCRATCH/root/testfolder/subdir1/c.txt"
+echo "hi from d" > "$SCRATCH/root/testfolder/subdir2/nested/d.txt"
 
 ssh-keygen -t ed25519 -f "$SCRATCH/host_key" -N "" -q -C "zephyrftp-test-host"
 ssh-keygen -t ed25519 -f "$SCRATCH/client_key" -N "" -q -C "zephyrftp-test-client"

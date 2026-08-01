@@ -2,16 +2,20 @@
 
 Throwaway local SFTP/FTP/FTPS servers for exercising `SftpBackend` and
 `FtpBackend` against something real — not a mock, not just "the code
-compiles." This is what closed the two gaps ARCHITECTURE.md used to list
-as "never verified": public-key SFTP auth, and FTP/FTPS touching a real
-server at all. See ARCHITECTURE.md's "Known gaps" entries for FTP/FTPS
-and public-key authentication for exactly what's now confirmed and what
-still isn't.
+compiles." This is what closed four gaps ARCHITECTURE.md used to list
+as "never verified": public-key SFTP auth, `checkExists()`,
+`listDirectoryForEnumeration()`/the recursive folder-transfer walk, and
+FTP/FTPS touching a real server at all. See ARCHITECTURE.md's "Known
+gaps" entries for FTP/FTPS and public-key authentication (which also
+covers the two SFTP primitives) for exactly what's now confirmed and
+what still isn't.
 
 Nothing here touches system config, needs root, or installs a system
 service — everything lives under `/tmp/zephyrftp-local-test-servers/`
 and runs as your own user on unprivileged ports. Safe to run repeatedly;
-each `start-*.sh` wipes and regenerates its own scratch directory first.
+each `start-*.sh` stops any instance it previously started (so re-running
+without stopping first doesn't orphan a process silently holding the
+port) before wiping and regenerating its own scratch directory.
 
 Dependencies (Fedora): `openssh-server` (for `sshd`/`ssh-keygen`, likely
 already installed), `python3-pyftpdlib`, `python3-pyOpenSSL`
