@@ -91,10 +91,33 @@ that way, it's flagged explicitly rather than left implied.
   (green/red/amber) appear specifically within the toolbar region, with
   zero blue there — correct, since blue is reserved for pane
   headers/selection and none of the three toolbar actions use it.
-  **Not verified this way:** the transfer queue's colored progress bars
-  and status icons — the screenshot was taken with an empty queue, so
-  only their code paths and unit-level logic are covered (via
-  `transfer_queue_test.cpp`), not their actual rendered appearance.
+  **The transfer queue's colored progress bars and status icons are now
+  confirmed too, with a real active transfer, not an empty queue.** A
+  throwaway screenshot harness (same `QWidget::grab()` technique, not
+  kept in the repo — see the project's established pattern of one-off
+  visual checks) drove a real `TransferManager`/`TransferQueueWidget`
+  through a real upload against the local SFTP test server
+  (`tools/local-test-servers/`), grabbing the widget mid-transfer and
+  again on completion. Confirmed genuinely correct: the green progress
+  bar chunk fills proportionally to real progress (~35% at the point
+  captured, matching the actual `bytesDone`/`bytesTotal` at that
+  moment), the upload direction icon and blue "Transferring" status
+  text render correctly, the Speed column shows a real live-sampled
+  rate ("152.0 MB/s"), and on completion the direction icon switches to
+  a green checkmark, the status text turns "Done," the bar fills fully,
+  and the Speed column correctly goes blank (not meaningful once
+  finished — matches `TransferItem`'s own doc comment on that field).
+  Getting a clean single-row screenshot at all surfaced two real bugs
+  in the throwaway harness itself, not the app: `FilePaneWidget::setBackend()`
+  fires its own automatic `connectToHost()` and an initial
+  home-directory listing, which raced ahead of the harness's own
+  sequencing and had to be gated on each pane's own `directoryListed`
+  for the specific path expected, not a guessed delay; and a stale
+  partial file left on the server by an earlier interrupted run
+  produced a real, correctly-detected destination conflict — a good
+  sign for `TransferManager`'s conflict detection, not a harness flaw,
+  once understood, but the immediate cause of an early confusing
+  result.
 
 - **Site Manager persists correctly, and the security property that
   matters most about it (no password ever hits disk) is verified, not
@@ -429,10 +452,9 @@ that way, it's flagged explicitly rather than left implied.
   authentication, and cancel/pause/resume below — this bullet is the
   short version.
 
-**Still not verified:** the transfer queue's progress-bar/status-icon
-rendering with a real active transfer (see above), and real window
-rendering on a real physical display (this development environment has
-no windowing system; only headless/offscreen runs have been checked).
+**Still not verified:** real window rendering on a real physical display
+(this development environment has no windowing system; only
+headless/offscreen runs have been checked).
 
 ## Architecture
 
