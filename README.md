@@ -148,9 +148,10 @@ component, and every known gap in detail.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+GPL-3.0-or-later — see [LICENSE](LICENSE).
 
 The vendored icon set (`resources/icons/`) is [Tabler Icons](https://tabler.io/icons),
-also MIT-licensed; its license text is included separately at
+MIT-licensed (a permissive license, fully compatible with being bundled
+into a GPL project); its license text is included separately at
 `resources/icons/LICENSE-tabler-icons.txt` since it's a distinct
-copyright holder from this project.
+copyright holder from this project, still under its own original terms.

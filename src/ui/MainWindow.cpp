@@ -238,7 +238,7 @@ void MainWindow::onAboutTriggered()
            "<a href=\"https://github.com/arelas/zephyrftp/blob/main/README.md#known-limitations\">"
            "Known limitations</a> in the README.</p>"
            "<p>A dual-pane SFTP client.</p>"
-           "<p>MIT licensed. &copy; Bad Cluster.<br>"
+           "<p>GPL-3.0-or-later licensed. &copy; Bad Cluster.<br>"
            "<a href=\"https://github.com/arelas/zephyrftp\">github.com/arelas/zephyrftp</a></p>")
             .arg(QStringLiteral(APP_VERSION)));
 }
