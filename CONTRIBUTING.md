@@ -260,10 +260,11 @@ enough to have shipped; see its own header comment for the reasoning.
 `ftp-parsing-test` needs no fixtures or environment setup at all — it
 calls `FtpBackend`'s two directory-listing parsers as pure functions
 against sample data, with no network I/O and no server. That narrowness
-is the point: it's the only part of the FTP/FTPS feature that *can* be
-verified here, and it deliberately claims nothing about the rest of the
-protocol. See its header comment and ARCHITECTURE.md's Known gaps for
-what's still unproven.
+is deliberate — it's not a live-server test and doesn't claim to be one.
+The rest of FTP/FTPS (and SFTP public-key auth) genuinely can be
+verified locally now, just not through this ten-target suite — see
+"Live-server verification" below. See this test's header comment and
+ARCHITECTURE.md's Known gaps for what's still unproven even after that.
 `protocol-selection-test` needs the same `XDG_CONFIG_HOME` isolation
 `site-store-test` does, and for the same reason: it exercises SiteStore
 against real files, so without the override it writes — and its
@@ -275,6 +276,37 @@ offscreen platform, not just `QCoreApplication`.
 All ten need to actually pass — not just build — before a change is
 considered done. See ARCHITECTURE.md's "Verification status" section for
 what each test actually proves and why it exists.
+
+## Live-server verification (SFTP public-key auth, FTP/FTPS)
+
+The ten targets above are deliberately self-contained — no external
+server needed. `SftpBackend`'s public-key auth path and all of
+`FtpBackend` used to be genuinely unverified as a result (see
+ARCHITECTURE.md's Known gaps): nothing in this environment could reach
+a real server that way. `tools/local-test-servers/` closes that —
+throwaway local `sshd`/FTP/FTPS servers (no root, no system config
+touched) plus two harnesses that drive the real backend classes against
+them:
+
+```
+tools/local-test-servers/start-sftp-pubkey.sh
+tools/local-test-servers/start-ftp.sh
+tools/local-test-servers/start-ftps.sh
+
+cmake --build build --target verify-sftp-pubkey verify-ftp-live
+QT_QPA_PLATFORM=offscreen SFTP_TEST_SCRATCH=/tmp/zephyrftp-local-test-servers/sftp ./build/verify-sftp-pubkey
+QT_QPA_PLATFORM=offscreen FTP_TEST_SCRATCH=/tmp/zephyrftp-local-test-servers/ftp ./build/verify-ftp-live
+
+tools/local-test-servers/stop-all.sh
+```
+
+See `tools/local-test-servers/README.md` for the full picture and
+ARCHITECTURE.md's Known gaps entries for FTP/FTPS and public-key
+authentication for exactly what's confirmed and what still isn't, even
+after this. These two targets are `EXCLUDE_FROM_ALL` like the main ten
+but intentionally **not** part of that suite or CI — an external-server
+precondition is a different category from "always runs the same way,"
+which is the whole point of the other ten.
 
 ## The core discipline this codebase runs on
 

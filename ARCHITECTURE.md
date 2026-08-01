@@ -410,12 +410,24 @@ that way, it's flagged explicitly rather than left implied.
   dialog's own height dropping from 292px to 266px, which is the kind of
   claim a structural assertion alone doesn't establish.
 
-**Still not verified:** public-key authentication (implemented, but no
-real key file has been tested against it yet — see Known gaps), the
-transfer queue's progress-bar/status-icon rendering with a real active
-transfer (see above), and real window rendering on a real physical
-display (this development environment has no windowing system; only
-headless/offscreen runs have been checked).
+- **Public-key SFTP auth and FTP/FTPS both now confirmed against real
+  local servers — closing two gaps this section used to list as
+  "still not verified."** `tools/local-test-servers/` spins up
+  throwaway local `sshd` (pubkey-only), FTP, and FTPS servers, and
+  `verify-sftp-pubkey`/`verify-ftp-live` (`EXCLUDE_FROM_ALL` CMake
+  targets, not part of the main ten-target suite since they need those
+  external servers already running) drive real `SftpBackend`/`FtpBackend`
+  instances against them — real connect, list, download, upload, with
+  content confirmed both from the client side and by reading files back
+  directly off the server's own disk. Full detail, including exactly
+  what remains unproven even after this, is in the "Known gaps" entries
+  for FTP/FTPS and public-key authentication below — this bullet is the
+  short version.
+
+**Still not verified:** the transfer queue's progress-bar/status-icon
+rendering with a real active transfer (see above), and real window
+rendering on a real physical display (this development environment has
+no windowing system; only headless/offscreen runs have been checked).
 
 ## Architecture
 
@@ -1041,22 +1053,32 @@ along the way — worth knowing about if it ever needs touching again.
 
 ## Known gaps (flagged, not fixed)
 
-- **FTP/FTPS is now selectable and wired end to end, but no part of it
-  has ever touched a real server.** The listing parsers
-  are directly tested (`ftp-parsing-test`) and the UI-to-backend wiring
-  is directly tested (`protocol-selection-test`), but the control
-  connection, PASV handling, the `AUTH TLS` upgrade, and actual
-  transfers have never been exercised against a live FTP or FTPS server
-  — none is reachable from this environment, the same limitation that
-  applies to every SFTP-specific path here. What the two tests together
-  establish is that picking FTP constructs an `FtpBackend` with the
-  right credentials and that its parsers handle realistic listing
-  output; what happens after the first socket write is entirely
-  unproven. Given that `LIST`'s format isn't standardized, expect real
-  servers to surface parser cases the sample data didn't. **This is now
-  the highest-value thing to verify in the whole project**, because it's
-  the only major feature where a user can reach a code path that has
-  never run against the thing it talks to.
+- **FTP/FTPS has now actually touched a real server — the control
+  connection, PASV data connections, real transfers, and the `AUTH TLS`
+  upgrade are all confirmed working, not just unit-tested in isolation.**
+  `tools/local-test-servers/start-ftp.sh`/`start-ftps.sh` spin up a real,
+  throwaway local FTP/FTPS server (pyftpdlib), and
+  `src/verify_ftp_live.cpp` (built via the `verify-ftp-live`
+  `EXCLUDE_FROM_ALL` CMake target — not part of the ten-target
+  self-contained suite, since it needs that external server already
+  running) drives a real `FtpBackend` against it: connects, lists a real
+  directory, downloads a real file and confirms its exact byte content,
+  uploads a file and confirms it genuinely landed server-side (read back
+  directly from the server's own disk, not just inferred from a
+  `transferFinished` signal), then separately connects to the FTPS
+  server and confirms the `AUTH TLS` handshake itself completes and
+  `FtpBackend` correctly rejects the server's self-signed certificate as
+  untrusted — the exact fail-closed behavior described below, now
+  proven for real rather than just reasoned about. Confirmed reliably
+  across multiple repeated runs, not a one-off. **Still not covered by
+  this**: the `LIST`-format fallback parser specifically (pyftpdlib
+  answers `MLSD`, the modern standardized format, which is what this
+  exercised; a real server that only speaks legacy `LIST` — the actual
+  fragility risk `ftp-parsing-test`'s comments already flag — hasn't
+  been tried), and a full authenticated transfer *over* FTPS (`FtpBackend`
+  has no override to trust a self-signed cert, by design, so an actual
+  encrypted data transfer needs a CA-trusted cert to test, which this
+  local setup deliberately doesn't provide).
 - **FTPS rejects untrusted certificates with no way to proceed, unlike
   SSH host keys, which get a real trust prompt.** `FtpBackend` never
   calls `ignoreSslErrors()` and never weakens `setPeerVerifyMode`, so
@@ -1097,14 +1119,29 @@ along the way — worth knowing about if it ever needs touching again.
   could delete far more than intended, with no undo) than what was
   actually asked for. Worth revisiting explicitly if "delete this folder
   and everything in it" turns out to be something people actually want.
-- **Public-key authentication is implemented but unverified.**
-  `ConnectionDialog` has a password/private-key toggle and
-  `SftpBackend::ensureSession()` branches accordingly, but no real key
-  file has been tested against it yet — only password auth has been
-  confirmed against a real server. It also assumes the conventional
-  `<privatekey>.pub` sibling file exists rather than deriving the public
-  key from the private key directly; untested if that assumption doesn't
-  hold for a given key.
+- **Public-key authentication is now confirmed against a real server,
+  including the specific assumption that used to be a real risk.**
+  `tools/local-test-servers/start-sftp-pubkey.sh` spins up a real,
+  throwaway local `sshd` (public-key-only, no system config touched —
+  see the script's own header comment) and `src/verify_sftp_pubkey.cpp`
+  (the `verify-sftp-pubkey` `EXCLUDE_FROM_ALL` target, same "not part of
+  the ten-target suite" reasoning as the FTP one above) drives a real
+  `SftpBackend` through `connectToHost()` with `SftpAuthMethod::PublicKey`
+  — including the real host-key trust-on-first-use prompt, driven the
+  same way `conflict_resolution_test.cpp` drives a live `QMessageBox` —
+  then a real `listDirectory()`, `downloadFile()` (byte content
+  confirmed), and `uploadFile()` (confirmed landed server-side by
+  reading the file back directly off the server's own disk). Confirmed
+  reliably across multiple repeated runs. This also directly exercises
+  the specific assumption flagged as a real risk before: the key used is
+  a conventionally-named `ssh-keygen`-generated ed25519 pair (the
+  private key path plus its `.pub` sibling), and `SftpBackend` correctly
+  derived the public key from that sibling file rather than needing it
+  supplied separately — confirmed, not assumed. **Not covered by this**:
+  any key type other than ed25519, a private key with a passphrase (the
+  test key has none), and a key where the conventional `.pub` sibling is
+  missing (the documented fallback path for that case remains
+  unverified).
 - **Remote-to-remote transfers are unsupported**, not silently dropped —
   `TransferManager::enqueue()` marks them `Failed` immediately with an
   explanatory message. Would need a stage-through-a-local-temp-file

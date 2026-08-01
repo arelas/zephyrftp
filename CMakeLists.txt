@@ -257,3 +257,26 @@ qt_add_executable(protocol-selection-test EXCLUDE_FROM_ALL
 )
 target_include_directories(protocol-selection-test PRIVATE src)
 target_link_libraries(protocol-selection-test PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
+
+# --- Live-server verification harnesses (NOT part of the ten-target
+# self-contained test suite above — these need an external server
+# already running, started via tools/local-test-servers/*.sh; see each
+# .cpp's own header comment and tools/local-test-servers/README.md) ---
+qt_add_executable(verify-sftp-pubkey EXCLUDE_FROM_ALL
+    src/verify_sftp_pubkey.cpp
+    src/ui/HostKeyVerifier.cpp
+    src/backends/SftpBackend.cpp
+    src/backends/RemoteBackend.h
+)
+target_include_directories(verify-sftp-pubkey PRIVATE src)
+target_link_libraries(verify-sftp-pubkey PRIVATE
+    Qt6::Widgets Qt6::Network Qt6::Concurrent ${LIBSSH2_TARGET}
+)
+
+qt_add_executable(verify-ftp-live EXCLUDE_FROM_ALL
+    src/verify_ftp_live.cpp
+    src/backends/FtpBackend.cpp
+    src/backends/RemoteBackend.h
+)
+target_include_directories(verify-ftp-live PRIVATE src)
+target_link_libraries(verify-ftp-live PRIVATE Qt6::Core Qt6::Network)
