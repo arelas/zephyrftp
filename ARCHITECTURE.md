@@ -940,35 +940,83 @@ above.
   directly — see `FilePaneWidget::iconForEntry()` and
   `TransferQueueWidget::statusIcon()` for where those choices live in code.
 
-## Windows builds (CI)
+## Windows and Linux builds (CI)
 
-`.github/workflows/windows-build.yml` builds this on GitHub's
-`windows-latest` runner: MSVC + Qt6 (via `jurplel/install-qt-action`) +
-libssh2 (via vcpkg, with `actions/cache` on the `installed/` output so
-only the first run pays the ~8.5 minute openssl/zlib/libssh2 build) +
-Ninja, then `windeployqt` plus a wildcard copy of vcpkg's own DLLs to
-bundle everything the exe needs. Runs on every push to `main` and on
-`v*` tags; tag pushes also attach the build as a zipped GitHub Release
-asset — marked `prerelease: true` (this project is pre-1.0, see
-`CHANGELOG.md`), named from the tag itself (`ZephyrFTP ${{ github.ref_name }}`,
-not hardcoded, so it can't silently go stale), with
-`generate_release_notes: true` for the release page's own summary
-(GitHub's own commit/PR-based notes, not an attempt to slice a specific
-section out of `CHANGELOG.md` via a PowerShell step — deliberately kept
-simple given this project's track record of Windows-CI-specific
-surprises; `CHANGELOG.md` stays the separate, permanent, human-curated
-record in the repo). **Still genuinely untested end-to-end** — the YAML
-itself was validated by actually parsing it (confirmed the release
-step's `with:` block matches what was intended, not just eyeballed),
-but no tag has actually been pushed and run through this workflow for
-real yet.
+`.github/workflows/build.yml` produces both platforms' release binaries
+and, on a `v*` tag, attaches both to the same GitHub Release. Both build
+jobs actually run the full ten-target test suite as part of the job, not
+just link it — matching CONTRIBUTING.md's "all ten need to actually
+pass" rule for CI too, not only local development.
 
-**Confirmed working end-to-end**, not just "builds without error": the
-resulting `.exe` has actually been run on real Windows, launches as a
-proper GUI app (no trailing console window), and connects to a real SFTP
-server successfully. Getting here surfaced and fixed several real,
-non-obvious bugs along the way — worth knowing about if this pipeline
-ever needs touching again:
+**`build-windows`** cross-compiles with MinGW from a `fedora:44`
+container on `ubuntu-latest`, rather than building natively on
+`windows-latest` — no `cl.exe`, no Qt-for-Windows download, no vcpkg.
+This replaced an earlier MSVC+vcpkg pipeline entirely (its own real
+incidents are kept below as history, since the failure modes of
+Windows-targeting CI are worth knowing about regardless of which
+toolchain produces the `.exe`). `tools/collect-win-runtime.sh` collects
+the runtime DLLs and Qt plugins — there's no windeployqt for this
+toolchain — and the test suite runs for real under `wine` (wrapped in
+`xvfb-run`; see below). Full local-reproduction details, including every
+gotcha below, are in CONTRIBUTING.md's "Cross-compiling for Windows
+locally" section.
+
+**`build-linux`** is a plain native build on `ubuntu-latest` — same
+dependencies CONTRIBUTING.md documents for local Linux development
+(`cmake build-essential qt6-base-dev qt6-svg-dev libssh2-1-dev
+pkg-config`). Ships just the binary: a deliberate choice to match this
+project's existing "no bundled libraries" approach elsewhere
+(`SftpBackend` wraps libssh2 directly, `FtpBackend` is hand-rolled
+rather than pulling in libcurl) rather than building a portable
+self-contained artifact like an AppImage. The tradeoff: it only runs on
+a machine with matching Qt6/libssh2 packages already installed — worth
+revisiting if that stops being the right call. No wine/Xvfb needed here
+at all; these are native binaries, and Qt's own `QT_QPA_PLATFORM=offscreen`
+needs no display of any kind on its own turf (confirmed directly in a
+genuinely headless container with no X/Wayland session — unlike wine's
+situation in the Windows job, described below).
+
+**Confirmed working end-to-end on GitHub's own runners**, not just
+locally: both build jobs pass, the full test suite passes on both
+platforms, and a real tagged release (`v0.2.0`) exercised the `release`
+job for real — a GitHub Release with both `zephyrftp-windows-x64.zip`
+and `zephyrftp-linux-x64.tar.gz` attached. The Windows `.exe` specifically
+has also been run on real Windows hardware directly (not just under
+wine), launches as a proper GUI app, and connects to a real SFTP server.
+
+Every stage of this pipeline surfaced at least one real, non-obvious bug
+along the way — worth knowing about if it ever needs touching again.
+**Current MinGW/Linux-CI era:**
+- libssh2 discovery is toolchain-specific, not just OS-specific: the
+  `WIN32` CMake branch assumed vcpkg's CMake config package, which
+  doesn't exist in the mingw64 sysroot (it ships a `.pc` file like
+  Linux); the check is actually `WIN32 AND NOT MINGW`
+- `smoke_test.cpp` never propagated failure to its exit code, unlike
+  every sibling test — invisible when reading `qDebug()` PASS/FAIL text
+  directly, but a real gap once `qDebug()` output turned out not to
+  reach the terminal under wine at all (see below) and exit code became
+  the only signal
+- `site_store_test.cpp` left a `QFile` handle open across a later
+  delete of the same path — POSIX `unlink()` tolerates that, Windows
+  `DeleteFile` doesn't, so the empty-store check genuinely failed under
+  wine until the handle was closed explicitly
+- wine needs a real, even virtual, X display for its own internal
+  window management, independent of Qt's `QT_QPA_PLATFORM=offscreen` —
+  every test driving a real `QMessageBox` failed with `CreateWindowEx
+  failed (Invalid window handle.)` in a genuinely headless container
+  until every `wine` invocation was wrapped in `xvfb-run`
+- GitHub Actions sets `$HOME=/github/home` for container jobs, and wine
+  refuses to create its default `~/.wine` there (an ownership check
+  failure, the same category of issue as git's "dubious ownership") —
+  never reproduced locally under `podman` (plain root, normal `$HOME`),
+  only caught on GitHub's own runners; fixed by pinning `WINEPREFIX` to
+  a scratch directory the job creates and owns outright
+- `pkg-config` isn't pulled in by `build-essential` on a clean Ubuntu
+  install — CMake's libssh2 discovery needs it, and this only surfaced
+  in an actual from-scratch container build, not on a desktop machine
+  that already happened to have it
+
+**Earlier MSVC+vcpkg era** (the pipeline this replaced):
 - Qt version/arch mismatch (`win64_msvc2022_64` requires Qt >= 6.8)
 - `run-vcpkg` needs a full 40-character commit SHA, not a tag name
 - A stale vcpkg commit pin 404'd on a pruned MSYS2 mirror artifact

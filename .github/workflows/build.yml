@@ -1,4 +1,4 @@
-name: Windows Build
+name: Build
 
 on:
   push:
@@ -164,13 +164,112 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-  # Only runs on version tags (v1.0.0 etc.) — attaches the same build as a
-  # zipped asset on a GitHub Release, matching the Phat32 pipeline pattern.
-  # Plain ubuntu-latest now (no PowerShell needed) — this job only zips an
-  # already-built artifact and talks to the GitHub Releases API, neither
-  # of which has ever depended on the build job's OS.
+  build-linux:
+    runs-on: ubuntu-latest
+    # Native build, not a container — no cross-compile toolchain needed,
+    # ubuntu-latest already has everything but the app's own deps. Package
+    # names below match CONTRIBUTING.md's Debian/Ubuntu build instructions
+    # exactly (`pkg-config` included there too — CMake's libssh2 discovery
+    # needs it and it isn't pulled in by build-essential on a clean
+    # install, confirmed directly after a first attempt failed on
+    # `Could NOT find PkgConfig` in an actual clean-container dry run, not
+    # assumed from a desktop machine that already happened to have it).
+    steps:
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            cmake build-essential qt6-base-dev qt6-svg-dev libssh2-1-dev pkg-config
+
+      - uses: actions/checkout@v7
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build app
+        run: cmake --build build --target zephyrftp -- -j$(nproc)
+
+      - name: Build test suite
+        run: >
+          cmake --build build --target
+          smoke-test transfer-queue-test site-store-test navigation-test
+          transfer-pause-test file-operations-test folder-transfer-test
+          conflict-resolution-test ftp-parsing-test protocol-selection-test
+          -- -j$(nproc)
+
+      # Runs directly, no wine/xvfb — these are native Linux binaries, and
+      # confirmed directly in a genuinely headless container (no X/Wayland
+      # session at all, matching what a GitHub-hosted runner actually is)
+      # that Qt's own QT_QPA_PLATFORM=offscreen needs no display of any
+      # kind on its own turf, unlike wine's situation in the Windows job
+      # above. Same fixture setup and env vars as CONTRIBUTING.md's Linux
+      # commands, verbatim.
+      - name: Run test suite
+        run: |
+          set -e
+          cd build
+          export QT_QPA_PLATFORM=offscreen
+
+          ./smoke-test
+
+          rm -rf /tmp/transfer_test
+          mkdir -p /tmp/transfer_test/src_dir /tmp/transfer_test/dst_dir
+          head -c 500000 /dev/urandom > /tmp/transfer_test/src_dir/testfile.bin
+          ./transfer-queue-test
+
+          rm -rf /tmp/zephyrftp_test_config
+          XDG_CONFIG_HOME=/tmp/zephyrftp_test_config ./site-store-test
+
+          ./navigation-test
+          ./transfer-pause-test
+          ./file-operations-test
+
+          rm -rf /tmp/folder_transfer_test
+          mkdir -p /tmp/folder_transfer_test/src/myfolder/subdir1 \
+                   /tmp/folder_transfer_test/src/myfolder/subdir2/nested \
+                   /tmp/folder_transfer_test/src/myfolder/emptydir \
+                   /tmp/folder_transfer_test/dst
+          echo "hi from a" > /tmp/folder_transfer_test/src/myfolder/a.txt
+          echo "hi from b" > /tmp/folder_transfer_test/src/myfolder/subdir1/b.txt
+          echo "hi from c" > /tmp/folder_transfer_test/src/myfolder/subdir1/c.txt
+          echo "hi from d" > /tmp/folder_transfer_test/src/myfolder/subdir2/nested/d.txt
+          ./folder-transfer-test
+
+          ./conflict-resolution-test
+          ./ftp-parsing-test
+
+          rm -rf /tmp/zephyrftp_proto_config
+          XDG_CONFIG_HOME=/tmp/zephyrftp_proto_config ./protocol-selection-test
+
+      # Just the binary — this is the "plain tarball" approach, not a
+      # bundled/portable build: it dynamically links against system
+      # Qt6/libssh2 (confirmed via ldd), same as CONTRIBUTING.md's local
+      # build instructions produce, so it only runs on a machine with
+      # matching packages already installed. Chosen deliberately over an
+      # AppImage for now to match this project's existing "no bundled
+      # libraries" approach elsewhere (SftpBackend on libssh2 directly,
+      # hand-rolled FTP instead of libcurl) — revisit if that tradeoff
+      # stops being the right one.
+      - name: Assemble deployable folder
+        run: |
+          mkdir dist
+          cp build/zephyrftp dist/
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: zephyrftp-linux-x64
+          path: dist/
+          if-no-files-found: error
+
+  # Only runs on version tags (v1.0.0 etc.) — attaches both platform
+  # builds as zipped/tarred assets on a GitHub Release, matching the
+  # Phat32 pipeline pattern. Plain ubuntu-latest (no PowerShell needed) —
+  # this job only packages already-built artifacts and talks to the
+  # GitHub Releases API, neither of which has ever depended on either
+  # build job's OS.
   release:
-    needs: build-windows
+    needs: [build-windows, build-linux]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     # Confirmed necessary directly from a real failed run, not
@@ -180,23 +279,33 @@ jobs:
     # contents:write — the 403 ("Resource not accessible by
     # integration") was exactly that permission gap, not a problem with
     # the release step's own configuration. Scoped to only this job
-    # (not the whole workflow) — build-windows never touches the
-    # Releases API and doesn't need it.
+    # (not the whole workflow) — the build jobs never touch the
+    # Releases API and don't need it.
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v8
         with:
           name: zephyrftp-windows-x64
-          path: dist
+          path: dist-windows
 
-      - name: Zip release asset
-        run: cd dist && zip -r ../zephyrftp-windows-x64.zip . && cd ..
+      - uses: actions/download-artifact@v8
+        with:
+          name: zephyrftp-linux-x64
+          path: dist-linux
+
+      - name: Package release assets
+        run: |
+          cd dist-windows && zip -r ../zephyrftp-windows-x64.zip . && cd ..
+          chmod +x dist-linux/zephyrftp
+          tar -czf zephyrftp-linux-x64.tar.gz -C dist-linux zephyrftp
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          files: zephyrftp-windows-x64.zip
+          files: |
+            zephyrftp-windows-x64.zip
+            zephyrftp-linux-x64.tar.gz
           # Derived from the tag itself (e.g. "v0.1.0") rather than
           # hardcoded — avoids a name that silently goes stale the next
           # time this fires on a different tag.

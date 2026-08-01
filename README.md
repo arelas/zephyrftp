@@ -4,11 +4,11 @@ A dual-pane SFTP client for Windows and Linux — browse your local files
 and a remote server side by side, then drag, drop, or double-click to
 move things between them. Think FileZilla or WinSCP, built fresh in Qt6.
 
-**Current version: 0.1.0 — alpha.** Real functionality, but real gaps
+**Current version: 0.2.0 — alpha.** Real functionality, but real gaps
 too — see [Known limitations](#known-limitations) before relying on
 this for anything you can't afford to get wrong. [Releases](https://github.com/arelas/zephyrftp/releases)
-has downloadable Windows builds; [CHANGELOG.md](CHANGELOG.md) tracks
-what's changed between them.
+has downloadable Windows and Linux builds; [CHANGELOG.md](CHANGELOG.md)
+tracks what's changed between them.
 
 ## Features
 
@@ -60,16 +60,21 @@ what's changed between them.
 
 ## Download
 
-Pre-built Windows binaries aren't published as a formal, versioned
-release yet — until then, grab the latest successful build from the
-[Actions tab](https://github.com/arelas/zephyrftp/actions/workflows/windows-build.yml):
-click the most recent green run, then download the `zephyrftp-windows-x64`
-artifact at the bottom of the page. It's a ready-to-run folder — no
-installer, just unzip it and launch `zephyrftp.exe`.
+Grab the latest build from [Releases](https://github.com/arelas/zephyrftp/releases):
 
-Linux users: there's no pre-built binary yet — see
-[CONTRIBUTING.md](CONTRIBUTING.md) for building from source, which is
-quick on any recent distro.
+- **Windows**: `zephyrftp-windows-x64.zip` — unzip it, no installer, just
+  launch `zephyrftp.exe`.
+- **Linux**: `zephyrftp-linux-x64.tar.gz` — extracts to a single
+  `zephyrftp` binary. Dynamically linked against system Qt6/libssh2
+  (not a bundled/portable build), so it needs those already installed —
+  the exact packages CONTRIBUTING.md's build instructions use. If your
+  distro doesn't have matching versions, build from source instead (see
+  [CONTRIBUTING.md](CONTRIBUTING.md)), which is quick on any recent distro.
+
+Every release is built and tested (the full automated test suite, not
+just "it compiled") by [`.github/workflows/build.yml`](.github/workflows/build.yml)
+before being attached — see ARCHITECTURE.md's "Windows and Linux builds
+(CI)" section for exactly what that verifies.
 
 ## Getting started
 

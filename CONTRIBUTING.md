@@ -13,25 +13,35 @@ cmake .. -DCMAKE_BUILD_TYPE=Debug
 make -j$(nproc)
 ```
 
-Dependencies (Debian/Ubuntu): `cmake build-essential qt6-base-dev qt6-svg-dev libssh2-1-dev`
+Dependencies (Debian/Ubuntu): `cmake build-essential qt6-base-dev
+qt6-svg-dev libssh2-1-dev pkg-config` — `pkg-config` specifically isn't
+pulled in by `build-essential` on a clean install (CMake's libssh2
+discovery needs it); confirmed directly after a from-scratch container
+build failed on `Could NOT find PkgConfig`, not assumed from a desktop
+machine that already happened to have it installed.
 
-Windows builds run via GitHub Actions (`.github/workflows/windows-build.yml`)
-— see ARCHITECTURE.md's "Windows builds (CI)" section for the pipeline's
-older MSVC+vcpkg history and the real, sometimes non-obvious bugs that
-surfaced along the way. As of this writing, that workflow has been
-migrated off MSVC+vcpkg entirely onto the same MinGW cross-compilation
-path documented below — it runs on `ubuntu-latest` inside a `fedora:44`
-container, builds and runs the full test suite the same way a local
-cross-compile does (see "Local verification: `wine`" below — CI wraps
-every test run in `xvfb-run` for the same reason described there), and
-uses `tools/collect-win-runtime.sh` for DLL collection instead of
-windeployqt. The workflow file itself was validated by actually running
-every one of its steps inside a real `podman run fedora:44` container
-before being committed, not just reasoned through — but the real
-GitHub-hosted execution (network access, package availability on
-GitHub's runners, the container/checkout interaction specifically) is
-still unverified until it runs for real; worth triggering once via
-`workflow_dispatch` before relying on it for an actual tagged release.
+Both Windows and Linux release builds run via GitHub Actions
+(`.github/workflows/build.yml`) — see ARCHITECTURE.md's "Windows and
+Linux builds (CI)" section for the full pipeline history, including the
+Windows job's older MSVC+vcpkg era and the real, sometimes non-obvious
+bugs that surfaced getting each stage working. The Windows job (`build-windows`)
+runs on `ubuntu-latest` inside a `fedora:44` container and cross-compiles
+with MinGW — the same path documented below, down to wrapping every wine
+test run in `xvfb-run` (see "Local verification: `wine`" below for why).
+The Linux job (`build-linux`) is a plain native build on `ubuntu-latest`
+using the exact dependency line above, ships just the binary (dynamically
+linked against system Qt6/libssh2, not a bundled/portable build), and
+needs no wine/Xvfb at all since it's running native binaries directly.
+Both jobs actually run the full ten-target test suite, not just link it.
+On a `v*` tag, the `release` job packages both (`zephyrftp-windows-x64.zip`,
+`zephyrftp-linux-x64.tar.gz`) onto the same GitHub Release. All of this
+has been confirmed on GitHub's own runners, not just locally — including
+a real tagged release (see the `v0.2.0` release) that exercised the
+`release` job for real, which is what caught the one thing local `podman`
+testing couldn't: GitHub Actions sets `$HOME=/github/home` for container
+jobs, and wine refuses to create its default `~/.wine` there (ownership
+check failure) — fixed by pinning `WINEPREFIX` to a scratch dir the job
+creates and owns outright.
 
 ### Cross-compiling for Windows locally (MinGW, from Fedora)
 
@@ -315,7 +325,7 @@ Two specific habits that follow from all this:
   more than its share of real failures — Windows PowerShell quoting
   quirks, vcpkg pinning, a `GITHUB_TOKEN` permissions gap that 403'd on
   release creation. Run it through a parser
-  (`python3 -c "import yaml,sys; yaml.safe_load(open('.github/workflows/windows-build.yml'))"`)
+  (`python3 -c "import yaml,sys; yaml.safe_load(open('.github/workflows/build.yml'))"`)
   before calling a change done, and when there's a choice between two
   approaches, prefer the one with fewer new failure modes over the one
   that's more clever.
