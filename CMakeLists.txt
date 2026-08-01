@@ -274,6 +274,17 @@ target_link_libraries(verify-sftp-pubkey PRIVATE
     Qt6::Widgets Qt6::Network Qt6::Concurrent ${LIBSSH2_TARGET}
 )
 
+qt_add_executable(verify-sftp-pause-cancel EXCLUDE_FROM_ALL
+    src/verify_sftp_pause_cancel.cpp
+    src/ui/HostKeyVerifier.cpp
+    src/backends/SftpBackend.cpp
+    src/backends/RemoteBackend.h
+)
+target_include_directories(verify-sftp-pause-cancel PRIVATE src)
+target_link_libraries(verify-sftp-pause-cancel PRIVATE
+    Qt6::Widgets Qt6::Network Qt6::Concurrent ${LIBSSH2_TARGET}
+)
+
 qt_add_executable(verify-ftp-live EXCLUDE_FROM_ALL
     src/verify_ftp_live.cpp
     src/backends/FtpBackend.cpp

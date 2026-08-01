@@ -30,7 +30,7 @@ if [ -f "$SCRATCH/sshd.pid" ]; then
 fi
 
 rm -rf "$SCRATCH"
-mkdir -p "$SCRATCH/root" "$SCRATCH/root/uploads"
+mkdir -p "$SCRATCH/root" "$SCRATCH/root/uploads" "$SCRATCH/root/pause_test"
 echo "hello from the local sftp test server" > "$SCRATCH/root/sample.txt"
 
 # A real nested tree — mirrors folder-transfer-test.cpp's local fixture

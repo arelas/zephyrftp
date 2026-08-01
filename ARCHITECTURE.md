@@ -419,9 +419,14 @@ that way, it's flagged explicitly rather than left implied.
   external servers already running) drive real `SftpBackend`/`FtpBackend`
   instances against them — real connect, list, download, upload, with
   content confirmed both from the client side and by reading files back
-  directly off the server's own disk. Full detail, including exactly
-  what remains unproven even after this, is in the "Known gaps" entries
-  for FTP/FTPS and public-key authentication below — this bullet is the
+  directly off the server's own disk. The same local SFTP server also
+  now backs a real, deterministic cancel/pause/resume verification
+  (`verify-sftp-pause-cancel`) — a genuinely interrupted, genuinely
+  resumed, byte-for-byte-correct transfer in both directions against a
+  live server, not just `TransferManager`'s orchestration around a fake
+  backend. Full detail, including exactly what remains unproven even
+  after this, is in the "Known gaps" entries for FTP/FTPS, public-key
+  authentication, and cancel/pause/resume below — this bullet is the
   short version.
 
 **Still not verified:** the transfer queue's progress-bar/status-icon
@@ -1166,22 +1171,41 @@ along the way — worth knowing about if it ever needs touching again.
   first-ever connection. **Not covered by this**: an enumeration failure
   partway through a walk against a real server (permission denied on a
   subdirectory, say) — only the successful-walk path has been tried.
-- **Cancel and pause/resume are implemented but only automated-tested
-  against a fake backend and against `LocalBackend`, where both are a
-  documented no-op** (`QFile::copy()` can't be interrupted mid-call).
-  `SftpBackend`'s actual mid-transfer interruption — the cancel and pause
-  flags checked inside the libssh2 read/write loops — and its real
-  byte-offset resume logic (the `libssh2_sftp_seek64()` calls, the
-  local-file clamping/trimming against what's actually on disk) compile
-  and follow patterns proven correct elsewhere in this codebase, but
-  none of it has a real-server test confirming it actually works —
-  `transfer-pause-test` verifies `TransferManager`'s orchestration
-  (status transitions, offset preservation, resume-not-restart) using a
-  fake backend built for exactly that purpose, which is a real and
-  useful thing to have verified, but is a different claim than "resuming
-  a paused SFTP upload actually picks up where it left off on a live
-  server." Needs a slow-enough real transfer, paused and resumed by
-  hand, to verify that specific claim.
+- **`SftpBackend`'s real mid-transfer cancel and pause/resume are now
+  confirmed against a real server, in both directions.**
+  `verify_sftp_pause_cancel.cpp` (the `verify-sftp-pause-cancel`
+  `EXCLUDE_FROM_ALL` target, same "not part of the ten-target suite"
+  reasoning as the other live-server harnesses) drives a real
+  `SftpBackend` through a genuinely large (300MB) upload/download
+  against `tools/local-test-servers/start-sftp-pubkey.sh`'s server,
+  triggering `requestCancel()`/`requestPause()` — called as plain direct
+  method calls, per `RemoteBackend`'s own thread-safety contract, not a
+  queued slot — the instant real progress is seen (after exactly one
+  480000-byte chunk, confirmed via the actual `bytesDone` reported, not
+  assumed), a fast and deterministic trigger rather than a wall-clock
+  guess. Confirms, for real: cancelling produces `transferFailed` with
+  reason `"Cancelled"` and leaves a genuinely incomplete partial file on
+  the server (smaller than the source, read directly off its disk);
+  pausing produces `transferPaused` with a real nonzero `bytesDone`;
+  resuming (`uploadFile()`/`downloadFile()` called again with that exact
+  offset — the same contract `TransferManager` uses) picks up at or
+  above that offset rather than restarting from zero; and the fully
+  resumed transfer's final content matches the source byte-for-byte, in
+  **both** directions (upload pause/resume, then download pause/resume
+  of the same file) — not just inferred from a `transferFinished`
+  signal. Confirmed reliably across multiple runs, including a
+  from-scratch first-ever connection. This is what
+  `transfer-pause-test`'s fake-backend orchestration test always
+  correctly flagged as a different, narrower claim than "resuming a
+  paused SFTP transfer actually picks up where it left off on a live
+  server" — that broader claim is now proven too, not just the
+  `TransferManager`-level orchestration around it. **Not covered by
+  this**: cancel/pause of a transfer that's already very close to
+  finishing (a race this harness deliberately avoids by design, since
+  the whole point is triggering deterministically early), and
+  pause/resume surviving a full app restart (the resume offset is only
+  ever kept in memory between pause and resume within a single run, in
+  both the real app and this harness).
 - **The remaining ~1.6-1.8x gap to the ~40MB/s comparison
   (FileZilla/Termius/SMB) is unexplored, not just unverified.** Three
   rounds of evidence-based tuning (pipelining, buffer alignment to
