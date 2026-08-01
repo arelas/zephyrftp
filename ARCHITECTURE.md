@@ -91,6 +91,14 @@ that way, it's flagged explicitly rather than left implied.
   (green/red/amber) appear specifically within the toolbar region, with
   zero blue there — correct, since blue is reserved for pane
   headers/selection and none of the three toolbar actions use it.
+  **This specific claim describes the toolbar as it was at the time** —
+  Sites/Connect/Disconnect were three separate always-visible buttons
+  then; they're now one "Connection" dropdown (see `MainWindow` below),
+  so red (Disconnect) only appears once that menu is actually open, not
+  in the toolbar's resting state. Re-confirmed visually after that
+  change: the collapsed button renders correctly (green icon, visible
+  dropdown arrow, legible "Connection" label against the dark
+  background).
   **Not verified this way:** the transfer queue's colored progress bars
   and status icons — the screenshot was taken with an empty queue, so
   only their code paths and unit-level logic are covered (via
@@ -844,12 +852,16 @@ headless/offscreen runs have been checked).
 - `MainWindow` — two `FilePaneWidget`s in a `QSplitter`, plus a
   `QDockWidget` at the bottom holding the transfer queue. Left pane is
   always `LocalBackend`. Right pane starts on `LocalBackend`; the
-  toolbar's "Connect..." action (via `ConnectionDialog`) and "Sites..."
-  action (via `SiteManagerDialog`) both funnel into a single
+  toolbar's "Connection" dropdown (a `QToolButton` in `InstantPopup`
+  mode, not three separate buttons — Sites/Connect/Disconnect used to be
+  laid out that way, consolidated into one menu since there's no single
+  obvious "default" action among the three to justify a split button)
+  holds "Connect..." (via `ConnectionDialog`) and "Sites..." (via
+  `SiteManagerDialog`), both funneling into a single
   `startConnection(const SftpCredentials &)` — spins up an `SftpBackend`
   + worker `QThread` and hands it to the right pane — rather than
-  duplicating that setup in two places. "Disconnect" swaps back to
-  `LocalBackend`. Double-clicking a file in either pane calls
+  duplicating that setup in two places. "Disconnect" (same menu) swaps
+  back to `LocalBackend`. Double-clicking a file in either pane calls
   `TransferManager::enqueue()` with that pane as source and the other as
   destination; `TransferManager::transferSucceeded` triggers a refresh of
   both panes' listings. A minimal `QMenuBar` (`buildMenuBar()`) holds a

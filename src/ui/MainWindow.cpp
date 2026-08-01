@@ -24,6 +24,7 @@
 
 #include <QSplitter>
 #include <QToolBar>
+#include <QToolButton>
 #include <QMenuBar>
 #include <QMenu>
 #include <QStatusBar>
@@ -93,20 +94,43 @@ void MainWindow::buildToolbar()
     // (destructive), refresh=amber (in this map's "caution/in-progress"
     // bucket, since ICON-MAP explicitly lists Refresh as amber even
     // though it's not destructive — a quirk of the source spec, not a
-    // typo introduced here). Sites comes first in the toolbar — it's the
-    // primary way most people will actually connect, once they've saved
-    // a site or two; Connect stays right after it for one-off connections.
-    auto *sitesAction = toolbar->addAction(
+    // typo introduced here).
+    //
+    // Sites/Connect/Disconnect used to be three separate toolbar buttons;
+    // consolidated into one "Connection" dropdown so the toolbar reads as
+    // one decision ("how do I connect / disconnect") instead of three
+    // competing buttons. InstantPopup rather than MenuButtonPopup — with
+    // three genuinely different actions and no single obvious "default"
+    // one to fire on a bare click, a split button would just be a
+    // confusing extra click target. Sites is listed first in the menu —
+    // it's the primary way most people will actually connect, once
+    // they've saved a site or two; Connect stays right after it for
+    // one-off connections, matching the priority the old toolbar order
+    // already established.
+    auto *connectionButton = new QToolButton(toolbar);
+    connectionButton->setIcon(IconTheme::tintedIcon(":/icons/plug.svg", IconTheme::Green));
+    connectionButton->setText(tr("Connection"));
+    connectionButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    connectionButton->setPopupMode(QToolButton::InstantPopup);
+
+    auto *connectionMenu = new QMenu(connectionButton);
+
+    auto *sitesAction = connectionMenu->addAction(
         IconTheme::tintedIcon(":/icons/server-cog.svg", IconTheme::Blue), tr("Sites..."));
     connect(sitesAction, &QAction::triggered, this, &MainWindow::onSiteManagerTriggered);
 
-    auto *connectAction = toolbar->addAction(
+    auto *connectAction = connectionMenu->addAction(
         IconTheme::tintedIcon(":/icons/plug.svg", IconTheme::Green), tr("Connect..."));
     connect(connectAction, &QAction::triggered, this, &MainWindow::onConnectTriggered);
 
-    auto *disconnectAction = toolbar->addAction(
+    connectionMenu->addSeparator();
+
+    auto *disconnectAction = connectionMenu->addAction(
         IconTheme::tintedIcon(":/icons/plug-connected-x.svg", IconTheme::Red), tr("Disconnect"));
     connect(disconnectAction, &QAction::triggered, this, &MainWindow::onDisconnectTriggered);
+
+    connectionButton->setMenu(connectionMenu);
+    toolbar->addWidget(connectionButton);
 
     toolbar->addSeparator();
 
