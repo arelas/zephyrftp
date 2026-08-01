@@ -8,6 +8,27 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.2.3] — FTP/FTPS and public-key SFTP auth verified against a real server
+
+### Added
+
+- **Local throwaway SFTP/FTP/FTPS test servers** (`tools/local-test-servers/`)
+  and harnesses that drive the real backend code against them — closing
+  four gaps that were previously untested against any real server:
+  SFTP public-key authentication, `checkExists()`, the recursive
+  folder-transfer walk, and FTP/FTPS (control connection, real
+  transfers, and the `AUTH TLS` handshake). Dev-only tooling — nothing
+  shipped or user-facing changed, but see the Changed entry below for
+  what this means for FTP/FTPS's real-world status.
+
+### Changed
+
+- **FTP/FTPS's Known Limitations wording updated** to reflect that it's
+  now confirmed against a real server (previously "completely untested,
+  not once") — still not tried against a real-world production server,
+  the older `LIST`-format fallback parser specifically, or a fully
+  encrypted FTPS transfer with a trusted certificate.
+
 ## [0.2.2] — A Connection menu, next to Help
 
 ### Added
@@ -103,7 +124,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.3
 [0.2.2]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.2
 [0.2.1]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.1
 [0.2.0]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.0
