@@ -14,11 +14,17 @@ make -j$(nproc)
 ```
 
 Dependencies (Debian/Ubuntu): `cmake build-essential qt6-base-dev
-qt6-svg-dev libssh2-1-dev pkg-config` — `pkg-config` specifically isn't
-pulled in by `build-essential` on a clean install (CMake's libssh2
-discovery needs it); confirmed directly after a from-scratch container
-build failed on `Could NOT find PkgConfig`, not assumed from a desktop
-machine that already happened to have it installed.
+qt6-svg-dev libssh2-1-dev libsecret-1-dev pkg-config` — `pkg-config`
+specifically isn't pulled in by `build-essential` on a clean install
+(CMake's libssh2 discovery needs it); confirmed directly after a
+from-scratch container build failed on `Could NOT find PkgConfig`, not
+assumed from a desktop machine that already happened to have it
+installed. `libsecret-1-dev` (Fedora: `libsecret-devel`) is
+`CredentialStore`'s Linux backend — the OS keychain SiteManagerDialog's
+"Save password" checkbox writes to; see ARCHITECTURE.md's
+`CredentialStore` entry. Not needed at all for the MinGW/Windows build
+below — that path uses the real Win32 Credential Manager API
+(`wincred.h`) instead, already present in the mingw sysroot.
 
 Both Windows and Linux release builds run via GitHub Actions
 (`.github/workflows/build.yml`) — see ARCHITECTURE.md's "Windows and

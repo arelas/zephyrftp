@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ZephyrFTP VERSION 0.2.5 LANGUAGES CXX)
+project(ZephyrFTP VERSION 0.2.6 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -25,6 +25,20 @@ else()
     set(LIBSSH2_TARGET PkgConfig::LIBSSH2)
 endif()
 
+# CredentialStore's OS-keychain backend: the Win32 Credential Manager
+# API (wincred.h) on Windows — part of advapi32, always present in the
+# Windows SDK / mingw sysroot, no separate discovery needed — or
+# libsecret (pkg-config) everywhere else. WIN32 covers both native MSVC
+# and MinGW-cross builds here (unlike the libssh2 split above, both
+# genuinely want the real Win32 API, not libsecret, so no MINGW
+# special-casing is needed).
+if(WIN32)
+    set(CREDENTIAL_STORE_TARGET advapi32)
+else()
+    pkg_check_modules(LIBSECRET REQUIRED IMPORTED_TARGET libsecret-1)
+    set(CREDENTIAL_STORE_TARGET PkgConfig::LIBSECRET)
+endif()
+
 qt_standard_project_setup()
 
 set(SOURCES
@@ -41,6 +55,7 @@ set(SOURCES
     src/backends/SftpBackend.cpp
     src/backends/FtpBackend.cpp
     src/backends/SavedSite.cpp
+    src/backends/CredentialStore.cpp
     src/transfer/TransferManager.cpp
     src/transfer/FolderEnumerator.cpp
     resources/icons.qrc
@@ -71,6 +86,7 @@ set(HEADERS
     src/backends/SftpBackend.h
     src/backends/SftpCredentials.h
     src/backends/SavedSite.h
+    src/backends/CredentialStore.h
     src/transfer/TransferItem.h
     src/transfer/TransferManager.h
 )
@@ -100,6 +116,7 @@ target_link_libraries(zephyrftp PRIVATE
     Qt6::Concurrent
     Qt6::Svg
     ${LIBSSH2_TARGET}
+    ${CREDENTIAL_STORE_TARGET}
 )
 
 # --- smoke test (not part of the shipped app; verifies thread lifecycle) ---
@@ -117,6 +134,7 @@ qt_add_executable(smoke-test EXCLUDE_FROM_ALL
     src/backends/SftpBackend.cpp
     src/backends/FtpBackend.cpp   # MainWindow.cpp constructs one — see startConnection()
     src/backends/SavedSite.cpp
+    src/backends/CredentialStore.cpp
     src/transfer/TransferManager.cpp
     src/transfer/FolderEnumerator.cpp
     resources/icons.qrc
@@ -126,7 +144,7 @@ qt_add_executable(smoke-test EXCLUDE_FROM_ALL
 target_include_directories(smoke-test PRIVATE src)
 target_compile_definitions(smoke-test PRIVATE APP_VERSION="${PROJECT_VERSION}")
 target_link_libraries(smoke-test PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET}
+    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${CREDENTIAL_STORE_TARGET}
 )
 
 # --- transfer queue functional test (moves a real file end-to-end) ---
@@ -144,6 +162,7 @@ qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
     src/backends/SftpBackend.cpp
     src/backends/FtpBackend.cpp   # MainWindow.cpp constructs one — see startConnection()
     src/backends/SavedSite.cpp
+    src/backends/CredentialStore.cpp
     src/transfer/TransferManager.cpp
     src/transfer/FolderEnumerator.cpp
     resources/icons.qrc
@@ -153,7 +172,7 @@ qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
 target_include_directories(transfer-queue-test PRIVATE src)
 target_compile_definitions(transfer-queue-test PRIVATE APP_VERSION="${PROJECT_VERSION}")
 target_link_libraries(transfer-queue-test PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET}
+    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${CREDENTIAL_STORE_TARGET}
 )
 
 # --- SiteStore persistence test (pure QCoreApplication, no GUI needed) ---

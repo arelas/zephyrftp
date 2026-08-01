@@ -8,6 +8,19 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.2.6] — Optional password saving, via your OS's own credential store
+
+### Added
+
+- **Site Manager can now remember a site's password or key passphrase**,
+  opt-in via a new "Save password" checkbox (unchecked by default).
+  Nothing is ever written to ZephyrFTP's own config file — the secret
+  goes into your operating system's own protected credential store
+  (the same kind of secure storage your browser or system keychain
+  uses), and you're still asked to confirm it every time you connect
+  (just pre-filled, never silent). Unchecking the box removes anything
+  saved for that site immediately.
+
 ## [0.2.5] — Fix a real crash closing the app while connected
 
 ### Fixed
@@ -148,7 +161,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.2.6...HEAD
+[0.2.6]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.6
 [0.2.5]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.5
 [0.2.4]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.4
 [0.2.3]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.3

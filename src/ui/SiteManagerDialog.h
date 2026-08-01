@@ -12,6 +12,7 @@ class QRadioButton;
 class QStackedWidget;
 class QPushButton;
 class QComboBox;
+class QCheckBox;
 class QLabel;
 class QWidget;
 
@@ -21,13 +22,17 @@ class QWidget;
 // disk) on every structural or field change, so there's no separate
 // "Save" step to forget.
 //
-// SECURITY: consistent with SavedSite's own doc comment — neither a
-// saved password NOR a saved key passphrase ever touches disk. Both are
-// prompted for fresh at connect time regardless of what's saved, every
-// time. This is stricter than strictly necessary for the passphrase
-// (which protects a key file, not a bare credential) but keeps the rule
-// simple and uniform rather than having two different secret-handling
-// paths to reason about.
+// SECURITY: sites.json itself still never contains a password or key
+// passphrase — see SavedSite.h's doc comment, unchanged. What CAN now
+// persist, opt-in via the "Save password" checkbox, is the secret
+// itself, but never in that file: it goes into the OS's own credential
+// store (CredentialStore — libsecret/Keychain-equivalent on Linux, the
+// real Windows Credential Manager on Windows), keyed by the site's id.
+// The connect-time prompt still always appears either way — it's just
+// pre-filled with the stored secret when one exists, so accepting it is
+// one click (or Enter) rather than retyping, and changing what's typed
+// there is also how a saved secret gets updated. Unchecking the box
+// removes anything currently stored for that site.
 class SiteManagerDialog : public QDialog {
     Q_OBJECT
 public:
@@ -85,6 +90,12 @@ private:
     // reasoning as ConnectionDialog's identically-named members.
     QWidget *m_authRowWidget;
     QLabel *m_authRowLabel;
+    // Shared across both auth pages — a site has exactly one relevant
+    // secret at a time (password or passphrase, never both), so one
+    // checkbox tracking "save it" is correct; its label text switches
+    // between "Save password" / "Save passphrase" in
+    // updateAuthFieldsVisibility() to match whichever page is showing.
+    QCheckBox *m_savePasswordCheck;
 
     QRadioButton *m_homeDirRadio;
     QRadioButton *m_specificDirRadio;

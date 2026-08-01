@@ -174,12 +174,14 @@ jobs:
     # install, confirmed directly after a first attempt failed on
     # `Could NOT find PkgConfig` in an actual clean-container dry run, not
     # assumed from a desktop machine that already happened to have it).
+    # libsecret-1-dev is CredentialStore's Linux backend (the OS
+    # keychain SiteManagerDialog's "Save password" checkbox writes to).
     steps:
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
-            cmake build-essential qt6-base-dev qt6-svg-dev libssh2-1-dev pkg-config
+            cmake build-essential qt6-base-dev qt6-svg-dev libssh2-1-dev libsecret-1-dev pkg-config
 
       - uses: actions/checkout@v7
 

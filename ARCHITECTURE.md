@@ -150,6 +150,34 @@ that way, it's flagged explicitly rather than left implied.
   sampling after the fix (background sample went from `(239,239,239)`
   to `(20,23,28)`, matching `#14171c` exactly).
 
+- **The opt-in "Save password" checkbox is verified end to end against
+  the real OS credential store on Linux, and the fact that `sites.json`
+  still carries zero secrets even when it's used is re-confirmed
+  directly, not just assumed to still hold.** A throwaway harness (not
+  committed — matches this project's established pattern for one-off
+  visual/functional checks) drove a real `SiteManagerDialog` through
+  its actual UI (tree selection, the real checkbox, the real Connect
+  button, the real password `QInputDialog` — driven the same way
+  `conflict_resolution_test.cpp` drives a live `QMessageBox`, via a
+  `QTimer` firing during the dialog's still-blocking `exec()`) across
+  three phases: checking the box and connecting saves the typed
+  password for real (confirmed via `CredentialStore::load()` returning
+  the exact value); reopening a fresh dialog instance shows the
+  checkbox auto-checked (reflecting real stored state, not a flag in
+  `sites.json` — there isn't one) and the prompt pre-filled with the
+  stored password; editing that pre-filled value and reconnecting
+  genuinely overwrites the stored secret (the update path, not a
+  separate one); and unchecking the box removes the stored secret
+  immediately, no Connect click needed. Separately confirmed by
+  inspecting the raw `sites.json` content directly after the full
+  save/update flow (isolated via `XDG_CONFIG_HOME`, same as
+  `site-store-test`): still zero `password`/`passphrase` keys, exactly
+  as before this feature existed. **Not verified this way: the Windows
+  side** — `CredentialStore`'s `wincred.h` backend only compiles, links,
+  and runs without crashing under `wine`; the actual
+  `CredWriteW`/`CredReadW`/`CredDeleteW` round trip has not been
+  exercised on real Windows.
+
 - **Back/forward/up navigation is verified against real filesystem
   behavior, including the tricky cases, not just the happy path.**
   `src/navigation_test.cpp` (built via the `navigation-test` CMake
@@ -650,37 +678,90 @@ headless/offscreen runs have been checked).
   connection profile (host/port/username/auth method/key path, optional
   starting directory, optionally grouped into a folder) and its JSON
   persistence (`QStandardPaths::AppConfigLocation/sites.json`).
-  **Deliberately has no password field, full stop** — not "encrypted,"
-  not "obfuscated," simply never collected for storage. This is
-  stricter than the source design mockup, which showed a "Password"
-  logon type implying stored credentials; overridden on purpose, since
-  shipping plaintext credential storage without being explicitly asked
-  to would cut against the security hygiene the rest of this app has
-  been built with (host-key TOFU, no silent trust). The same
-  no-storage rule extends to a private key's passphrase, for
-  consistency, even though a passphrase's risk profile (protects a key
-  file already under OS permissions) differs from a bare password's.
-  `useHomeDirectory`/`startingDirectory` (both mirrored onto
-  `SftpCredentials`, consumed by `SftpBackend::ensureSession()`) let a
-  site skip the default home-directory resolution and land somewhere
-  specific instead — not validated at save time; an invalid path
-  surfaces through the same `listDirectory()`/`connectionFailed` error
-  path as typing a bad path into the pane's own path bar.
+  **Still has no password field, and never will** — `sites.json` stays
+  permanently secret-free, verified directly by `site-store-test.cpp`'s
+  raw-JSON key inspection. What changed: a password/passphrase CAN now
+  be remembered, opt-in via `SiteManagerDialog`'s "Save password"
+  checkbox, but it's written to `CredentialStore` (the OS's own
+  credential store) instead, keyed by this struct's `id` — never to this
+  file. See `CredentialStore` below for the full reasoning, and
+  `SavedSite.h`'s own doc comment for why this is a narrower, more
+  deliberate promise than "no passwords, full stop" used to be, not an
+  abandonment of it. `useHomeDirectory`/`startingDirectory` (both
+  mirrored onto `SftpCredentials`, consumed by
+  `SftpBackend::ensureSession()`) let a site skip the default
+  home-directory resolution and land somewhere specific instead — not
+  validated at save time; an invalid path surfaces through the same
+  `listDirectory()`/`connectionFailed` error path as typing a bad path
+  into the pane's own path bar.
+- `CredentialStore` (`src/backends/CredentialStore.h/.cpp`) — the OS
+  credential store, opt-in, and the only place a secret from this app
+  is ever written to disk. `save`/`load`/`remove`/`hasSecret`, keyed by
+  a `SavedSite`'s `id`. Two platform backends behind `#ifdef _WIN32`
+  (one file, not separate ones — the amount of platform-specific code
+  is small enough that CMake source-list conditionals would be more
+  ceremony than the split is worth): libsecret on Linux (the
+  freedesktop Secret Service — GNOME Keyring, KWallet's compatibility
+  layer, whichever the desktop provides), the real Win32 Credential
+  Manager API (`wincred.h`, `CredWriteW`/`CredReadW`/`CredDeleteW`) on
+  Windows. Deliberately NOT a bundled cross-platform wrapper library —
+  Fedora ships `qtkeychain-qt6` for native Linux, but only a Qt5 build
+  for the mingw64/Windows cross-target, a real ABI mismatch with this
+  project's Qt6 Windows build — so this follows the same
+  direct-on-the-platform-API approach already used elsewhere
+  (`SftpBackend` on libssh2 directly, `FtpBackend` hand-rolled instead
+  of libcurl) rather than fighting a packaging gap. Deliberately NOT the
+  weaker pattern FileZilla (`sitemanager.xml`, Base64 — obfuscation, not
+  encryption) and WinSCP (without its optional master password) both
+  use by default, and have both been publicly criticized for — real
+  secret storage lives entirely in the OS's own protected store, not in
+  a file this app controls. One real header-collision bug caught
+  building this: libsecret transitively pulls in glib/gio headers
+  declaring a struct member literally named `signals`, which collides
+  with Qt's `signals:` macro the instant any Qt header has already been
+  parsed — fixed by including `<libsecret/secret.h>` before
+  `"CredentialStore.h"` in the `.cpp`, not by fighting the macro with
+  `QT_NO_KEYWORDS`. **Confirmed working for real, not just compiling**,
+  on Linux: a full save/load/overwrite/remove round trip against the
+  real local D-Bus secret service (this development environment
+  actually has one running — KDE's `ksecretd`), independently
+  cross-checked with the `secret-tool` CLI (not just this app's own
+  code self-reporting success) — real entry, correct schema, correct
+  secret value. **The Windows `wincred.h` path only compiles and links
+  cleanly (including a full mingw cross-build) and runs without
+  crashing under `wine`** — the actual `CredWriteW`/`CredReadW`/
+  `CredDeleteW` behavior has not been exercised on real Windows, the
+  same category of gap already flagged for other Windows-specific code
+  in this project.
 - `SiteManagerDialog` — the saved-sites UI: a grouped tree on the left,
   a details form on the right, matching the design package's
   site-manager.html mockup, plus a starting-directory radio choice
   (Home / Specific) the mockup didn't have. Persists via `SiteStore` on
   every field edit (`QLineEdit::editingFinished`, not per-keystroke) and
   every structural change (new/duplicate/delete), so there's no separate
-  "Save" step to forget. Its Connect button prompts for the password or
-  key passphrase fresh every time, regardless of what's saved — see
-  `SavedSite` above. Groups are organized via an editable `QComboBox`
+  "Save" step to forget. Groups are organized via an editable `QComboBox`
   (`m_groupCombo`) next to the site name — pick an existing group from
   the dropdown or type a new one to create it on the spot; there's no
   separate "groups" collection to manage, a group exists precisely when
   at least one site references it. Changing a site's group triggers a
   full `rebuildTree()` (hierarchy actually changed) rather than the
   simple in-place item-text update every other field edit uses.
+  Its Connect button still always prompts for the password or key
+  passphrase, same as before — what's new is `m_savePasswordCheck`
+  (unchecked by default, one checkbox shared across both auth pages
+  since a site only ever has one relevant secret at a time), which does
+  three things depending on what's actually true at Connect time: pre-fills
+  that prompt from `CredentialStore` when this site has a saved secret
+  (so accepting it is one click, not a retype), saves whatever was
+  actually entered/edited there when the box is checked (which is also
+  how an already-saved secret gets updated — there's no separate "edit
+  the saved password" field, the connect-time prompt does double duty),
+  and removes anything stored the instant the box is unchecked, without
+  waiting for a Connect click. The prompt itself is never skipped
+  outright even when a secret is saved — deliberately: this stays a
+  real, visible, one-click confirmation rather than a silent
+  auto-connect, consistent with this project's refusal to do anything
+  credential-related invisibly.
 - `HostKeyVerifier` — lives on the GUI thread for the app's lifetime.
   `SftpBackend`'s worker thread calls into it via
   `QMetaObject::invokeMethod(..., Qt::BlockingQueuedConnection)` to get a

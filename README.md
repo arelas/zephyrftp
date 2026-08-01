@@ -4,7 +4,7 @@ A dual-pane SFTP client for Windows and Linux — browse your local files
 and a remote server side by side, then drag, drop, or double-click to
 move things between them. Think FileZilla or WinSCP, built fresh in Qt6.
 
-**Current version: 0.2.5 — alpha.** Real functionality, but real gaps
+**Current version: 0.2.6 — alpha.** Real functionality, but real gaps
 too — see [Known limitations](#known-limitations) before relying on
 this for anything you can't afford to get wrong. [Releases](https://github.com/arelas/zephyrftp/releases)
 has downloadable Windows and Linux builds; [CHANGELOG.md](CHANGELOG.md)
@@ -28,9 +28,14 @@ tracks what's changed between them.
   host, port, and username every time. Each saved site can also default
   to a specific starting folder on the server instead of your home
   directory — handy if you always go straight to the same upload folder.
-  Your password is never saved to disk, though — you'll be asked for it
-  each time you connect. Same for a private key's passphrase, if it has
-  one.
+  Your password (or a private key's passphrase) is never written to
+  ZephyrFTP's own config file — you'll always still be asked for it when
+  you connect. Check "Save password" and it's remembered for next time
+  using your operating system's own secure credential storage (the same
+  kind of protected store your browser or system keychain uses, not a
+  plain file this app controls) — that prompt still appears every time,
+  just pre-filled, so it's never a silent auto-connect. Leave the box
+  unchecked and nothing changes from before.
 - **Host-key verification** — the first time you connect to a server,
   ZephyrFTP shows you its identity fingerprint and asks you to confirm
   it. If that fingerprint ever changes on a later connection, you get a

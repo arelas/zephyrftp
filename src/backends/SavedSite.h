@@ -9,21 +9,30 @@
 // plus a display name and an optional group for organizing the site
 // tree (e.g. "Clients" / "Internal", matching the design mockup).
 //
-// DELIBERATE SECURITY DECISION: passwords are never persisted here, full
-// stop — there's no `password` field. A saved site with
+// DELIBERATE SECURITY DECISION: there's no `password` field, and never
+// will be — this struct, and the sites.json file it (de)serializes to,
+// stay permanently secret-free, verified directly by
+// site-store-test.cpp's raw-JSON key inspection. A saved site with
 // SftpAuthMethod::Password always prompts for the password at connect
-// time (SiteManagerDialog does this), rather than writing a plaintext
-// secret to disk. This is narrower than the original design mockup,
-// which showed a "Password" logon type as distinct from "Ask for
-// password" — implying the mockup intended to support storing it. That
-// was overridden here on purpose: this app has otherwise been built
-// with real security hygiene (host-key TOFU verification, no silent
-// trust), and shipping plaintext credential storage without being
-// explicitly asked to would cut directly against that. Private-key auth
-// CAN be saved in full (host/port/username/key path) — the key file
-// itself lives on disk under the OS's own permissions and is commonly
-// passphrase-protected already, which is a materially different risk
-// than a bare password string in a JSON file.
+// time (SiteManagerDialog does this) rather than reading one from here.
+//
+// This does NOT mean a password can never be remembered at all —
+// SiteManagerDialog's opt-in "Save password" checkbox (unchecked by
+// default) persists it via CredentialStore instead, which writes to the
+// OS's own credential store (libsecret/Keychain-equivalent on Linux,
+// the real Windows Credential Manager on Windows), keyed by this
+// struct's `id`. That's a deliberately different, narrower promise than
+// the original "no passwords, full stop": the plaintext-in-our-own-file
+// pattern FileZilla and WinSCP (without a master password) both use by
+// default — and have both been publicly criticized for — is still
+// refused; what's offered instead is real OS-level secret storage,
+// opt-in, with the connect-time prompt always still shown (pre-filled,
+// never silent) rather than skipped. See CredentialStore.h for the
+// full reasoning. Private-key auth's non-secret fields (host/port/
+// username/key path) have always been saved here in full regardless —
+// the key file itself lives on disk under the OS's own permissions and
+// is commonly passphrase-protected already, a materially different risk
+// than a bare password string.
 struct SavedSite {
     QString id;       // stable identifier (not the display name, which can change) — a random string, generated once at creation
     QString name;     // display name, e.g. "Pivot Parking"

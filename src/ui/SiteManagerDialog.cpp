@@ -1,5 +1,6 @@
 #include "SiteManagerDialog.h"
 #include "IconTheme.h"
+#include "../backends/CredentialStore.h"
 
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
@@ -12,6 +13,7 @@
 #include <QStackedWidget>
 #include <QPushButton>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFormLayout>
@@ -131,12 +133,15 @@ void SiteManagerDialog::buildUi()
     authRadioRow->addStretch();
 
     // Page 0 (password auth): deliberately no password field at all —
-    // see the class doc comment. Just an honest explanation of why.
+    // see the class doc comment. Just an honest explanation of why:
+    // still always prompted at connect time even if "Save password"
+    // (below) is checked — that prompt is just pre-filled in that case.
     auto *passwordPage = new QWidget(this);
     auto *passwordPageLayout = new QVBoxLayout(passwordPage);
     passwordPageLayout->setContentsMargins(0, 0, 0, 0);
     auto *passwordNote = new QLabel(
-        tr("The password isn't saved. You'll be asked for it each time you connect to this site."), this);
+        tr("You'll be asked for the password each time you connect — pre-filled "
+           "if you check \"Save password\" below, but always shown, never silent."), this);
     passwordNote->setWordWrap(true);
     passwordPageLayout->addWidget(passwordNote);
 
@@ -159,13 +164,32 @@ void SiteManagerDialog::buildUi()
     keyPageLayout->setContentsMargins(0, 0, 0, 0);
     keyPageLayout->addRow(tr("Key file:"), keyPathRow);
     auto *keyNote = new QLabel(
-        tr("If the key has a passphrase, you'll be asked for it each time you connect."), keyPage);
+        tr("If the key has a passphrase, you'll be asked for it each time you connect — "
+           "pre-filled if you check \"Save passphrase\" below."), keyPage);
     keyNote->setWordWrap(true);
     keyPageLayout->addRow(keyNote);
 
     m_authFieldsStack = new QStackedWidget(this);
     m_authFieldsStack->addWidget(passwordPage);   // index 0
     m_authFieldsStack->addWidget(keyPage);         // index 1
+
+    // Below the stack, not inside either page — one checkbox, shared
+    // across both auth methods (see the header's doc comment on why).
+    // Unchecked by default: this is opt-in, not opt-out. Text updated
+    // per auth method in updateAuthFieldsVisibility().
+    m_savePasswordCheck = new QCheckBox(tr("Save password"), this);
+    connect(m_savePasswordCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        // Unchecking clears any already-stored secret immediately,
+        // rather than waiting for the next Connect — consistent with
+        // every other field on this dialog persisting the instant it
+        // changes, not on some later "Save" step. Checking it doesn't
+        // itself store anything yet: there's nothing to store until the
+        // Connect prompt actually collects a secret.
+        if (!checked) {
+            if (SavedSite *site = selectedSite())
+                CredentialStore::remove(site->id);
+        }
+    });
 
     // --- Starting directory: home (default) or a specific path ---
     m_homeDirRadio = new QRadioButton(tr("Home directory"), this);
@@ -203,6 +227,11 @@ void SiteManagerDialog::buildUi()
     auto *rightLayout = new QVBoxLayout;
     rightLayout->addLayout(form);
     rightLayout->addWidget(m_authFieldsStack);
+    // A sibling of m_authFieldsStack, not inside it — deliberately stays
+    // visible even when that stack collapses for FTP/FTPS (no auth
+    // *method* choice there, but a saved FTP/FTPS site still has exactly
+    // one password worth being able to opt into saving).
+    rightLayout->addWidget(m_savePasswordCheck);
     rightLayout->addStretch();
     auto *rightWidget = new QWidget(this);
     rightWidget->setLayout(rightLayout);
@@ -366,6 +395,11 @@ void SiteManagerDialog::loadSiteIntoForm(const SavedSite &site)
     const QSignalBlocker b11(m_groupCombo);
     const QSignalBlocker b12(m_groupCombo->lineEdit());
     const QSignalBlocker b13(m_protocolCombo);
+    // Blocked for the same reason as every other field here — setting
+    // this programmatically must not trigger the toggled handler's
+    // CredentialStore::remove() side effect, which is only meant to
+    // fire on a real, deliberate uncheck by the person using the dialog.
+    const QSignalBlocker b14(m_savePasswordCheck);
 
     m_nameEdit->setText(site.name);
     m_groupCombo->setCurrentText(site.group);
@@ -388,6 +422,12 @@ void SiteManagerDialog::loadSiteIntoForm(const SavedSite &site)
     else
         m_specificDirRadio->setChecked(true);
     m_startingDirEdit->setText(site.startingDirectory);
+
+    // Reflects whatever's actually in the OS credential store right
+    // now, not a flag persisted in sites.json (there isn't one) — an
+    // empty id means "no real site selected, form is a blank scratch
+    // area," which never has a stored secret to reflect.
+    m_savePasswordCheck->setChecked(!site.id.isEmpty() && CredentialStore::hasSecret(site.id));
 
     // Covers updateAuthFieldsVisibility() too — and unlike calling that
     // alone, it also applies the protocol's own show/hide rules, which
@@ -438,6 +478,7 @@ void SiteManagerDialog::onFieldEdited()
 void SiteManagerDialog::updateAuthFieldsVisibility()
 {
     m_authFieldsStack->setCurrentIndex(m_passwordAuthRadio->isChecked() ? 0 : 1);
+    m_savePasswordCheck->setText(m_passwordAuthRadio->isChecked() ? tr("Save password") : tr("Save passphrase"));
     onFieldEdited();   // auth-method choice is itself an edit worth persisting immediately
 }
 
@@ -505,8 +546,13 @@ void SiteManagerDialog::onDeleteSite()
 void SiteManagerDialog::onConnectClicked()
 {
     ConnectionRequest request;
+    // Kept beyond the if/else below (unlike before this feature existed)
+    // so the secrets step can look up/save/remove a stored credential —
+    // stays nullptr for the one-off/unsaved-scratch path, which has no
+    // site id to key a stored secret on and isn't offered this at all.
+    SavedSite *site = selectedSite();
 
-    if (SavedSite *site = selectedSite()) {
+    if (site) {
         commitFormToSelectedSite();   // capture any not-yet-committed edits first
         request = site->toConnectionRequest();
     } else {
@@ -539,7 +585,16 @@ void SiteManagerDialog::onConnectClicked()
     // The prompt-for-secrets step, which is where SavedSite's
     // no-passwords-on-disk rule actually gets honored — toConnectionRequest()
     // deliberately leaves every secret empty, so without this the
-    // connection would go out with a blank password.
+    // connection would go out with a blank password. Pre-filled from
+    // CredentialStore when this site has one saved — the prompt itself
+    // never disappears (still shown, still requires a click), it's just
+    // not blank in that case. Whatever's actually typed here (accepted
+    // as-is, or edited) is also what gets saved/removed afterward, so
+    // this one prompt does triple duty: reuse, update, and initial save.
+    QString storedSecret;
+    const bool hasStoredSecret = site && CredentialStore::hasSecret(site->id)
+        && CredentialStore::load(site->id, &storedSecret);
+
     if (request.protocol == Protocol::Sftp
         && request.sftp.authMethod == SftpAuthMethod::PublicKey) {
         if (request.sftp.privateKeyPath.isEmpty()) {
@@ -550,7 +605,7 @@ void SiteManagerDialog::onConnectClicked()
         const QString passphrase = QInputDialog::getText(
             this, tr("Key Passphrase"),
             tr("Passphrase for the private key (leave blank if none):"),
-            QLineEdit::Password, QString(), &ok);
+            QLineEdit::Password, hasStoredSecret ? storedSecret : QString(), &ok);
         if (!ok)
             return;
         request.sftp.passphrase = passphrase;
@@ -564,7 +619,7 @@ void SiteManagerDialog::onConnectClicked()
             tr("Password for %1@%2:").arg(
                 request.protocol == Protocol::Sftp ? request.sftp.username : request.ftp.username,
                 request.host()),
-            QLineEdit::Password, QString(), &ok);
+            QLineEdit::Password, hasStoredSecret ? storedSecret : QString(), &ok);
         if (!ok)
             return;   // cancelled the prompt — stay in the dialog rather than connecting with no password
 
@@ -572,6 +627,23 @@ void SiteManagerDialog::onConnectClicked()
             request.sftp.password = password;
         else
             request.ftp.password = password;
+    }
+
+    // Sync the credential store to match the checkbox + whatever was
+    // just entered — covers all three real cases: newly checked (save
+    // for the first time), already saved and still checked (overwrite,
+    // picking up an edited value), and unchecked (remove, whether or
+    // not anything was actually stored — CredentialStore::remove() is a
+    // harmless no-op either way).
+    if (site) {
+        const QString &enteredSecret =
+            (request.protocol == Protocol::Sftp && request.sftp.authMethod == SftpAuthMethod::PublicKey)
+                ? request.sftp.passphrase
+                : (request.protocol == Protocol::Sftp ? request.sftp.password : request.ftp.password);
+        if (m_savePasswordCheck->isChecked())
+            CredentialStore::save(site->id, enteredSecret);
+        else
+            CredentialStore::remove(site->id);
     }
 
     m_pendingRequest = request;
