@@ -8,6 +8,15 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.2.2] — A Connection menu, next to Help
+
+### Added
+
+- **A "Connection" menu in the menu bar**, next to Help — Connect...,
+  Sites..., and Disconnect, the same three actions the toolbar buttons
+  already offer, now also reachable via the menu bar/keyboard. The
+  toolbar itself is unchanged.
+
 ## [0.2.1] — Linux builds now published alongside Windows
 
 ### Added
@@ -94,7 +103,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.2
 [0.2.1]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.1
 [0.2.0]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.0
 [0.1.0]: https://github.com/arelas/zephyrftp/releases/tag/v0.1.0
