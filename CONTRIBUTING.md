@@ -15,16 +15,29 @@ make -j$(nproc)
 
 Dependencies (Debian/Ubuntu): `cmake build-essential qt6-base-dev qt6-svg-dev libssh2-1-dev`
 
-Windows builds run via GitHub Actions (`.github/workflows/windows-build.yml`) —
-see ARCHITECTURE.md's "Windows builds (CI)" section for what that pipeline
-does and the real, sometimes non-obvious bugs it surfaced along the way.
-That workflow still builds with MSVC+vcpkg; it hasn't been migrated to
-the MinGW cross-compilation path below yet.
+Windows builds run via GitHub Actions (`.github/workflows/windows-build.yml`)
+— see ARCHITECTURE.md's "Windows builds (CI)" section for the pipeline's
+older MSVC+vcpkg history and the real, sometimes non-obvious bugs that
+surfaced along the way. As of this writing, that workflow has been
+migrated off MSVC+vcpkg entirely onto the same MinGW cross-compilation
+path documented below — it runs on `ubuntu-latest` inside a `fedora:44`
+container, builds and runs the full test suite the same way a local
+cross-compile does (see "Local verification: `wine`" below — CI wraps
+every test run in `xvfb-run` for the same reason described there), and
+uses `tools/collect-win-runtime.sh` for DLL collection instead of
+windeployqt. The workflow file itself was validated by actually running
+every one of its steps inside a real `podman run fedora:44` container
+before being committed, not just reasoned through — but the real
+GitHub-hosted execution (network access, package availability on
+GitHub's runners, the container/checkout interaction specifically) is
+still unverified until it runs for real; worth triggering once via
+`workflow_dispatch` before relying on it for an actual tagged release.
 
 ### Cross-compiling for Windows locally (MinGW, from Fedora)
 
-This is a separate path from CI, useful for testing a Windows build
-without waiting on GitHub Actions. Dependencies (Fedora):
+Useful for a faster local loop than waiting on GitHub Actions, and for
+diagnosing a CI failure without needing a CI run to do it. Same steps
+CI itself runs. Dependencies (Fedora):
 `mingw64-gcc-c++ mingw64-qt6-qtbase mingw64-qt6-qtsvg mingw64-libssh2
 mingw64-cmake wine` — `wine` is only needed for the local verification
 step below, not the build itself.
@@ -102,6 +115,23 @@ doesn't care whether a file is still open, but real on Windows, where
 `DeleteFile` fails outright while any handle to the file remains open.
 Fixed by closing the handle before the delete. All ten test targets pass
 under `wine` (by exit code) as of this writing.
+
+**Wine needs a real, even virtual, X display for itself — separate from
+Qt's own `QT_QPA_PLATFORM=offscreen`.** Confirmed directly in a headless
+Fedora 44 container with no X/Wayland session at all (the environment
+CI actually runs in): every test that drives a real `QMessageBox`
+(`conflict-resolution-test`) failed with `CreateWindowEx failed (Invalid
+window handle.)` — Wine's own internal window management needed a
+display regardless of what Qt's platform plugin was doing. This was
+invisible running the same commands directly on a desktop machine that
+already had a real graphical session for Wine to use, which is exactly
+why it's worth writing down: wrap every `wine` invocation in `xvfb-run
+-a` (`xorg-x11-server-Xvfb` package) whenever there's no real session
+already available — a plain SSH-only box or a container, not just CI:
+
+```
+xvfb-run -a wine ./build-win/smoke-test.exe
+```
 
 **Wine is not a substitute for a real Windows machine**, just a faster
 local loop than CI — it doesn't prove real GPU/Direct3D rendering, and

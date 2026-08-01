@@ -10,139 +10,140 @@ on:
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
+    # Cross-compiles for Windows from a Fedora container rather than
+    # building natively on windows-latest — matches this project's local
+    # dev workflow (Fedora + mingw64-cross), replacing MSVC+vcpkg
+    # entirely: no cl.exe, no Qt-for-Windows download, no vcpkg bootstrap.
+    # Pinned to 44 specifically (not `latest`) since that's the exact
+    # Fedora release this whole pipeline was developed and verified
+    # against locally, including a full dry run of every step below
+    # inside an actual `podman run fedora:44` container — not just
+    # reasoned about. Bump deliberately, re-verify the same way, rather
+    # than silently drifting to whatever `latest` resolves to on a given
+    # day.
+    container:
+      image: fedora:44
 
     steps:
+      # mingw64-qt6-qtbase/qt6-qtsvg/libssh2 are the cross-compiled
+      # Windows-target libraries; qt6-qtbase-devel is the *host* Qt,
+      # needed because AUTOMOC/AUTORCC's moc/rcc must run natively at
+      # build time even though the rest of the toolchain targets
+      # Windows — CMake's cross-compile program search looks on the host
+      # PATH for exactly this reason. wine + xorg-x11-server-Xvfb are
+      # for actually running the built test suite, not just linking it
+      # (see the "Run test suite under wine" step below for why Xvfb
+      # specifically is needed). git isn't in the base fedora image;
+      # actions/checkout needs it.
+      - name: Install build dependencies
+        run: |
+          dnf install -y --setopt=install_weak_deps=False \
+            git mingw64-gcc-c++ mingw64-qt6-qtbase mingw64-qt6-qtsvg \
+            mingw64-libssh2 mingw64-cmake qt6-qtbase-devel \
+            wine xorg-x11-server-Xvfb zip
+
       - uses: actions/checkout@v7
 
-      # Sets up cl.exe / MSVC environment variables for this job's shell.
-      - name: Set up MSVC environment
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-
-      # win64_msvc2022_64 requires Qt >= 6.8 (confirmed against
-      # install-qt-action's own version/arch table after the first CI run
-      # failed on this exact mismatch — Qt 6.7.x needs win64_msvc2019_64
-      # instead). Pinning to 6.8 to stay paired with the MSVC 2022 toolchain
-      # ilammy/msvc-dev-cmd sets up above.
-      - name: Install Qt6
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: '6.8.*'
-          host: 'windows'
-          target: 'desktop'
-          arch: 'win64_msvc2022_64'
-          modules: ''
-
-      # seanmiddleditch/gha-setup-ninja was archived (no longer maintained) —
-      # replaced with lukka/get-cmake, which installs both a current CMake
-      # and Ninja together and is from the same maintainer as run-vcpkg
-      # below, so this workflow isn't depending on a dead action.
-      - name: Install CMake + Ninja
-        uses: lukka/get-cmake@latest
-
-      # run-vcpkg requires the FULL 40-character commit SHA — confirmed by
-      # its own error message after a tag name was rejected ("must be a
-      # full SHA1 hash (40 hex digits)"). This is the full hash behind the
-      # 2026.06.24 release tag.
-      - name: Set up vcpkg
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: 'cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3'
-
-      # Caches the final installed/ output (headers, libs, DLLs) rather
-      # than using vcpkg's own binary-cache mechanism — Microsoft removed
-      # the x-gha backend entirely (github.com/microsoft/vcpkg-tool/pull/1662,
-      # confirmed directly, not just a deprecation warning), and this
-      # actions/cache approach is what that same PR thread calls out as
-      # "endorsed by the GitHub Actions team." Key is pinned to the vcpkg
-      # commit above plus the exact package spec — bump the trailing -v1
-      # if the install command ever changes without the commit id changing,
-      # to force a fresh cache.
-      - name: Cache vcpkg installed packages
-        id: vcpkg-cache
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.VCPKG_ROOT }}\installed
-          key: vcpkg-installed-windows-cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3-libssh2-x64-windows-v1
-
-      # Skipped entirely on a cache hit — CMake's vcpkg toolchain file only
-      # needs the restored headers/libs/DLLs under installed\, not vcpkg's
-      # own bookkeeping, so there's nothing else to redo here.
-      - name: Install libssh2 (vcpkg)
-        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
-        run: ${{ env.VCPKG_ROOT }}\vcpkg.exe install libssh2:x64-windows
-        shell: pwsh
-
       - name: Configure
+        run: mingw64-cmake -S . -B build-win
+
+      - name: Build app
+        run: cmake --build build-win --target zephyrftp -- -j$(nproc)
+
+      # All ten EXCLUDE_FROM_ALL test targets — see CONTRIBUTING.md's
+      # "All ten need to actually pass, not just build" rule. Built here
+      # as .exe's; actually run (not just linked) in the next-but-one step.
+      - name: Build test suite
         run: >
-          cmake -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_TOOLCHAIN_FILE=${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake
-          -DVCPKG_TARGET_TRIPLET=x64-windows
-        shell: pwsh
+          cmake --build build-win --target
+          smoke-test transfer-queue-test site-store-test navigation-test
+          transfer-pause-test file-operations-test folder-transfer-test
+          conflict-resolution-test ftp-parsing-test protocol-selection-test
+          -- -j$(nproc)
 
-      # Diagnostic: the last run showed Configure and Build both apparently
-      # succeeding (job reached Assemble instead of stopping), but Assemble
-      # then couldn't find build\ at all — not just the exe, the whole
-      # directory. That's inconsistent with normal step-to-step state on a
-      # GitHub-hosted runner (nothing in this workflow deletes it), so
-      # rather than guess at why, confirming directly here whether it
-      # exists and what LASTEXITCODE actually was.
-      - name: Verify Configure output
-        run: |
-          Write-Host "LASTEXITCODE after Configure step: $LASTEXITCODE"
-          Write-Host "Current directory: $(Get-Location)"
-          Write-Host "Does build\ exist? $(Test-Path build)"
-          if (Test-Path build) { Get-ChildItem build\ | Select-Object Name }
-        shell: pwsh
+      # windeployqt isn't packaged for this cross toolchain at all (and
+      # the upstream Qt one only runs on Windows/under wine, not as a
+      # cross tool) — tools/collect-win-runtime.sh substitutes for it by
+      # walking objdump -p import tables, the same information
+      # windeployqt itself works from. See that script's own header
+      # comment and CONTRIBUTING.md for the full reasoning.
+      - name: Collect runtime DLLs (no windeployqt for this toolchain)
+        run: ./tools/collect-win-runtime.sh build-win
 
-      - name: Build
-        run: cmake --build build --config Release --target zephyrftp
-        shell: pwsh
-
-      - name: Verify Build output
-        run: |
-          Write-Host "LASTEXITCODE after Build step: $LASTEXITCODE"
-          Write-Host "Does build\ exist? $(Test-Path build)"
-          if (Test-Path build) { Get-ChildItem -Recurse build\ | Select-Object FullName }
-        shell: pwsh
-
-      # windeployqt bundles the Qt DLLs the exe needs; libssh2's DLL from
-      # vcpkg still needs to be copied in separately since windeployqt only
-      # knows about Qt's own dependencies.
+      # Judged by exit code, not console text: qDebug() output does not
+      # reach the terminal under this wine setup at all (confirmed
+      # directly with an isolated test — plain fprintf(stderr, ...)
+      # shows up, qDebug() from the same process doesn't), which is
+      # exactly why every test target's main() returns/app.exit()s a
+      # nonzero code on failure — `set -e` below means any single
+      # nonzero exit fails this whole step, matching CONTRIBUTING.md's
+      # "all ten need to actually pass" rule.
       #
-      # Previous version assumed the exe lands flat at build\zephyrftp.exe
-      # (true for a single-config Ninja generator on Linux/most setups) —
-      # that assumption was wrong here (copy failed, path didn't exist) and
-      # I have no way to verify the actual CMake/Ninja/Qt6 output layout on
-      # Windows from this environment. Searching for the exe instead of
-      # guessing its path, and printing the whole build\ tree first so the
-      # log is self-diagnosing if this still doesn't find it.
+      # xvfb-run wraps every invocation for a real, confirmed reason,
+      # not caution for its own sake: without it, every test that drives
+      # a real QMessageBox (conflict-resolution-test) failed with
+      # "CreateWindowEx failed (Invalid window handle.)" — wine needs a
+      # real, even virtual, X display for its own internal window
+      # management, independent of Qt's own QT_QPA_PLATFORM=offscreen.
+      # Caught by actually running this in a headless container, not
+      # assumed from how it happened to behave on a desktop machine with
+      # a real X/Wayland session already available.
+      #
+      # Fixture setup and env vars below mirror CONTRIBUTING.md's Linux
+      # commands exactly — same tests, same isolation reasoning
+      # (XDG_CONFIG_HOME, the rm -rf teardowns), just run under wine.
+      - name: Run test suite under wine
+        run: |
+          set -e
+          cd build-win
+          export WINEDEBUG=-all QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR=/tmp/xdg-runtime
+          mkdir -p /tmp/xdg-runtime && chmod 700 /tmp/xdg-runtime
+
+          xvfb-run -a wine ./smoke-test.exe
+
+          rm -rf /tmp/transfer_test
+          mkdir -p /tmp/transfer_test/src_dir /tmp/transfer_test/dst_dir
+          head -c 500000 /dev/urandom > /tmp/transfer_test/src_dir/testfile.bin
+          xvfb-run -a wine ./transfer-queue-test.exe
+
+          rm -rf /tmp/zephyrftp_test_config
+          XDG_CONFIG_HOME=/tmp/zephyrftp_test_config xvfb-run -a wine ./site-store-test.exe
+
+          xvfb-run -a wine ./navigation-test.exe
+          xvfb-run -a wine ./transfer-pause-test.exe
+          xvfb-run -a wine ./file-operations-test.exe
+
+          rm -rf /tmp/folder_transfer_test
+          mkdir -p /tmp/folder_transfer_test/src/myfolder/subdir1 \
+                   /tmp/folder_transfer_test/src/myfolder/subdir2/nested \
+                   /tmp/folder_transfer_test/src/myfolder/emptydir \
+                   /tmp/folder_transfer_test/dst
+          echo "hi from a" > /tmp/folder_transfer_test/src/myfolder/a.txt
+          echo "hi from b" > /tmp/folder_transfer_test/src/myfolder/subdir1/b.txt
+          echo "hi from c" > /tmp/folder_transfer_test/src/myfolder/subdir1/c.txt
+          echo "hi from d" > /tmp/folder_transfer_test/src/myfolder/subdir2/nested/d.txt
+          xvfb-run -a wine ./folder-transfer-test.exe
+
+          xvfb-run -a wine ./conflict-resolution-test.exe
+          xvfb-run -a wine ./ftp-parsing-test.exe
+
+          rm -rf /tmp/zephyrftp_proto_config
+          XDG_CONFIG_HOME=/tmp/zephyrftp_proto_config xvfb-run -a wine ./protocol-selection-test.exe
+
+      # Single-config generator (mingw64-cmake defaults to Unix
+      # Makefiles) — unlike the old MSVC/Ninja multi-config setup, the
+      # exe's path is deterministic, no need to search for it.
       - name: Assemble deployable folder
         run: |
-          Write-Host "Full build\ directory tree:"
-          Get-ChildItem -Recurse build\ | Select-Object FullName
-
-          $exe = Get-ChildItem -Recurse -Filter "zephyrftp.exe" -Path build\ | Select-Object -First 1
-          if (-not $exe) {
-            Write-Error "zephyrftp.exe not found anywhere under build\ — see tree above."
-            exit 1
-          }
-          Write-Host "Found exe at: $($exe.FullName)"
-
           mkdir dist
-          Copy-Item $exe.FullName dist\
-          windeployqt --release --no-translations dist\zephyrftp.exe
-          # Copy every vcpkg-built DLL rather than cherry-picking libssh2.dll
-          # by name — that missed its own runtime dependencies (OpenSSL's
-          # libcrypto-3-x64.dll, zlib's z.dll), confirmed by two separate
-          # "code execution cannot proceed, DLL not found" errors on a real
-          # Windows run. windeployqt only knows about Qt's dependencies, not
-          # libssh2's transitive ones, so this can't be delegated to it.
-          Copy-Item "${{ env.VCPKG_ROOT }}\installed\x64-windows\bin\*.dll" dist\
-        shell: pwsh
+          cp build-win/zephyrftp.exe dist/
+          cp build-win/*.dll dist/
+          cp -r build-win/platforms dist/
+          cp -r build-win/iconengines dist/
+          cp -r build-win/imageformats dist/
+          cp -r build-win/styles dist/
+          cp -r build-win/tls dist/
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
@@ -153,10 +154,13 @@ jobs:
 
   # Only runs on version tags (v1.0.0 etc.) — attaches the same build as a
   # zipped asset on a GitHub Release, matching the Phat32 pipeline pattern.
+  # Plain ubuntu-latest now (no PowerShell needed) — this job only zips an
+  # already-built artifact and talks to the GitHub Releases API, neither
+  # of which has ever depended on the build job's OS.
   release:
     needs: build-windows
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     # Confirmed necessary directly from a real failed run, not
     # speculative: without this, GITHUB_TOKEN defaults to Contents:read
     # (visible in that run's own "GITHUB_TOKEN Permissions" log group),
@@ -175,8 +179,7 @@ jobs:
           path: dist
 
       - name: Zip release asset
-        run: Compress-Archive -Path dist\* -DestinationPath zephyrftp-windows-x64.zip
-        shell: pwsh
+        run: cd dist && zip -r ../zephyrftp-windows-x64.zip . && cd ..
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
