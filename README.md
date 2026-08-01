@@ -106,12 +106,18 @@ before being attached — see ARCHITECTURE.md's "Windows and Linux builds
 This is young software — a few things intentionally aren't supported yet
 rather than being half-implemented:
 
-- **FTP and FTPS are selectable but completely untested against a real
-  server.** You can now pick FTP or FTPS in the connection dialog and
-  the Site Manager, and everything behind that choice is implemented —
-  but it has never been run against an actual FTP server, not once. SFTP
-  is the protocol that's been verified against real hardware. Treat FTP
-  and FTPS as unproven, and expect rough edges.
+- **FTP and FTPS work against a real server, but only a controlled local
+  one so far — not yet a production server out in the wild.** Connecting,
+  browsing, and transferring files over plain FTP, and the FTPS `AUTH
+  TLS` handshake itself, have all been confirmed against a real FTP/FTPS
+  server, not just tested in isolation. What hasn't been tried yet:
+  real-world servers that only speak the older, non-standardized `LIST`
+  format instead of the modern `MLSD` one (a likely source of rough
+  edges — `LIST`'s format varies by server), and a full encrypted
+  transfer over FTPS with a properly trusted certificate (see the next
+  point). Still newer and less battle-tested than SFTP; expect some
+  rough edges against servers this hasn't specifically been tried
+  against.
 - **FTPS won't connect to a server with a self-signed certificate.**
   ZephyrFTP refuses to connect when it can't verify the server's
   certificate, and there's currently no way to inspect one and choose to
