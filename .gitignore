@@ -1,5 +1,10 @@
 build/
 build-win/
+dist/
+dist-windows/
+dist-linux/
+*.tar.gz
+*.zip
 *.o
 *.obj
 CMakeFiles/
