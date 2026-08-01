@@ -97,8 +97,20 @@ jobs:
         run: |
           set -e
           cd build-win
-          export WINEDEBUG=-all QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR=/tmp/xdg-runtime
-          mkdir -p /tmp/xdg-runtime && chmod 700 /tmp/xdg-runtime
+          # WINEPREFIX pinned to a scratch dir this job creates and owns
+          # outright — confirmed necessary from a real failed run, not
+          # speculative: GitHub Actions sets $HOME=/github/home for
+          # container jobs, and wine refuses to create its default
+          # ~/.wine there ("'/github/home' is not owned by you, refusing
+          # to create a configuration directory there") because its
+          # ownership doesn't satisfy wine's own safety check — the same
+          # category of issue as git's "dubious ownership", just for
+          # wine's prefix dir. Never showed up locally (podman ran as
+          # plain root with a normal $HOME), only on GitHub's own
+          # runners — exactly the gap flagged as unverified before this
+          # workflow's first real run.
+          export WINEDEBUG=-all QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR=/tmp/xdg-runtime WINEPREFIX=/tmp/wineprefix
+          mkdir -p /tmp/xdg-runtime /tmp/wineprefix && chmod 700 /tmp/xdg-runtime
 
           xvfb-run -a wine ./smoke-test.exe
 
