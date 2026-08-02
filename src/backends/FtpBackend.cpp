@@ -494,12 +494,24 @@ bool FtpBackend::ensureConnected()
 bool FtpBackend::openDataChannel(DataChannel *channel, QString *errorOut)
 {
     const FtpReply pasvReply = sendCommand(QStringLiteral("PASV"));
-    if (!pasvReply.isValid() || pasvReply.code != 227) {
-        // The server refused PASV outright — a real, if rare, sign it
-        // requires active mode. Any OTHER kind of failure (a malformed
-        // 227 reply, parsed below) stays a hard error rather than
-        // silently trying active mode for a genuinely different
-        // problem.
+    if (!pasvReply.isValid()) {
+        // No reply at all — sendCommand() already checked the control
+        // socket's state, so this means the control connection itself
+        // is gone (dropped, idle-timed-out server-side), not a server
+        // actively refusing PASV. Falling back to active mode here would
+        // just fail again for the same underlying reason, but with a far
+        // more confusing error — openActiveDataChannel()'s IPv4 check
+        // reads a disconnected socket's (empty) localAddress() as "not
+        // IPv4" and reports that instead of the real problem. Surface
+        // the real problem directly instead of masking it.
+        if (errorOut) *errorOut = QStringLiteral("Lost connection to the server");
+        return false;
+    }
+    if (pasvReply.code != 227) {
+        // The server replied but refused PASV outright — a real, if
+        // rare, sign it requires active mode. A malformed 227 reply
+        // (parsed below) stays a hard error rather than silently trying
+        // active mode for a genuinely different problem.
         return openActiveDataChannel(channel, errorOut);
     }
 

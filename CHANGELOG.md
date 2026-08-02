@@ -8,6 +8,27 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.2.13] — Fix a misleading FTP active-mode error message
+
+### Fixed
+
+- **A dead/timed-out FTP control connection was misreported as an IPv4
+  problem.** `openDataChannel()`'s PASV failure check treated "no reply
+  at all" (control connection dropped) the same as "server replied with
+  an error code" (genuine PASV refusal), funneling both into the
+  active/PORT fallback — despite the code's own comment claiming
+  otherwise. On a dead connection, the active-mode path's IPv4 check
+  then read the disconnected socket's empty `localAddress()` as "not
+  IPv4" and reported `"Active mode requires an IPv4 control connection"`
+  instead of the real problem. Found chasing a real anomaly hit during
+  manual GUI testing, confirmed against a standalone Qt program rather
+  than guessed: `QSslSocket::localAddress().protocol()` genuinely
+  returns `IPv4Protocol` for a live `127.0.0.1` connection but
+  `UnknownNetworkLayerProtocol` once disconnected. Now reports
+  `"Lost connection to the server"` directly when the control
+  connection itself is gone, and only falls back to active mode on an
+  actual PASV refusal reply.
+
 ## [0.2.12] — Fix a crash on transfer after disconnect/reconnect
 
 ### Fixed

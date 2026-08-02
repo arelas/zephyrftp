@@ -1380,7 +1380,24 @@ along the way — worth knowing about if it ever needs touching again.
   `start-ftp-active-only.sh` (PASV/EPSV genuinely deleted from the
   server's own `proto_cmds`, a real refusal, not a client-side toggle)
   and confirms a full list/download/upload round trip completes over the
-  connection the server dialed back to us.
+  connection the server dialed back to us. **A related bug found and
+  fixed the same way (v0.2.12, chasing a real anomaly from manual GUI
+  testing, not reasoned about in advance):** `openDataChannel()`'s PASV
+  failure check (`!pasvReply.isValid() || pasvReply.code != 227`)
+  funneled a dead/timed-out control connection into the same
+  active-mode fallback as a genuine PASV refusal — despite the code's
+  own comment claiming otherwise. On a dead control connection,
+  `openActiveDataChannel()`'s follow-up IPv4 check reads a disconnected
+  socket's empty `localAddress()` as "not IPv4" and reports the
+  misleading `"Active mode requires an IPv4 control connection"`
+  instead of the real problem. Confirmed with a standalone Qt program
+  (not guessed): a live `QSslSocket::localAddress().protocol()` reports
+  `IPv4Protocol` correctly for a `127.0.0.1` connection, but reports
+  `UnknownNetworkLayerProtocol` once disconnected — exactly the
+  mismatch that was firing. Fixed by only falling back to active mode
+  on a genuine PASV error reply (`pasvReply.isValid() && code != 227`);
+  an absent reply now reports `"Lost connection to the server"`
+  directly instead.
 - **`SftpBackend::checkExists()` is now confirmed against a real
   server, for all three cases that matter.** Extended into
   `verify_sftp_pubkey.cpp` (see the public-key auth entry below for the
