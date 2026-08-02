@@ -23,3 +23,11 @@ Non-negotiables for this project:
   trusting an assumption about its shape — this codebase has been bitten
   repeatedly by exactly that shortcut (see CONTRIBUTING.md's "core
   discipline" section for real examples).
+- **License is GPL-3.0-or-later, not MIT.** Relicensed from MIT — see
+  [LICENSE](LICENSE), README.md's License section, and the About dialog
+  (`MainWindow.cpp`) for the three places this has to stay consistent.
+  Don't reintroduce MIT boilerplate or headers on this project's own
+  code. The one deliberate exception: the vendored `resources/icons/`
+  set (Tabler Icons) keeps its own original MIT license — that's a
+  separate copyright holder's code, not this project's, and stays
+  untouched.
