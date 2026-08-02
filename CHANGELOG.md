@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.2.12] — Fix a crash on transfer after disconnect/reconnect
+
 ### Fixed
 
 - **Crash on transferring a file after disconnecting and reconnecting.**
