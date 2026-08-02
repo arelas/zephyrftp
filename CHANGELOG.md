@@ -8,6 +8,21 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Crash on transferring a file after disconnecting and reconnecting.**
+  `TransferManager` tracked the backend executing the active transfer
+  (`m_currentBackend`) as a plain raw pointer. Disconnecting a pane
+  (`FilePaneWidget::setBackend()`) `deleteLater()`s its old backend;
+  reconnecting creates a new one at a different address. The next
+  transfer's `connectToBackend()` still tried to `disconnect()` the
+  stale pointer from the destroyed backend — a use-after-free, SIGSEGV.
+  Found via manual GUI testing (connect → transfer → disconnect →
+  reconnect → transfer), not caught by the existing headless test
+  suite, none of which exercises a disconnect/reconnect cycle mid-session.
+  Fixed by making `m_currentBackend` a `QPointer<RemoteBackend>`, which
+  self-nulls when the backend it points to is destroyed.
+
 ## [0.2.11] — Fix a real FTP fallback gap; add a real-vendor test testbed
 
 ### Fixed

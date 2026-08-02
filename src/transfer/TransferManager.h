@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QList>
 #include <QElapsedTimer>
+#include <QPointer>
 #include "TransferItem.h"
 #include "FolderEnumerator.h"
 
@@ -170,7 +171,12 @@ private:
     QList<TransferItem> m_items;
     int m_nextId = 1;
     int m_activeIndex = -1;          // index into m_items currently running, -1 if idle
-    RemoteBackend *m_currentBackend = nullptr;   // whichever backend is executing the active item
+    // QPointer, not a raw pointer: the pane that owns this backend can be
+    // disconnected/reconnected mid-session (FilePaneWidget::setBackend()
+    // deleteLater()s the old backend), and connectToBackend() below reads
+    // this to decide what to disconnect from before the new one — a raw
+    // pointer would go dangling and crash on the next transfer.
+    QPointer<RemoteBackend> m_currentBackend;   // whichever backend is executing the active item
     // Set by cancelItem() when it cancels the currently-InProgress item;
     // onBackendFailed() checks this to report Cancelled instead of Failed,
     // then clears it. There's no other way to distinguish "the user asked
