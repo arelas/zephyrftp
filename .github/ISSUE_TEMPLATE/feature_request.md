@@ -13,6 +13,7 @@ Otherwise, leave this blank — the "what" matters more than the "how" at
 this stage.
 
 **Related known gaps**
-Check the README's "Known gaps" section first — this might already be a
-known, deliberately-scoped-out limitation with the reasoning already
-written down.
+Check the README's "Known limitations" section (and ARCHITECTURE.md's
+more detailed "Known gaps") first — this might already be a known,
+deliberately-scoped-out limitation with the reasoning already written
+down.

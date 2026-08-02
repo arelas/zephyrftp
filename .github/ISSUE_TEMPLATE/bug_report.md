@@ -16,7 +16,7 @@ labels: bug
 **Environment**
 - OS: (Windows / Linux, and version)
 - Build: (CI-built .exe, or built locally from source — include the commit hash if known)
-- Backend involved: (Local, or SFTP — if SFTP, note the server software/version if known)
+- Backend involved: (Local, SFTP, FTP, or FTPS — if not Local, note the server software/version if known)
 
 **Logs / screenshots**
 If this involves a crash or an SFTP connection issue, anything from the

@@ -220,8 +220,11 @@ that way, it's flagged explicitly rather than left implied.
   the fix didn't disturb the already-working `/`-rooted behavior).
 
 - **Pause/resume's orchestration logic is verified via a purpose-built
-  fake backend, since the real byte-offset resume needs a live SFTP
-  server this environment doesn't have.** `src/transfer_pause_test.cpp`
+  fake backend.** (The real byte-offset resume against `SftpBackend`
+  itself is now separately confirmed against a live server too — see
+  the cancel/pause/resume entry in Known gaps below; this test predates
+  that and still earns its keep as the orchestration-level check,
+  independent of any real network.) `src/transfer_pause_test.cpp`
   (built via the `transfer-pause-test` CMake target) defines
   `FakePausableBackend` — a `RemoteBackend` implementation that simulates
   an interruptible async transfer via a `QTimer` ticking in fixed
@@ -238,8 +241,9 @@ that way, it's flagged explicitly rather than left implied.
   the paused value — proving it continued rather than restarted from
   zero, the entire point of pause/resume over cancel/retry; and the
   transfer reaches `Done` with the full byte count afterward. Does
-  **not** verify `SftpBackend`'s actual seek/clamp/no-truncate logic —
-  see Known gaps.
+  **not** itself verify `SftpBackend`'s actual seek/clamp/no-truncate
+  logic against a real server — see Known gaps for where that's
+  covered instead.
 
 - **Site Manager's new Group field renders in the right place,
   confirmed by pixel analysis, not assumed from the code alone.** A
@@ -288,10 +292,14 @@ that way, it's flagged explicitly rather than left implied.
   optimized/native SFTP implementations (cipher negotiation overhead,
   libssh2's own internal design) that further buffer/socket tuning can't
   close, or whether there's another concrete, fixable lever still to
-  find, is unknown. No live SFTP server is available in this environment
-  to investigate further — everything past this point would need to be
-  chased with the same evidence-first approach used so far, not guessed
-  at.
+  find, is unknown. `tools/local-test-servers/` now provides a real SFTP
+  server for other verification purposes, but it's loopback-local — zero
+  meaningful round-trip time, which is precisely the variable this
+  specific gap is about — so it can't actually distinguish these
+  candidates from each other or reproduce the reported real-world gap.
+  Investigating further needs either a real remote server with realistic
+  latency or the same evidence-first approach used so far applied to the
+  two candidates above, not guessed at.
 
 - **File management (delete/rename/create file/create folder) is
   verified against `LocalBackend`, real files, real temp directories —
@@ -351,9 +359,10 @@ that way, it's flagged explicitly rather than left implied.
   contributing zero files anywhere in its own subtree**, rather than
   being skipped because nothing "needed" it; and every file's content
   is verified correct at every nesting depth, not just presence/absence.
-  All 17 passed on the first real run. **Not verified:**
-  `SftpBackend`'s side of the same walk (see the matching Known Gaps
-  entry) — no live SFTP server is available in this environment.
+  All 17 passed on the first real run. This test only ever exercised
+  `LocalBackend`; `SftpBackend`'s side of the same walk is now also
+  confirmed against a real server — see the `FolderEnumerator`/
+  `listDirectoryForEnumeration()` entry in Known gaps below.
 
 - **Destination conflict resolution — Overwrite/Skip for files, Write
   Into/Skip for folders, and the "apply to all" remembered-decision
@@ -401,10 +410,9 @@ that way, it's flagged explicitly rather than left implied.
   actually investigating (adding diagnostic output, confirming the
   failure was timing-sensitive rather than logical) rather than
   papering over with a longer sleep and hoping.
-  **Not verified:** `SftpBackend`'s `checkExists()` against a real
-  server — no live SFTP server is available in this environment, the
-  same limitation already flagged for every other SFTP-specific path in
-  this project.
+  This test only ever exercised `LocalBackend`'s side of conflict
+  detection; `SftpBackend`'s `checkExists()` is now separately confirmed
+  against a real server — see the matching Known gaps entry below.
 
 - **FTP's directory-listing parsers are verified directly, in isolation
   from any network I/O.** `src/ftp_parsing_test.cpp` (built via the
@@ -420,11 +428,11 @@ that way, it's flagged explicitly rather than left implied.
   that made `FilePaneWidget::parentOfPath()` public. This is the
   highest-risk part of the FTP feature isolated and proven, which is
   worth having, but it is a narrow claim.
-  **Not verified:** everything else about FTP/FTPS — the control
-  connection's command/reply cycling, PASV response parsing, the
-  `AUTH TLS` handshake, and any actual file transfer. None of it is
-  reachable without a live server, and no FTP or FTPS server is
-  reachable from this environment.
+  This test only ever exercised the two parsers as pure functions; the
+  control connection's command/reply cycling, PASV response parsing, the
+  `AUTH TLS` handshake, and actual file transfer all needed a real
+  server to verify — see the bullet immediately below, which closes that
+  gap.
 
 - **The protocol-selection wiring is verified, including the two ways it
   could silently do the wrong thing.** `src/protocol_selection_test.cpp`
@@ -630,8 +638,11 @@ headless/offscreen runs have been checked).
 - `FtpBackend` (`src/backends/FtpBackend.h/.cpp`) — FTP and explicit FTPS,
   hand-rolled directly on `QTcpSocket`/`QSslSocket`. Implements the full
   `RemoteBackend` interface and runs on a dedicated worker thread under
-  the same threading contract as `SftpBackend`. **Not reachable from the
-  UI yet** — nothing constructs one; see Known gaps. The
+  the same threading contract as `SftpBackend`. **Reachable from the UI**
+  — `MainWindow::startConnection()` constructs one for `Protocol::Ftp`/
+  `Protocol::Ftps`, same as `SftpBackend` for `Protocol::Sftp` (see the
+  `MainWindow` entry below); confirmed against a real server too, not
+  just wired — see Known gaps. The
   no-bundled-library decision mirrors `SftpBackend`'s direct-on-libssh2
   approach, and for FTP specifically it was checked rather than assumed:
   libcurl's own documentation confirms it doesn't parse `LIST` output
@@ -982,10 +993,12 @@ headless/offscreen runs have been checked).
   always `LocalBackend`. Right pane starts on `LocalBackend`; the
   toolbar's "Connect..." action (via `ConnectionDialog`) and "Sites..."
   action (via `SiteManagerDialog`) both funnel into a single
-  `startConnection(const SftpCredentials &)` — spins up an `SftpBackend`
-  + worker `QThread` and hands it to the right pane — rather than
-  duplicating that setup in two places. "Disconnect" swaps back to
-  `LocalBackend`. The menu bar's "Connection" menu (`buildMenuBar()`,
+  `startConnection(const ConnectionRequest &)` — the only place in the UI
+  layer that switches on `Protocol` to pick a concrete backend type
+  (`SftpBackend` for `Protocol::Sftp`, `FtpBackend` for `Protocol::Ftp`/
+  `Protocol::Ftps`), moves it to a worker `QThread`, and hands it to the
+  right pane — rather than duplicating that setup in two places or in two
+  protocol-specific paths. "Disconnect" swaps back to `LocalBackend`. The menu bar's "Connection" menu (`buildMenuBar()`,
   next to Help) mirrors these same three toolbar actions — same
   `QAction`-triggered slots, no separate logic — for keyboard/menu
   access alongside the toolbar buttons rather than instead of them.
@@ -1129,7 +1142,7 @@ locally" section.
 **`build-linux`** is a plain native build on `ubuntu-latest` — same
 dependencies CONTRIBUTING.md documents for local Linux development
 (`cmake build-essential qt6-base-dev qt6-svg-dev libssh2-1-dev
-pkg-config`). Ships just the binary: a deliberate choice to match this
+libsecret-1-dev pkg-config`). Ships just the binary: a deliberate choice to match this
 project's existing "no bundled libraries" approach elsewhere
 (`SftpBackend` wraps libssh2 directly, `FtpBackend` is hand-rolled
 rather than pulling in libcurl) rather than building a portable
@@ -1363,9 +1376,11 @@ along the way — worth knowing about if it ever needs touching again.
   exists to influence this but hasn't been touched), and the possibility
   that libssh2's own internal architecture has a ceiling below more
   optimized/native SFTP implementations that no amount of buffer/socket
-  tuning reaches. No live SFTP server is available in this environment
-  to investigate either — whatever's tried next should be chased with
-  the same evidence-first approach used so far, not guessed at.
+  tuning reaches. The local SFTP server `tools/local-test-servers/`
+  provides doesn't help chase this specific gap either — it's loopback,
+  so it has none of the round-trip latency that makes this gap what it
+  is. Whatever's tried next needs either a real remote server or the
+  same evidence-first approach used so far, not guessed at.
 - **Queue item execution is bound to whatever backend is on the pane when
   its turn comes up**, not when it was enqueued. If you queue a transfer,
   then hit Disconnect before it starts, it'll run against whatever backend
