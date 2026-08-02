@@ -1,8 +1,10 @@
 #!/bin/bash
 # Kills whichever of the ephemeral SFTP/FTP/FTPS test servers are
-# currently running, via the pid files each start-*.sh script writes.
-# Safe to run even if none are up — missing pid files are skipped, not
-# an error.
+# currently running, via the pid files each native-process start-*.sh
+# script writes, plus podman rm -f for the container-based ones
+# (start-vsftpd.sh/start-proftpd.sh/start-dropbear.sh — see
+# containers/README.md). Safe to run even if none are up — missing pid
+# files and nonexistent containers are both skipped, not an error.
 set -uo pipefail
 
 for pidfile in \
@@ -23,3 +25,11 @@ do
         rm -f "$pidfile"
     fi
 done
+
+if command -v podman >/dev/null 2>&1; then
+    for container in zephyrftp-test-vsftpd zephyrftp-test-proftpd zephyrftp-test-dropbear; do
+        if podman container exists "$container" 2>/dev/null; then
+            podman rm -f "$container" >/dev/null && echo "Stopped container $container"
+        fi
+    done
+fi

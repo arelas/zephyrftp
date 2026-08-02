@@ -8,6 +8,31 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.2.11] — Fix a real FTP fallback gap; add a real-vendor test testbed
+
+### Fixed
+
+- **FTP's `MLSD`-not-supported fallback missed a real, plausible server
+  response.** `FtpBackend` fell back to the legacy `LIST` format only on
+  a `500`/`502` ("command not implemented") reply to `MLSD` — a server
+  that has `MLSD` but is configured to explicitly deny it (a real
+  proftpd configuration, not a hypothetical one) replies `550`
+  instead, which wasn't handled: the listing would fail outright rather
+  than falling back. Found and fixed via a new real-vendor test
+  container, not reasoned about in advance.
+
+### Changed (developer-facing only, no shipped behavior)
+
+- **A new local container testbed for testing against real, independent
+  FTP/SFTP server implementations** — real vsftpd, proftpd, and
+  Dropbear, each in its own throwaway `podman` container
+  (`tools/local-test-servers/start-vsftpd.sh`/`start-proftpd.sh`/
+  `start-dropbear.sh`), plus two new automated verification harnesses
+  (`verify-ftp-vendors`, `verify-sftp-vendors`). Closes the gap that
+  this project's FTP/FTPS test coverage was previously all against one
+  Python-based stand-in server (pyftpdlib), never a genuinely different
+  vendor's implementation.
+
 ## [0.2.10] — Fix SFTP/FTP display parity bugs; leaner CI
 
 ### Fixed

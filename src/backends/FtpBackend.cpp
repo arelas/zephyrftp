@@ -801,14 +801,24 @@ QList<RemoteEntry> FtpBackend::listDirectoryInternal(const QString &path, bool *
         return entries;
     }
 
-    // MLSD first — standardized and unambiguous. Falls back to LIST
-    // only if the server doesn't understand MLSD at all (a 500/502
-    // "command not implemented" reply), not for any other kind of
-    // failure — a fresh data channel is needed for the retry, since the
-    // one just opened was tied to the now-rejected MLSD attempt.
+    // MLSD first — standardized and unambiguous. Falls back to LIST if
+    // the server doesn't understand MLSD at all (500/502, "command not
+    // implemented") OR administratively refuses it (550, "action not
+    // taken") — found for real, not designed in from a spec reading:
+    // this project's own proftpd test container (mod_facts compiled in,
+    // MLSD/MLST explicitly denied via a <Limit> block — see
+    // tools/local-test-servers/containers/proftpd.conf) replies 550 to
+    // a denied MLSD, not 500/502, and until this was caught, FtpBackend
+    // would have treated that as a hard listing failure instead of
+    // falling back to LIST, on a real, plausible server configuration
+    // (MLSD present but disabled), not just a hypothetical one. Not
+    // treated as a fallback trigger for any OTHER kind of failure — a
+    // fresh data channel is needed for the retry, since the one just
+    // opened was tied to the now-rejected MLSD attempt.
     FtpReply listReply = sendCommand(QStringLiteral("MLSD %1").arg(path));
     bool usingMlsd = true;
-    if (!listReply.isValid() || listReply.code == 500 || listReply.code == 502) {
+    if (!listReply.isValid() || listReply.code == 500 || listReply.code == 502
+        || listReply.code == 550) {
         usingMlsd = false;
         delete channel.socket;
         delete channel.server;

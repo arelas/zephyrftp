@@ -1,0 +1,38 @@
+# Real proftpd — a second, independently-coded FTP server (not vsftpd's
+# codebase) alongside Containerfile.vsftpd, giving FtpBackend's legacy
+# LIST-format fallback a second genuine implementation to be exercised
+# against, with its own LIST-format quirks, not just a second run of the
+# same server. See ARCHITECTURE.md's Known Gaps entry on FTP vendor
+# coverage for why this matters.
+#
+# Same fedora:44 base as Containerfile.vsftpd (and the SAME image
+# build-windows's CI job already uses) — one well-understood base for
+# this whole project's containers rather than a second distro.
+FROM fedora:44
+
+RUN dnf install -y --setopt=install_weak_deps=False proftpd proftpd-utils && dnf clean all
+
+# No system user created at all — mod_auth_file's UserFile carries its
+# own uid/gid fields directly, matched against plain chown below, so
+# there's nothing for a real /etc/passwd/PAM lookup to get wrong (see
+# proftpd.conf's own comment on why this sidesteps the PAM debugging
+# vsftpd's container needed). ftpasswd (proftpd-utils) writes the actual
+# password hash; --stdin feeds it non-interactively at build time.
+RUN mkdir -p /srv/ftp/uploads \
+    && echo "hello from the local proftpd test server" > /srv/ftp/sample.txt \
+    && chown -R 1000:1000 /srv/ftp \
+    && printf 'proftppass\n' | ftpasswd --passwd --file=/etc/proftpd/proftpd.passwd \
+        --name=proftpduser --uid=1000 --gid=1000 --home=/srv/ftp --shell=/sbin/nologin \
+        --stdin \
+    && touch /etc/proftpd/proftpd.group
+
+COPY proftpd.conf /etc/proftpd/proftpd.conf
+
+EXPOSE 21 2201-2210
+
+# -n: stay in the foreground — proftpd's standalone mode otherwise
+# daemonizes the same way vsftpd's did (see Containerfile.vsftpd's
+# background=NO comment for the identical underlying problem: podman's
+# PID 1 needs the real server process, not a parent that forks and
+# immediately exits).
+CMD ["/usr/sbin/proftpd", "-n", "--config", "/etc/proftpd/proftpd.conf"]

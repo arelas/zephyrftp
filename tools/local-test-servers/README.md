@@ -20,7 +20,68 @@ port) before wiping and regenerating its own scratch directory.
 
 Dependencies (Fedora): `openssh-server` (for `sshd`/`ssh-keygen`, likely
 already installed), `python3-pyftpdlib`, `python3-pyOpenSSL`
-(`sudo dnf install -y python3-pyftpdlib python3-pyOpenSSL`).
+(`sudo dnf install -y python3-pyftpdlib python3-pyOpenSSL`). The
+`containers/` subdirectory (real vsftpd/proftpd/Dropbear, see below)
+additionally needs `podman` — nothing else here does.
+
+## Real vendor servers (`containers/`)
+
+`start-ftp.sh` and friends above are all pyftpdlib — a Python stand-in
+this project fully controls, useful but not a genuinely different,
+independently-implemented server. `containers/` closes that gap for
+real: actual vsftpd, proftpd, and Dropbear, each built from its own
+`Containerfile` (`fedora:44` base, the same image `build-windows`'s CI
+job already uses) and run in a throwaway `podman` container — no
+third-party pre-built images, no host system packages installed, fully
+start/stop at will.
+
+```
+tools/local-test-servers/start-vsftpd.sh   # real vsftpd, 127.0.0.1:2126 — never implements MLSD at all
+tools/local-test-servers/start-proftpd.sh  # real proftpd, 127.0.0.1:2127 — MLSD explicitly denied (550)
+tools/local-test-servers/start-dropbear.sh # real Dropbear SFTP, 127.0.0.1:2223 — password auth
+```
+
+`start-vsftpd.sh` is the single highest-value addition: vsftpd has never
+implemented MLSD/RFC 3659 in any version, so it exercises `FtpBackend`'s
+real legacy-`LIST` fallback trigger against a real, unmodified,
+widely-deployed server — not pyftpdlib with a flag forcing MLSD off.
+`start-proftpd.sh` is a second, independently-coded implementation with
+its own `LIST`-format quirks; this build's `mod_facts` is compiled in
+(Fedora doesn't ship a variant without it), so MLSD is denied via a
+`<Limit>` block instead — which replies `550`, not the `500`/`502` a
+genuinely-unimplemented command gets. That discovery is real, not
+theoretical: `FtpBackend.cpp`'s fallback trigger now also treats `550`
+as a fallback signal, exactly because this container found a real,
+plausible server configuration (MLSD present but administratively
+denied) the trigger didn't originally cover.
+
+`start-dropbear.sh` is a genuinely different SSH daemon from the
+`start-sftp-pubkey.sh`/OpenSSH server above, with password auth instead
+of that one's pubkey-only setup — real transport/session/auth-layer
+diversity. Stated plainly, not glossed over: Dropbear's Fedora package
+ships no `sftp-server` binary of its own (confirmed:
+`rpm -ql dropbear` has none) — it shells out to an external one,
+configured here to be OpenSSH's own
+(`/usr/libexec/openssh/sftp-server`). So this is real diversity at the
+SSH transport/auth layer, not proof of a genuinely different
+SFTP-wire-protocol implementation — see ARCHITECTURE.md's Known Gaps
+entry for the full accounting.
+
+Real containerization gotchas hit and fixed while building these — worth
+knowing if you ever touch the `Containerfile`s/configs — are documented
+directly in `containers/vsftpd.conf`, `containers/Containerfile.vsftpd`,
+`containers/pam-vsftpd-virtual`, and `containers/Containerfile.dropbear`:
+vsftpd's and proftpd's standalone modes both daemonize by default and
+need an explicit foreground flag/config (`background=NO`, `-n`) or a
+container's PID 1 sees an instant, silent exit; vsftpd's PAM stack
+rejects a real system account unless its shell is listed in
+`/etc/shells`; and — the one that took the most digging — Fedora's
+`pam_userdb.so` links against `libgdbm`, not Berkeley DB, uses the `db=`
+path completely literally with no `.db` suffix ever appended, and
+defaults to expecting a `crypt()`-hashed value unless told `crypt=none`.
+None of this was assumed from documentation; each was confirmed directly
+against a real failure (`strace`, a tiny standalone PAM test program)
+before being fixed.
 
 ## Starting the servers
 
@@ -51,7 +112,8 @@ unit-tested against crafted sample data.
 ## Running the verification harnesses
 
 ```
-cmake --build build --target verify-sftp-pubkey verify-ftp-live verify-sftp-pause-cancel verify-ftps-trust
+cmake --build build --target verify-sftp-pubkey verify-ftp-live verify-sftp-pause-cancel \
+    verify-ftps-trust verify-ftp-vendors verify-sftp-vendors
 
 QT_QPA_PLATFORM=offscreen SFTP_TEST_SCRATCH=/tmp/zephyrftp-local-test-servers/sftp \
     ./build/verify-sftp-pubkey
@@ -63,14 +125,19 @@ QT_QPA_PLATFORM=offscreen SFTP_TEST_SCRATCH=/tmp/zephyrftp-local-test-servers/sf
     ./build/verify-sftp-pause-cancel
 
 QT_QPA_PLATFORM=offscreen ./build/verify-ftps-trust
+
+QT_QPA_PLATFORM=offscreen ./build/verify-ftp-vendors    # needs start-vsftpd.sh + start-proftpd.sh
+QT_QPA_PLATFORM=offscreen ./build/verify-sftp-vendors   # needs start-dropbear.sh
 ```
 
-All four drive the real backend classes directly
+All six drive the real backend classes directly
 (`src/verify_sftp_pubkey.cpp`, `src/verify_ftp_live.cpp`,
-`src/verify_sftp_pause_cancel.cpp`, `src/verify_ftps_trust.cpp`) — real
+`src/verify_sftp_pause_cancel.cpp`, `src/verify_ftps_trust.cpp`,
+`src/verify_ftp_vendors.cpp`, `src/verify_sftp_vendors.cpp`) — real
 connect, list, download, upload, cancel, pause, and resume, with content
-checked both client-side and by reading files back directly off the
-server's own disk. `verify-ftp-live` needs `start-ftp.sh`, `start-ftps.sh`,
+checked both client-side and (where the server is a native process with
+a host-visible scratch directory) by reading files back directly off
+the server's own disk. `verify-ftp-live` needs `start-ftp.sh`, `start-ftps.sh`,
 `start-ftp-legacy-list.sh`, `start-ftps-trusted.sh`, and
 `start-ftp-active-only.sh` all running (five phases, one per server).
 `verify-ftps-trust` needs `start-ftps.sh` and drives the real
@@ -81,13 +148,18 @@ real `QMessageBox`. `verify-sftp-pause-cancel` generates a real
 (~300MB) local file on first use and reuses it afterward
 (`/tmp/zephyrftp_verify_pause_source.bin`), needed so the transfer runs
 long enough for a cancel/pause request to land reliably mid-flight
-rather than the whole thing finishing before it can. Exit code reflects
-pass/fail (see CONTRIBUTING.md's wine section for why exit code, not
-console text, is the reliable signal in general — not specific to
-these, but the same habit applies). These are deliberately **not** part
-of the ten-target `EXCLUDE_FROM_ALL` test suite or CI: they need an
-external server already running, which those ten are built specifically
-to avoid depending on.
+rather than the whole thing finishing before it can. `verify-ftp-vendors`
+and `verify-sftp-vendors` are the real-vendor harnesses for the
+`containers/` servers above; since those containers are self-contained
+(test content baked into the image, no host-mounted scratch directory),
+their round-trip upload is verified by downloading it back through the
+same protocol session instead of reading the container's filesystem
+directly. Exit code reflects pass/fail (see CONTRIBUTING.md's wine
+section for why exit code, not console text, is the reliable signal in
+general — not specific to these, but the same habit applies). These are
+deliberately **not** part of the ten-target `EXCLUDE_FROM_ALL` test
+suite or CI: they need an external server already running, which those
+ten are built specifically to avoid depending on.
 
 ## Stopping the servers
 

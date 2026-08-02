@@ -1279,11 +1279,55 @@ along the way — worth knowing about if it ever needs touching again.
   `start-ftps-trusted.sh` presents genuinely validates — proves a full
   ENCRYPTED transfer completes end to end, the one case (1)/(3)/(4) don't
   cover and (2) deliberately doesn't reach. Confirmed reliably across
-  multiple repeated runs, not a one-off. **Still not covered by this**:
-  the LIST fallback is still pyftpdlib underneath, not a genuinely
-  different vendor's `LIST` dialect — a real server whose `LIST` output
-  doesn't match either format `parseListLine()` handles (see that
-  function's own comment) hasn't been tried.
+  multiple repeated runs, not a one-off. **What this alone doesn't
+  cover** (closed separately, see the vendor-diversity entry right
+  below): every server above is pyftpdlib underneath, not a genuinely
+  different, independently-implemented one.
+- **The legacy-LIST fallback is now also confirmed against real,
+  independently-implemented FTP server software, not just pyftpdlib —
+  and that verification caught a real gap in the fallback trigger
+  itself before it shipped.** `tools/local-test-servers/containers/`
+  (`Containerfile.vsftpd`, `Containerfile.proftpd`, both `fedora:44`,
+  the same base image `build-windows`'s CI job already uses) build real
+  vsftpd and real proftpd, each in its own throwaway `podman` container,
+  started via `start-vsftpd.sh`/`start-proftpd.sh`.
+  `src/verify_ftp_vendors.cpp` (the `verify-ftp-vendors`
+  `EXCLUDE_FROM_ALL` target) drives `FtpBackend` through a full
+  connect/list/download/upload round trip against each, verified content
+  both ways (uploads are confirmed by downloading them back through the
+  same protocol session, not by reading the container's filesystem
+  directly — these containers are self-contained, no host-mounted
+  scratch directory). vsftpd is the highest-value case: it has never
+  implemented MLSD/RFC 3659 in any version, so it's a real server
+  hitting the real fallback trigger, not pyftpdlib with a flag forcing
+  MLSD off. proftpd is a second, independently-coded implementation
+  (its own `LIST`-format quirks) — its packaged build has `mod_facts`
+  compiled in, so MLSD is denied via a `<Limit>` block instead of being
+  genuinely absent, which turned out to matter: that denial replies
+  `550`, not the `500`/`502` a truly-unimplemented command gets, and
+  `FtpBackend.cpp`'s fallback trigger originally only checked for
+  `500`/`502`. Caught by actually running this against a real server
+  configuration, not reasoned about in advance — the trigger now also
+  treats `550` as a fallback signal, since "MLSD present but
+  administratively denied" is a real, plausible server configuration,
+  not a hypothetical one.
+- **SSH-daemon diversity for SFTP has a real, honest ceiling: OpenSSH's
+  own `sftp-server` is very likely the SFTP implementation underneath
+  almost anything you'll connect to, no matter which daemon fronts it.**
+  Checked directly rather than assumed before building
+  `tools/local-test-servers/containers/Containerfile.dropbear`: Dropbear
+  (a genuinely different, independent SSH daemon from OpenSSH) ships no
+  `sftp-server` binary of its own at all (`rpm -ql dropbear` on Fedora
+  has none) — it shells out to an external one, configured here to be
+  OpenSSH's (`/usr/libexec/openssh/sftp-server`). `start-dropbear.sh` +
+  `src/verify_sftp_vendors.cpp` (the `verify-sftp-vendors` target) do
+  confirm real value from this: a genuinely different SSH transport/
+  session/auth daemon, with password auth (vs. `start-sftp-pubkey.sh`'s
+  pubkey-only OpenSSH setup) adding auth-method diversity too — but not
+  SFTP-wire-protocol-implementation diversity. A real, independently
+  implemented SFTP *server* (not just a different SSH daemon delegating
+  to OpenSSH's) wasn't found to be practically available to containerize
+  for this project; revisit if one becomes practical.
 - **FTPS certificate verification is now a real trust-on-first-use (TOFU)
   model, not fail-closed-only — confirmed end to end against a real
   server, including the mismatch/decline path.** `CertificateVerifier`

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ZephyrFTP VERSION 0.2.10 LANGUAGES CXX)
+project(ZephyrFTP VERSION 0.2.11 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -315,6 +315,22 @@ target_link_libraries(verify-sftp-pause-cancel PRIVATE
     Qt6::Widgets Qt6::Network Qt6::Concurrent ${LIBSSH2_TARGET}
 )
 
+# --- SSH-daemon diversity: real Dropbear (password auth), not just
+# OpenSSH — see src/verify_sftp_vendors.cpp's own header comment for the
+# honest accounting of what this does and doesn't prove. Needs
+# tools/local-test-servers/start-dropbear.sh's podman container already
+# running. ---
+qt_add_executable(verify-sftp-vendors EXCLUDE_FROM_ALL
+    src/verify_sftp_vendors.cpp
+    src/ui/HostKeyVerifier.cpp
+    src/backends/SftpBackend.cpp
+    src/backends/RemoteBackend.h
+)
+target_include_directories(verify-sftp-vendors PRIVATE src)
+target_link_libraries(verify-sftp-vendors PRIVATE
+    Qt6::Widgets Qt6::Network Qt6::Concurrent ${LIBSSH2_TARGET}
+)
+
 qt_add_executable(verify-ftp-live EXCLUDE_FROM_ALL
     src/verify_ftp_live.cpp
     src/backends/FtpBackend.cpp
@@ -335,3 +351,17 @@ qt_add_executable(verify-ftps-trust EXCLUDE_FROM_ALL
 )
 target_include_directories(verify-ftps-trust PRIVATE src)
 target_link_libraries(verify-ftps-trust PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent)
+
+# --- Real vendor-diversity verification: actual vsftpd/proftpd, not
+# pyftpdlib — see src/verify_ftp_vendors.cpp's own header comment. Needs
+# tools/local-test-servers/start-vsftpd.sh/start-proftpd.sh's podman
+# containers already running, a different (heavier) precondition than
+# verify-ftp-live's, hence its own target. ---
+qt_add_executable(verify-ftp-vendors EXCLUDE_FROM_ALL
+    src/verify_ftp_vendors.cpp
+    src/backends/FtpBackend.cpp
+    src/backends/RemoteBackend.h
+    src/ui/CertificateVerifier.cpp
+)
+target_include_directories(verify-ftp-vendors PRIVATE src)
+target_link_libraries(verify-ftp-vendors PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)

@@ -296,7 +296,7 @@ mid-transfer cancel/pause/resume, and all of `FtpBackend` used to be
 genuinely unverified as a result (see ARCHITECTURE.md's Known gaps):
 nothing in this environment could reach a real server that way.
 `tools/local-test-servers/` closes that — throwaway local `sshd`/FTP/FTPS
-servers (no root, no system config touched) plus four harnesses that
+servers (no root, no system config touched) plus six harnesses that
 drive the real backend classes against them:
 
 ```
@@ -316,14 +316,36 @@ QT_QPA_PLATFORM=offscreen ./build/verify-ftps-trust
 tools/local-test-servers/stop-all.sh
 ```
 
-See `tools/local-test-servers/README.md` for the full picture and
+`tools/local-test-servers/containers/` goes one step further: real
+vsftpd/proftpd/Dropbear, not pyftpdlib — each built from its own
+`Containerfile` and run in a throwaway `podman` container, for genuine
+vendor/implementation diversity rather than a Python stand-in this
+project fully controls. **`podman` is only needed for this specific
+piece** (same scoping as `wine` above — not needed for the build or the
+other ten targets at all):
+
+```
+tools/local-test-servers/start-vsftpd.sh
+tools/local-test-servers/start-proftpd.sh
+tools/local-test-servers/start-dropbear.sh
+
+cmake --build build --target verify-ftp-vendors verify-sftp-vendors
+QT_QPA_PLATFORM=offscreen ./build/verify-ftp-vendors
+QT_QPA_PLATFORM=offscreen ./build/verify-sftp-vendors
+
+tools/local-test-servers/stop-all.sh   # stops everything above too, containers included
+```
+
+See `tools/local-test-servers/README.md` for the full picture (including
+the real containerization gotchas — PAM/GDBM/foreground-mode quirks —
+hit and fixed while building the vsftpd/proftpd/Dropbear containers) and
 ARCHITECTURE.md's Known gaps entries for FTP/FTPS, certificate
-trust-on-first-use, public-key authentication, and cancel/pause/resume
-for exactly what's confirmed and what still isn't, even after this.
-These four targets are `EXCLUDE_FROM_ALL` like the main ten but
-intentionally **not** part of that suite or CI — an external-server
-precondition is a different category from "always runs the same way,"
-which is the whole point of the other ten.
+trust-on-first-use, public-key authentication, cancel/pause/resume, and
+vendor diversity for exactly what's confirmed and what still isn't,
+even after this. These six targets are `EXCLUDE_FROM_ALL` like the main
+ten but intentionally **not** part of that suite or CI — an
+external-server precondition is a different category from "always runs
+the same way," which is the whole point of the other ten.
 
 ## The core discipline this codebase runs on
 

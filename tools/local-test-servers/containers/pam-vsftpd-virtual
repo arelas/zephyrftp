@@ -1,0 +1,12 @@
+#%PAM-1.0
+# Backs vsftpd's virtual-user login (see vsftpd.conf's pam_service_name
+# and Containerfile.vsftpd's own comment for the two real, strace-
+# confirmed gotchas in wiring this up at all: the GDBM-not-Berkeley-DB
+# format, and db= being used as an exact, unsuffixed path) — checks
+# against the small GDBM file built into the image, not /etc/shadow.
+# crypt=none is a third one: pam_userdb.so otherwise assumes the
+# database's stored value is itself a crypt() hash and compares against
+# that, which fails with no other diagnostic available in this minimal
+# container when the database holds a plain password, as built here.
+auth    required    pam_userdb.so   db=/etc/vsftpd/virtual_users crypt=none
+account required    pam_userdb.so   db=/etc/vsftpd/virtual_users crypt=none

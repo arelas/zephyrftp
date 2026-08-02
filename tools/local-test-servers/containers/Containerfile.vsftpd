@@ -1,0 +1,55 @@
+# Real vsftpd, not a stand-in — closes the ARCHITECTURE.md gap that the
+# legacy-LIST fallback had only ever been exercised against pyftpdlib
+# with MLSD manually disabled via a flag, never a genuinely different,
+# independently-implemented server. vsftpd specifically never implemented
+# MLSD/RFC 3659 at all, in any version — so this is a real server hitting
+# FtpBackend's real fallback trigger, not a simulation of one.
+#
+# fedora:44 base — the SAME image build-windows's CI job already uses,
+# so this project's container footprint stays to one well-understood
+# base rather than adding a second distro just for this. Self-contained
+# (test content baked into the image at build time, not bind-mounted
+# from the host) so start/stop is just podman run/rm, no host-side
+# scratch directory or UID-mapping concerns between the host and a
+# rootless container's user namespace.
+FROM fedora:44
+
+RUN dnf install -y --setopt=install_weak_deps=False vsftpd gdbm && dnf clean all
+
+# Virtual users via pam_userdb, NOT a real system account against
+# /etc/shadow — confirmed the hard way, not assumed: system-account PAM
+# login (pam_unix.so against a useradd/chpasswd-created account) failed
+# ("530 Login incorrect") in this minimal container with no working way
+# to see PAM's own diagnosis (no syslog/journald running to catch it).
+# pam_userdb.so checking a small user/password database is the standard,
+# well-known pattern for vsftpd container test users specifically
+# because it sidesteps system shadow/PAM auth entirely.
+#
+# Two real gotchas confirmed directly (via strace, not assumed from
+# docs), both load-bearing for this actually working at all:
+# (1) Fedora's pam_userdb.so links against libgdbm, NOT Berkeley DB —
+#     a file built with db_load (libdb-utils) fails with a generic
+#     "Error in service module" (PAM_SERVICE_ERR), not a clean auth
+#     failure, since the module can't even parse the format. gdbmtool
+#     (from the plain `gdbm` package) is the right tool.
+# (2) pam_userdb.so's `db=` path is used LITERALLY, with no `.db`
+#     suffix ever appended — the actual file has to be named exactly
+#     what vsftpd.conf's pam config says, confirmed via strace showing
+#     the module opening that exact path with no suffix logic at all.
+#
+# virtual_use_local_privs (set in vsftpd.conf) maps every authenticated
+# virtual user onto this real local user's filesystem privileges/home
+# directory, so the served tree still just lives at /srv/ftp.
+RUN useradd -m -d /srv/ftp -s /sbin/nologin vsftpuser \
+    && mkdir -p /srv/ftp/uploads \
+    && echo "hello from the local vsftpd test server" > /srv/ftp/sample.txt \
+    && chown -R vsftpuser:vsftpuser /srv/ftp \
+    && echo "store vsftpuser vsftppass" | gdbmtool /etc/vsftpd/virtual_users \
+    && chmod 600 /etc/vsftpd/virtual_users
+
+COPY vsftpd.conf /etc/vsftpd/vsftpd.conf
+COPY pam-vsftpd-virtual /etc/pam.d/vsftpd.virtual
+
+EXPOSE 21 2191-2200
+
+CMD ["/usr/sbin/vsftpd", "/etc/vsftpd/vsftpd.conf"]

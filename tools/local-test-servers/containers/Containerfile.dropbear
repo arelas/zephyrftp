@@ -1,0 +1,33 @@
+# Dropbear — a genuinely different SSH daemon from OpenSSH (the one
+# tools/local-test-servers/start-sftp-pubkey.sh already tests against),
+# for transport/session/auth-layer diversity. Real, checked-for-real
+# limitation, not glossed over: Dropbear's Fedora package ships no
+# sftp-server binary of its own (confirmed: `rpm -ql dropbear` has none)
+# — it shells out to an external one, configured below to be OpenSSH's
+# own (/usr/libexec/openssh/sftp-server). So SftpBackend's actual
+# SFTP-subsystem wire traffic here is still most likely OpenSSH's own
+# implementation underneath a different SSH transport/auth daemon — real
+# value for the latter, not proof of SFTP-protocol-implementation
+# diversity. See ARCHITECTURE.md's Known Gaps entry for the honest
+# accounting of what this does and doesn't close.
+#
+# Same fedora:44 base as the FTP vendor containers.
+FROM fedora:44
+
+RUN dnf install -y --setopt=install_weak_deps=False dropbear openssh-server && dnf clean all
+
+RUN useradd -m -d /home/dropbearuser -s /bin/bash dropbearuser \
+    && echo "dropbearuser:dropbearpass" | chpasswd \
+    && mkdir -p /home/dropbearuser/uploads \
+    && echo "hello from the local dropbear test server" > /home/dropbearuser/sample.txt \
+    && chown -R dropbearuser:dropbearuser /home/dropbearuser \
+    && mkdir -p /etc/dropbear \
+    && dropbearkey -t rsa -f /etc/dropbear/dropbear_rsa_host_key
+
+EXPOSE 22
+
+# -F: stay in the foreground (same reasoning as vsftpd's background=NO
+# and proftpd's -n — a container's PID 1 needs the real server, not a
+# parent that daemonizes and exits). -E: log to stderr, so `podman logs`
+# actually shows something. -r: the host key generated above.
+CMD ["/usr/sbin/dropbear", "-F", "-E", "-r", "/etc/dropbear/dropbear_rsa_host_key"]
