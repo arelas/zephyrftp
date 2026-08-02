@@ -40,6 +40,15 @@ int main(int argc, char *argv[])
 
     const QString srcBase = "/tmp/folder_transfer_test/src";
     const QString dstBase = "/tmp/folder_transfer_test/dst";
+    // A stale "myfolder" left over on the destination from a PREVIOUS run
+    // (this test never used to clean up after itself) makes
+    // TransferManager::enqueueFolder() correctly detect a real destination
+    // conflict and pop a real, unanswered QMessageBox — nobody in this
+    // headless test drives it, which corrupts the rest of this test's
+    // timing and pass/fail results in a way that looked like a feature
+    // bug but wasn't. Removing it first makes every run start from the
+    // same clean slate the first-ever run gets.
+    QDir(dstBase).removeRecursively();
     QDir().mkpath(srcBase + "/myfolder/subdir1");
     QDir().mkpath(srcBase + "/myfolder/subdir2/nested");
     QDir().mkpath(srcBase + "/myfolder/emptydir");

@@ -27,8 +27,10 @@
 #include <QApplication>
 #include <QTimer>
 #include <QDebug>
+#include <QDir>
 #include <QFile>
 #include <QCryptographicHash>
+#include <QRandomGenerator>
 #include "ui/FilePaneWidget.h"
 #include "backends/LocalBackend.h"
 #include "transfer/TransferManager.h"
@@ -50,6 +52,29 @@ int main(int argc, char *argv[])
     const QString srcDir = "/tmp/transfer_test/src_dir";
     const QString dstDir = "/tmp/transfer_test/dst_dir";
     const QString fileName = "testfile.bin";
+
+    // Start every run from a clean slate. A previous run's testfile.bin
+    // (or testfile2.bin/doesnotexist.bin's requeue side effects) left
+    // sitting at the destination would otherwise make TransferManager
+    // correctly detect a real destination conflict and pop a real,
+    // unanswered QMessageBox — the exact same class of bug
+    // folder_transfer_test.cpp had (see its own matching comment) — and
+    // this test used to depend entirely on whoever ran it remembering an
+    // undocumented-in-code `rm -rf` first. Generating testfile.bin's
+    // content here too (rather than requiring it be created externally
+    // beforehand, as CONTRIBUTING.md used to instruct) means this test
+    // no longer depends on anything set up outside this binary.
+    QDir("/tmp/transfer_test").removeRecursively();
+    QDir().mkpath(srcDir);
+    QDir().mkpath(dstDir);
+    {
+        QFile f(srcDir + "/" + fileName);
+        f.open(QIODevice::WriteOnly);
+        QByteArray randomData(500000, Qt::Uninitialized);
+        QRandomGenerator::global()->fillRange(
+            reinterpret_cast<quint32 *>(randomData.data()), randomData.size() / sizeof(quint32));
+        f.write(randomData);
+    }
     const QString srcHashBefore = fileHash(srcDir + "/" + fileName);
 
     // Second small file for the cancel-while-queued phase.

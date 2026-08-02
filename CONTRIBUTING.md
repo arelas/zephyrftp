@@ -177,9 +177,6 @@ QT_QPA_PLATFORM=offscreen ./build/smoke-test
 
 ```
 cmake --build build --target transfer-queue-test
-rm -rf /tmp/transfer_test
-mkdir -p /tmp/transfer_test/src_dir /tmp/transfer_test/dst_dir
-head -c 500000 /dev/urandom > /tmp/transfer_test/src_dir/testfile.bin
 QT_QPA_PLATFORM=offscreen ./build/transfer-queue-test
 ```
 
@@ -205,15 +202,6 @@ QT_QPA_PLATFORM=offscreen ./build/file-operations-test
 
 ```
 cmake --build build --target folder-transfer-test
-rm -rf /tmp/folder_transfer_test
-mkdir -p /tmp/folder_transfer_test/src/myfolder/subdir1 \
-         /tmp/folder_transfer_test/src/myfolder/subdir2/nested \
-         /tmp/folder_transfer_test/src/myfolder/emptydir \
-         /tmp/folder_transfer_test/dst
-echo "hi from a" > /tmp/folder_transfer_test/src/myfolder/a.txt
-echo "hi from b" > /tmp/folder_transfer_test/src/myfolder/subdir1/b.txt
-echo "hi from c" > /tmp/folder_transfer_test/src/myfolder/subdir1/c.txt
-echo "hi from d" > /tmp/folder_transfer_test/src/myfolder/subdir2/nested/d.txt
 QT_QPA_PLATFORM=offscreen ./build/folder-transfer-test
 ```
 
@@ -232,15 +220,17 @@ cmake --build build --target protocol-selection-test
 XDG_CONFIG_HOME=/tmp/zephyrftp_proto_config QT_QPA_PLATFORM=offscreen ./build/protocol-selection-test
 ```
 
-The `rm -rf` lines on `transfer-queue-test` and `folder-transfer-test`
-aren't optional either, and they're the reason those two commands start
-by deleting a directory: `mkdir -p` won't clear a destination that
-already holds the previous run's output, so without the teardown both
-suites pass the first time and fail every time after — one because a
-phase re-transfers a file already sitting at the destination, the other
-because `dst/myfolder` already exists. That failure looks exactly like a
-code regression and isn't one, so run the setup as written rather than
-skipping straight to the binary.
+`transfer-queue-test` and `folder-transfer-test` both wipe and
+regenerate their own `/tmp/transfer_test`/`/tmp/folder_transfer_test`
+scratch trees at the top of `main()` now, so re-running either back to
+back needs nothing beyond the two lines above. That wasn't always true:
+both used to require an external `rm -rf` + fixture-recreation dance
+before every run, because `TransferManager` correctly detects a
+previous run's leftover output as a real destination conflict and pops
+a real, unanswered `QMessageBox` — a failure that looks exactly like a
+code regression and isn't one. Fixed 2026-08-02 by making each test
+generate and clean its own fixtures instead of depending on the operator
+remembering a shell incantation first.
 
 The `XDG_CONFIG_HOME` override on `site-store-test` isn't optional —
 without it, `SiteStore` writes to your actual config directory, and the

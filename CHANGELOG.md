@@ -8,6 +8,16 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.2.9] — Fix local pane permissions display
+
+### Fixed
+
+- **The local (your-computer) pane's permissions column only ever showed
+  a single `r` or `-` character** — just the owner's read bit, discarding
+  write/execute and the entire group/other columns — unlike the SFTP
+  pane, which shows a full `rwxr-xr-x`-style string. Both panes now
+  render permissions the same way.
+
 ## [0.2.8] — Close the remaining FTP/FTPS gaps
 
 ### Added
