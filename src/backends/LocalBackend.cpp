@@ -5,6 +5,34 @@
 #include <QFile>
 #include <QStandardPaths>
 
+namespace {
+// Renders the full owner/group/other rwx string, same layout and
+// reasoning as SftpBackend.cpp's parseSftpEntry() (factored out there
+// for the same reason: two independent copies of this drifted once
+// already — see listDirectory()/listDirectoryForEnumeration() below,
+// which used to each hand-roll their own, and only ever showed the
+// owner's READ bit as a single 'r'/'-', discarding write/execute and
+// the entire group/other columns). Deliberately QFileDevice::Read/Write/
+// ExeOwner (the file's actual mode bits), not the ...User variants,
+// which report whether the CURRENT process can access the file —
+// a different, effective-access question, not what this column means
+// on the SFTP side it's displayed next to.
+QString renderPermissions(QFileDevice::Permissions permissions)
+{
+    char perms[10] = "---------";
+    if (permissions & QFileDevice::ReadOwner)  perms[0] = 'r';
+    if (permissions & QFileDevice::WriteOwner) perms[1] = 'w';
+    if (permissions & QFileDevice::ExeOwner)   perms[2] = 'x';
+    if (permissions & QFileDevice::ReadGroup)  perms[3] = 'r';
+    if (permissions & QFileDevice::WriteGroup) perms[4] = 'w';
+    if (permissions & QFileDevice::ExeGroup)   perms[5] = 'x';
+    if (permissions & QFileDevice::ReadOther)  perms[6] = 'r';
+    if (permissions & QFileDevice::WriteOther) perms[7] = 'w';
+    if (permissions & QFileDevice::ExeOther)   perms[8] = 'x';
+    return QString::fromLatin1(perms, 9);
+}
+}
+
 LocalBackend::LocalBackend(QObject *parent)
     : RemoteBackend(parent)
     , m_currentPath(QDir::homePath())
@@ -38,7 +66,7 @@ void LocalBackend::listDirectory(const QString &path)
         e.isSymlink = info.isSymLink();
         e.size = info.isDir() ? 0 : info.size();
         e.modified = info.lastModified();
-        e.permissions = info.permissions().testFlag(QFileDevice::ReadUser) ? QStringLiteral("r") : QStringLiteral("-");
+        e.permissions = renderPermissions(info.permissions());
         entries.append(e);
     }
 
@@ -66,7 +94,7 @@ void LocalBackend::listDirectoryForEnumeration(const QString &path, int requestI
         e.isSymlink = info.isSymLink();
         e.size = info.isDir() ? 0 : info.size();
         e.modified = info.lastModified();
-        e.permissions = info.permissions().testFlag(QFileDevice::ReadUser) ? QStringLiteral("r") : QStringLiteral("-");
+        e.permissions = renderPermissions(info.permissions());
         entries.append(e);
     }
 
