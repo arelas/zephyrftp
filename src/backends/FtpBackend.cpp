@@ -16,6 +16,7 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QTimeZone>
 
 namespace {
 // Persists accepted certificate fingerprints across runs — the FTPS
@@ -682,10 +683,24 @@ bool FtpBackend::parseMlsdLine(const QString &line, RemoteEntry *entry)
 
     const QString modify = facts.value(QStringLiteral("modify"));   // YYYYMMDDHHMMSS[.sss], always UTC per RFC 3659
     if (modify.length() >= 14) {
+        // Converted to local time before storing — LocalBackend
+        // (QFileInfo::lastModified()) and SftpBackend
+        // (QDateTime::fromSecsSinceEpoch(), which defaults to local
+        // time) both display local time, and FilePaneWidget's
+        // modified-column rendering just calls toString() on whatever's
+        // stored with no per-backend conversion of its own. Without
+        // this, MLSD-sourced entries would show the file's real UTC
+        // wall-clock time labeled as if it were local (plus a trailing
+        // "Z" from Qt::ISODate formatting a UTC-tagged QDateTime) —
+        // visibly wrong and inconsistent with the other two panes for
+        // the exact same underlying instant. Confirmed directly: an
+        // entry timestamped 2025-01-01T00:00:00Z showed as
+        // 2025-01-01T00:00:00Z here but 2024-12-31T19:00:00 in
+        // Local/SFTP under America/New_York before this fix.
         entry->modified = QDateTime(
             QDate(modify.mid(0, 4).toInt(), modify.mid(4, 2).toInt(), modify.mid(6, 2).toInt()),
             QTime(modify.mid(8, 2).toInt(), modify.mid(10, 2).toInt(), modify.mid(12, 2).toInt()),
-            Qt::UTC);
+            QTimeZone::UTC).toLocalTime();
     }
 
     // MLSD's "perm" fact is a compact permission-CAPABILITY code

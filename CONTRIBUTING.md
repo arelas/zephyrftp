@@ -49,6 +49,21 @@ jobs, and wine refuses to create its default `~/.wine` there (ownership
 check failure) — fixed by pinning `WINEPREFIX` to a scratch dir the job
 creates and owns outright.
 
+**This pipeline does NOT run automatically on every push to `main`** —
+only on a `v*` tag (an actual release) or a pull request. Ordinary
+pushes rely on the local build/test steps in this document instead,
+since the full pipeline (native Linux build+test, MinGW cross-compile +
+wine build+test) costs real time and Actions minutes that add up fast
+against routine, non-release commits. Run it on demand anytime without
+pushing a tag via `workflow_dispatch`:
+
+```
+gh workflow run build.yml --ref main
+```
+
+(or the "Run workflow" button on the Actions tab) — same jobs, same
+verification, just opt-in instead of automatic.
+
 ### Cross-compiling for Windows locally (MinGW, from Fedora)
 
 Useful for a faster local loop than waiting on GitHub Actions, and for

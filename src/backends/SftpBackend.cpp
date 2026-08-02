@@ -18,6 +18,7 @@ RemoteEntry parseSftpEntry(const QString &name, const LIBSSH2_SFTP_ATTRIBUTES &a
     RemoteEntry e;
     e.name = name;
     e.isDir = LIBSSH2_SFTP_S_ISDIR(attrs.permissions);
+    e.isSymlink = LIBSSH2_SFTP_S_ISLNK(attrs.permissions);
     e.size = static_cast<qint64>(attrs.filesize);
     e.modified = QDateTime::fromSecsSinceEpoch(static_cast<qint64>(attrs.mtime));
 

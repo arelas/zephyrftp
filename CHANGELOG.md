@@ -8,6 +8,25 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **SFTP entries never reported being a symlink** (`isSymlink` was
+  always `false`), unlike the local and FTP backends, which both detect
+  it correctly. No visible effect yet — nothing in the UI reads this
+  field today — but a real data-model inconsistency worth closing.
+- **FTP's MLSD-sourced modification times displayed in UTC instead of
+  local time**, unlike the local and SFTP panes, which both show local
+  time for the same instant. A file's modification time could show a
+  different hour (and a trailing "Z") in the FTP pane than the exact
+  same moment would show in the other two.
+
+### Changed
+
+- **CI no longer runs the full build+test pipeline on every push to
+  `main`** — only on an actual release tag or a pull request, to save
+  time and Actions minutes on routine commits. Still runnable on demand
+  anytime via `gh workflow run build.yml` (see CONTRIBUTING.md).
+
 ## [0.2.9] — Fix local pane permissions display
 
 ### Fixed

@@ -1,8 +1,24 @@
 name: Build
 
+# Deliberately NOT triggered on every push to main — this full pipeline
+# (native Linux build+test, MinGW cross-compile + wine build+test) costs
+# real time and Actions minutes, and CONTRIBUTING.md's local build/test
+# instructions already cover the same ground before pushing. Left
+# triggering automatically:
+#   - `tags: ['v*']` — an actual release. This is the one case CI
+#     verification isn't optional: see CONTRIBUTING.md's "CI changes
+#     need a real GitHub-hosted run before done" reasoning and the
+#     release job below, which only runs on a tag anyway.
+#   - `pull_request` — free until a PR actually exists; kept as a safety
+#     net for if/when this project gets a contributor workflow, not
+#     costing anything today.
+# `workflow_dispatch` keeps the full pipeline runnable on demand at any
+# time (any branch/ref) without needing a tag — `gh workflow run build.yml`
+# or the Actions tab's "Run workflow" button — so nothing here is lost,
+# just no longer automatic on ordinary pushes. Revisit if a PR-based
+# workflow makes per-push checks worth the cost again.
 on:
   push:
-    branches: [main]
     tags: ['v*']
   pull_request:
     branches: [main]
