@@ -16,7 +16,6 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
-#include <QTimeZone>
 
 namespace {
 // Persists accepted certificate fingerprints across runs — the FTPS
@@ -697,10 +696,21 @@ bool FtpBackend::parseMlsdLine(const QString &line, RemoteEntry *entry)
         // entry timestamped 2025-01-01T00:00:00Z showed as
         // 2025-01-01T00:00:00Z here but 2024-12-31T19:00:00 in
         // Local/SFTP under America/New_York before this fix.
+        //
+        // Qt::UTC (not QTimeZone::UTC, Qt 6.7+ only) deliberately — this
+        // codebase's CI target (ubuntu-latest's packaged qt6-base-dev)
+        // ships an older Qt6 without QTimeZone's Initialization enum at
+        // all, confirmed the hard way when a first attempt at this fix
+        // built fine locally (a newer Qt6) but failed to COMPILE at all
+        // in CI ("'UTC' is not a member of 'QTimeZone'") — a real gap
+        // between two "Qt6" builds, not a version this codebase can
+        // assume. Qt::UTC is deprecated as of newer Qt but still
+        // compiles everywhere Qt6 does; the deprecation warning is a
+        // fully acceptable trade for that portability.
         entry->modified = QDateTime(
             QDate(modify.mid(0, 4).toInt(), modify.mid(4, 2).toInt(), modify.mid(6, 2).toInt()),
             QTime(modify.mid(8, 2).toInt(), modify.mid(10, 2).toInt(), modify.mid(12, 2).toInt()),
-            QTimeZone::UTC).toLocalTime();
+            Qt::UTC).toLocalTime();
     }
 
     // MLSD's "perm" fact is a compact permission-CAPABILITY code
