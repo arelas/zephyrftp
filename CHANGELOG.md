@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.2.10] — Fix SFTP/FTP display parity bugs; leaner CI
+
 ### Fixed
 
 - **SFTP entries never reported being a symlink** (`isSymlink` was
