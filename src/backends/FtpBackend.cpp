@@ -1,15 +1,135 @@
 #include "FtpBackend.h"
+#include "../ui/CertificateVerifier.h"
 
 #include <QSslSocket>
 #include <QSslError>
+#include <QSslConfiguration>
+#include <QTcpServer>
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QHash>
+#include <QCryptographicHash>
+#include <QMetaObject>
+#include <QStandardPaths>
+#include <QDir>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonObject>
 
-FtpBackend::FtpBackend(FtpCredentials credentials, QObject *parent)
+namespace {
+// Persists accepted certificate fingerprints across runs — the FTPS
+// equivalent of SftpBackend.cpp's knownHostsFilePath(), but a plain JSON
+// array (this project's own convention for its own non-secret state; see
+// SiteStore) rather than libssh2's OpenSSH-dictated known_hosts format,
+// since nothing here is bound to a third-party API's file format. A
+// certificate fingerprint is public information, not a secret — same
+// status as an SSH host-key fingerprint, which this project already
+// stores in plaintext.
+QString knownCertsFilePath()
+{
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    QDir().mkpath(dir);
+    return dir + QStringLiteral("/known_certs.json");
+}
+
+QString loadTrustedFingerprint(const QString &host, int port)
+{
+    QFile file(knownCertsFilePath());
+    if (!file.open(QIODevice::ReadOnly))
+        return QString();   // no file yet — expected on first run
+
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    if (!doc.isArray())
+        return QString();   // corrupt/unexpected content — fail soft, treat as unknown
+
+    for (const QJsonValue &value : doc.array()) {
+        if (!value.isObject())
+            continue;
+        const QJsonObject obj = value.toObject();
+        if (obj.value(QStringLiteral("host")).toString() == host
+            && obj.value(QStringLiteral("port")).toInt() == port) {
+            return obj.value(QStringLiteral("fingerprint")).toString();
+        }
+    }
+    return QString();
+}
+
+void saveTrustedFingerprint(const QString &host, int port, const QString &fingerprint)
+{
+    QJsonArray array;
+    QFile readFile(knownCertsFilePath());
+    if (readFile.open(QIODevice::ReadOnly)) {
+        const QJsonDocument doc = QJsonDocument::fromJson(readFile.readAll());
+        if (doc.isArray())
+            array = doc.array();
+        readFile.close();
+    }
+
+    // Replace any existing entry for this host:port rather than
+    // appending a duplicate — this is the "certificate changed" update
+    // path as well as the first-trust path.
+    QJsonArray updated;
+    for (const QJsonValue &value : array) {
+        if (!value.isObject())
+            continue;
+        const QJsonObject obj = value.toObject();
+        if (obj.value(QStringLiteral("host")).toString() == host
+            && obj.value(QStringLiteral("port")).toInt() == port) {
+            continue;
+        }
+        updated.append(obj);
+    }
+    QJsonObject entry;
+    entry[QStringLiteral("host")] = host;
+    entry[QStringLiteral("port")] = port;
+    entry[QStringLiteral("fingerprint")] = fingerprint;
+    updated.append(entry);
+
+    QFile writeFile(knownCertsFilePath());
+    if (writeFile.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        writeFile.write(QJsonDocument(updated).toJson(QJsonDocument::Indented));
+}
+
+// Makes a QTcpServer hand out QSslSocket instances (adopted via
+// setSocketDescriptor()) from nextPendingConnection() instead of plain
+// QTcpSocket ones — needed for active/PORT-mode data connections, which
+// are TCP-accepted (the server dials back to us) but still need this
+// side to act as the TLS CLIENT once PROT P is active: per RFC 4217 the
+// FTP client/server TLS roles don't flip just because the TCP dial
+// direction did. Qt has no built-in "accept, but hand me a QSslSocket"
+// server (QSslServer, added in Qt 6.4, does the opposite — it makes
+// accepted connections act as the TLS SERVER, which is wrong for this
+// use), so this is the documented manual pattern instead.
+class SslAcceptingTcpServer : public QTcpServer {
+public:
+    using QTcpServer::QTcpServer;
+
+protected:
+    void incomingConnection(qintptr handle) override
+    {
+        // No parent: nextPendingConnection() transfers ownership to
+        // whoever calls it (per QTcpServer's own documented contract) —
+        // parenting this to the server itself would mean deleting the
+        // server (finalizeDataChannel() does, right after taking this
+        // pointer) also deletes this socket out from under its new
+        // owner, a real dangling-pointer crash caught by actually
+        // running this against a live server, not just reasoning about
+        // it.
+        auto *socket = new QSslSocket();
+        if (socket->setSocketDescriptor(handle))
+            addPendingConnection(socket);
+        else
+            delete socket;
+    }
+};
+}
+
+FtpBackend::FtpBackend(FtpCredentials credentials, CertificateVerifier *certificateVerifier,
+                        QObject *parent)
     : RemoteBackend(parent)
     , m_credentials(std::move(credentials))
+    , m_certificateVerifier(certificateVerifier)
 {
 }
 
@@ -32,6 +152,8 @@ void FtpBackend::teardown()
     }
     m_connected = false;
     m_dataProtected = false;
+    m_trustedCertFingerprint.clear();
+    m_controlSessionTicket.clear();
 }
 
 QString FtpBackend::currentPath() const
@@ -125,24 +247,104 @@ FtpBackend::FtpReply FtpBackend::sendCommand(const QString &text)
     return readReply();
 }
 
-// Attaches a handler that RECORDS TLS errors so they can be reported in
-// plain language, without ignoring them. This distinction matters: not
-// calling ignoreSslErrors() is what keeps the handshake failing closed
-// on an untrusted certificate, which is the behavior we want. The only
-// thing added here is legibility — without it, a self-signed server
-// certificate (very common on FTPS servers) surfaces as a generic
-// "TLS handshake failed: Unknown error", which tells the user nothing
-// about what to do next.
-static void recordTlsErrors(QSslSocket *socket, QString *sink)
+bool FtpBackend::askUserToTrustCertificate(const QString &fingerprint, const QString &details, bool isMismatch)
 {
+    if (!m_certificateVerifier) {
+        // Fails safe: with no way to ask a person, refuse rather than
+        // silently trust. Should never happen in practice (MainWindow
+        // always wires one up), but if it did, silently trusting an
+        // unverifiable certificate would defeat the entire point of
+        // this feature.
+        return false;
+    }
+
+    bool accepted = false;
+    QMetaObject::invokeMethod(m_certificateVerifier, "confirmCertificate", Qt::BlockingQueuedConnection,
+                               Q_RETURN_ARG(bool, accepted),
+                               Q_ARG(QString, m_credentials.host),
+                               Q_ARG(QString, fingerprint),
+                               Q_ARG(QString, details),
+                               Q_ARG(bool, isMismatch));
+    return accepted;
+}
+
+bool FtpBackend::verifyPeerCertificate(QSslSocket *socket, bool isDataConnection, QString *errorOut)
+{
+    bool sawErrors = false;
+    QString fingerprint;
+    QString details;
+
+    // Deliberately no ignoreSslErrors() call unless a trust decision
+    // (below) actually grants it — that's what keeps the handshake
+    // failing closed on an unverifiable certificate by default. This
+    // slot runs synchronously (same thread) during waitForEncrypted()'s
+    // internal event processing, so a decision made here — including
+    // the cross-thread blocking call to a GUI-thread verifier — is in
+    // effect before waitForEncrypted() returns, same technique already
+    // proven for host-key verification in SftpBackend.
     QObject::connect(socket, &QSslSocket::sslErrors, socket,
-                     [sink](const QList<QSslError> &errors) {
+                     [&](const QList<QSslError> &errors) {
+        sawErrors = true;
+        const QSslCertificate cert = socket->peerCertificate();
+        fingerprint = QString::fromLatin1(cert.digest(QCryptographicHash::Sha256).toHex());
+
         QStringList descriptions;
         for (const QSslError &error : errors)
             descriptions << error.errorString();
-        *sink = descriptions.join(QStringLiteral("; "));
-        // Deliberately no ignoreSslErrors() call — see above.
+        details = QStringLiteral("Subject: %1\nIssuer: %2\nProblem: %3")
+            .arg(cert.subjectDisplayName(), cert.issuerDisplayName(),
+                 descriptions.join(QStringLiteral("; ")));
+
+        bool trusted = false;
+        if (isDataConnection) {
+            // No prompt for a data connection — the control connection
+            // already established trust for this session. A DIFFERENT
+            // certificate here is treated as suspicious, not as
+            // something to ask about.
+            trusted = !m_trustedCertFingerprint.isEmpty() && fingerprint == m_trustedCertFingerprint;
+        } else {
+            const QString stored = loadTrustedFingerprint(m_credentials.host, m_credentials.port);
+            if (stored.isEmpty()) {
+                trusted = askUserToTrustCertificate(fingerprint, details, /*isMismatch=*/false);
+                if (trusted)
+                    saveTrustedFingerprint(m_credentials.host, m_credentials.port, fingerprint);
+            } else if (stored == fingerprint) {
+                trusted = true;
+            } else {
+                trusted = askUserToTrustCertificate(fingerprint, details, /*isMismatch=*/true);
+                if (trusted)
+                    saveTrustedFingerprint(m_credentials.host, m_credentials.port, fingerprint);
+            }
+            if (trusted)
+                m_trustedCertFingerprint = fingerprint;
+        }
+
+        if (trusted)
+            socket->ignoreSslErrors();
     });
+
+    socket->startClientEncryption();
+    const bool encrypted = socket->waitForEncrypted(15000);
+
+    if (encrypted && !isDataConnection && !sawErrors) {
+        // A genuinely valid certificate (verified against the system
+        // trust store, e.g. a real CA-issued cert) — sslErrors never
+        // fired, so the TOFU logic above never ran. Still record the
+        // fingerprint: this session's data connections compare against
+        // it (see the isDataConnection branch above), and a LATER
+        // connection presenting something unverifiable is correctly
+        // treated as a change rather than a first-ever sighting.
+        const QSslCertificate cert = socket->peerCertificate();
+        m_trustedCertFingerprint = QString::fromLatin1(cert.digest(QCryptographicHash::Sha256).toHex());
+    }
+
+    if (!encrypted && errorOut) {
+        *errorOut = (sawErrors && !details.isEmpty())
+            ? QStringLiteral("Certificate not trusted:\n%1").arg(details)
+            : QStringLiteral("TLS handshake failed: %1").arg(socket->errorString());
+    }
+
+    return encrypted;
 }
 
 bool FtpBackend::ensureConnected()
@@ -184,27 +386,31 @@ bool FtpBackend::ensureConnected()
             return false;
         }
 
+        // Captures the session ticket the moment it's available (TLS
+        // 1.3 tickets commonly arrive as a post-handshake message, not
+        // synchronously with waitForEncrypted() returning) — reused by
+        // openPassiveDataConnection()/finalizeDataChannel() for data
+        // connections' own handshakes.
+        QObject::connect(m_controlSocket, &QSslSocket::newSessionTicketReceived, m_controlSocket, [this]() {
+            m_controlSessionTicket = m_controlSocket->sslConfiguration().sessionTicket();
+        });
+
         // Upgrades the EXISTING plaintext connection in place — this is
         // what makes explicit FTPS "explicit" (as opposed to implicit
         // FTPS, which is TLS from the very first byte on a separate
         // port — not implemented here, see the class doc comment).
-        QString tlsErrorDetail;
-        recordTlsErrors(m_controlSocket, &tlsErrorDetail);
-
-        m_controlSocket->startClientEncryption();
-        if (!m_controlSocket->waitForEncrypted(15000)) {
-            // Prefer the certificate-level reason when there is one: it
-            // names the actual problem ("The certificate is self-signed,
-            // and untrusted") instead of the socket's generic failure.
-            const QString reason = tlsErrorDetail.isEmpty()
-                ? m_controlSocket->errorString()
-                : tlsErrorDetail;
+        QString tlsError;
+        if (!verifyPeerCertificate(m_controlSocket, /*isDataConnection=*/false, &tlsError)) {
             emit connectionFailed(QStringLiteral(
                 "TLS handshake failed: %1. ZephyrFTP will not connect to a server whose "
-                "certificate it cannot verify.").arg(reason));
+                "certificate it cannot verify without your explicit confirmation.").arg(tlsError));
             teardown();
             return false;
         }
+        // A ticket may already be available immediately (TLS 1.2-style
+        // session-ID resumption isn't gated on the async signal above).
+        if (m_controlSessionTicket.isEmpty())
+            m_controlSessionTicket = m_controlSocket->sslConfiguration().sessionTicket();
     }
 
     const FtpReply userReply = sendCommand(QStringLiteral("USER %1").arg(m_credentials.username));
@@ -285,12 +491,16 @@ bool FtpBackend::ensureConnected()
     return true;
 }
 
-QTcpSocket *FtpBackend::openPassiveDataConnection(QString *errorOut)
+bool FtpBackend::openDataChannel(DataChannel *channel, QString *errorOut)
 {
     const FtpReply pasvReply = sendCommand(QStringLiteral("PASV"));
     if (!pasvReply.isValid() || pasvReply.code != 227) {
-        if (errorOut) *errorOut = QStringLiteral("PASV failed: %1").arg(pasvReply.text);
-        return nullptr;
+        // The server refused PASV outright — a real, if rare, sign it
+        // requires active mode. Any OTHER kind of failure (a malformed
+        // 227 reply, parsed below) stays a hard error rather than
+        // silently trying active mode for a genuinely different
+        // problem.
+        return openActiveDataChannel(channel, errorOut);
     }
 
     // Reply text looks like: Entering Passive Mode (192,168,1,5,200,15).
@@ -298,12 +508,12 @@ QTcpSocket *FtpBackend::openPassiveDataConnection(QString *errorOut)
     const int closeParen = pasvReply.text.indexOf(QLatin1Char(')'), openParen);
     if (openParen < 0 || closeParen < 0) {
         if (errorOut) *errorOut = QStringLiteral("Could not parse PASV reply: %1").arg(pasvReply.text);
-        return nullptr;
+        return false;
     }
     const QStringList parts = pasvReply.text.mid(openParen + 1, closeParen - openParen - 1).split(QLatin1Char(','));
     if (parts.size() != 6) {
         if (errorOut) *errorOut = QStringLiteral("Could not parse PASV reply: %1").arg(pasvReply.text);
-        return nullptr;
+        return false;
     }
 
     bool ok = true;
@@ -312,7 +522,7 @@ QTcpSocket *FtpBackend::openPassiveDataConnection(QString *errorOut)
         octets[i] = parts[i].trimmed().toInt(&ok);
     if (!ok) {
         if (errorOut) *errorOut = QStringLiteral("Could not parse PASV reply: %1").arg(pasvReply.text);
-        return nullptr;
+        return false;
     }
 
     const QString dataHost = QStringLiteral("%1.%2.%3.%4")
@@ -327,32 +537,107 @@ QTcpSocket *FtpBackend::openPassiveDataConnection(QString *errorOut)
                 .arg(dataHost).arg(dataPort).arg(dataSocket->errorString());
         }
         delete dataSocket;
-        return nullptr;
+        return false;
     }
     dataSocket->setSocketOption(QAbstractSocket::LowDelayOption, 1);
 
-    if (m_dataProtected) {
-        // A FRESH TLS handshake, not a reused session from the control
-        // connection — see the class doc comment's known-gap note on
-        // why some strict FTPS server configurations may reject this.
-        QString tlsErrorDetail;
-        recordTlsErrors(dataSocket, &tlsErrorDetail);
+    channel->socket = dataSocket;
+    channel->active = false;
+    return true;
+}
 
-        dataSocket->startClientEncryption();
-        if (!dataSocket->waitForEncrypted(15000)) {
-            if (errorOut) {
-                const QString reason = tlsErrorDetail.isEmpty()
-                    ? dataSocket->errorString()
-                    : tlsErrorDetail;
-                *errorOut = QStringLiteral("Data connection TLS handshake failed: %1")
-                    .arg(reason);
-            }
-            delete dataSocket;
+bool FtpBackend::openActiveDataChannel(DataChannel *channel, QString *errorOut)
+{
+    if (!m_controlSocket) {
+        if (errorOut) *errorOut = QStringLiteral("No control connection");
+        return false;
+    }
+
+    // IPv4 only, matching PASV's existing scope — the PORT command
+    // itself (RFC 959) is IPv4-only regardless.
+    const QHostAddress localAddress = m_controlSocket->localAddress();
+    if (localAddress.protocol() != QAbstractSocket::IPv4Protocol) {
+        if (errorOut) *errorOut = QStringLiteral("Active mode requires an IPv4 control connection");
+        return false;
+    }
+
+    auto *server = new SslAcceptingTcpServer();
+    if (!server->listen(localAddress)) {
+        if (errorOut) *errorOut = QStringLiteral("Could not open a local port for active mode: %1")
+            .arg(server->errorString());
+        delete server;
+        return false;
+    }
+
+    const quint32 ip = localAddress.toIPv4Address();
+    const quint16 port = server->serverPort();
+    const QString portCommand = QStringLiteral("PORT %1,%2,%3,%4,%5,%6")
+        .arg((ip >> 24) & 0xFF).arg((ip >> 16) & 0xFF).arg((ip >> 8) & 0xFF).arg(ip & 0xFF)
+        .arg((port >> 8) & 0xFF).arg(port & 0xFF);
+
+    const FtpReply portReply = sendCommand(portCommand);
+    if (!portReply.isValid() || portReply.code >= 400) {
+        if (errorOut) *errorOut = QStringLiteral("PORT failed: %1").arg(portReply.text);
+        delete server;
+        return false;
+    }
+
+    channel->server = server;
+    channel->active = true;
+    return true;
+}
+
+QTcpSocket *FtpBackend::finalizeDataChannel(DataChannel *channel, QString *errorOut)
+{
+    QTcpSocket *rawSocket = nullptr;
+
+    if (channel->active) {
+        if (!channel->server->hasPendingConnections() && !channel->server->waitForNewConnection(15000)) {
+            if (errorOut) *errorOut = QStringLiteral(
+                "Timed out waiting for the server to connect back (active/PORT mode)");
+            delete channel->server;
+            channel->server = nullptr;
+            return nullptr;
+        }
+        QTcpSocket *pending = channel->server->nextPendingConnection();
+        delete channel->server;
+        channel->server = nullptr;
+
+        // SslAcceptingTcpServer always hands out QSslSocket instances —
+        // see its own comment for why a plain QTcpSocket wouldn't work
+        // here.
+        rawSocket = pending;
+    } else {
+        rawSocket = channel->socket;
+        channel->socket = nullptr;
+    }
+
+    if (m_dataProtected) {
+        auto *sslSocket = qobject_cast<QSslSocket *>(rawSocket);
+        if (!sslSocket) {
+            if (errorOut) *errorOut = QStringLiteral("Data connection setup failed internally");
+            delete rawSocket;
+            return nullptr;
+        }
+        // A FRESH TLS handshake per data connection — but a best-effort
+        // attempt at session reuse rather than none at all, using
+        // whatever session ticket the control connection has captured
+        // so far (see the class doc comment's known-gap note on why
+        // this can't be guaranteed to satisfy every strict server).
+        if (!m_controlSessionTicket.isEmpty()) {
+            QSslConfiguration cfg = sslSocket->sslConfiguration();
+            cfg.setSessionTicket(m_controlSessionTicket);
+            sslSocket->setSslConfiguration(cfg);
+        }
+        QString tlsError;
+        if (!verifyPeerCertificate(sslSocket, /*isDataConnection=*/true, &tlsError)) {
+            if (errorOut) *errorOut = QStringLiteral("Data connection TLS handshake failed: %1").arg(tlsError);
+            delete rawSocket;
             return nullptr;
         }
     }
 
-    return dataSocket;
+    return rawSocket;
 }
 
 // ---------------------------------------------------------------------
@@ -479,12 +764,14 @@ QList<RemoteEntry> FtpBackend::listDirectoryInternal(const QString &path, bool *
     QList<RemoteEntry> entries;
     *ok = false;
 
-    // PASV MUST be sent before the listing command per RFC 959's
-    // ordering — the data connection has to already be open before the
-    // server has anything to send on it.
+    // The data channel MUST be opened (PASV) or announced (PORT) before
+    // the listing command per RFC 959's ordering — see
+    // openDataChannel()/finalizeDataChannel()'s doc comments for why
+    // active mode's finalize step has to come AFTER the command below,
+    // unlike PASV's.
     QString dataError;
-    QTcpSocket *dataSocket = openPassiveDataConnection(&dataError);
-    if (!dataSocket) {
+    DataChannel channel;
+    if (!openDataChannel(&channel, &dataError)) {
         if (errorOut) *errorOut = dataError;
         return entries;
     }
@@ -492,16 +779,16 @@ QList<RemoteEntry> FtpBackend::listDirectoryInternal(const QString &path, bool *
     // MLSD first — standardized and unambiguous. Falls back to LIST
     // only if the server doesn't understand MLSD at all (a 500/502
     // "command not implemented" reply), not for any other kind of
-    // failure — a fresh PASV/data connection is needed for the retry,
-    // since the one just opened was tied to the now-rejected MLSD
-    // attempt.
+    // failure — a fresh data channel is needed for the retry, since the
+    // one just opened was tied to the now-rejected MLSD attempt.
     FtpReply listReply = sendCommand(QStringLiteral("MLSD %1").arg(path));
     bool usingMlsd = true;
     if (!listReply.isValid() || listReply.code == 500 || listReply.code == 502) {
         usingMlsd = false;
-        delete dataSocket;
-        dataSocket = openPassiveDataConnection(&dataError);
-        if (!dataSocket) {
+        delete channel.socket;
+        delete channel.server;
+        channel = DataChannel{};
+        if (!openDataChannel(&channel, &dataError)) {
             if (errorOut) *errorOut = dataError;
             return entries;
         }
@@ -510,7 +797,14 @@ QList<RemoteEntry> FtpBackend::listDirectoryInternal(const QString &path, bool *
 
     if (!listReply.isValid() || (listReply.code != 150 && listReply.code != 125)) {
         if (errorOut) *errorOut = QStringLiteral("Cannot list %1: %2").arg(path, listReply.text);
-        delete dataSocket;
+        delete channel.socket;
+        delete channel.server;
+        return entries;
+    }
+
+    QTcpSocket *dataSocket = finalizeDataChannel(&channel, &dataError);
+    if (!dataSocket) {
+        if (errorOut) *errorOut = dataError;
         return entries;
     }
 
@@ -665,11 +959,11 @@ void FtpBackend::downloadFile(const QString &remotePath, const QString &localPat
     if (sizeReply.isValid() && sizeReply.code == 213)
         totalSize = sizeReply.text.trimmed().toLongLong();
 
-    // PASV before REST/RETR — same command-ordering requirement as
-    // listDirectoryInternal().
+    // Data channel before REST/RETR — same command-ordering requirement
+    // as listDirectoryInternal().
     QString dataError;
-    QTcpSocket *dataSocket = openPassiveDataConnection(&dataError);
-    if (!dataSocket) {
+    DataChannel channel;
+    if (!openDataChannel(&channel, &dataError)) {
         emit transferFailed(remotePath, dataError);
         return;
     }
@@ -678,7 +972,8 @@ void FtpBackend::downloadFile(const QString &remotePath, const QString &localPat
         const FtpReply restReply = sendCommand(QStringLiteral("REST %1").arg(effectiveOffset));
         if (!restReply.isValid() || restReply.code != 350) {
             emit transferFailed(remotePath, QStringLiteral("Server refused REST (resume): %1").arg(restReply.text));
-            delete dataSocket;
+            delete channel.socket;
+            delete channel.server;
             return;
         }
     }
@@ -686,7 +981,14 @@ void FtpBackend::downloadFile(const QString &remotePath, const QString &localPat
     const FtpReply retrReply = sendCommand(QStringLiteral("RETR %1").arg(remotePath));
     if (!retrReply.isValid() || (retrReply.code != 150 && retrReply.code != 125)) {
         emit transferFailed(remotePath, QStringLiteral("RETR failed: %1").arg(retrReply.text));
-        delete dataSocket;
+        delete channel.socket;
+        delete channel.server;
+        return;
+    }
+
+    QTcpSocket *dataSocket = finalizeDataChannel(&channel, &dataError);
+    if (!dataSocket) {
+        emit transferFailed(remotePath, dataError);
         return;
     }
 
@@ -767,8 +1069,8 @@ void FtpBackend::uploadFile(const QString &localPath, const QString &remotePath,
     }
 
     QString dataError;
-    QTcpSocket *dataSocket = openPassiveDataConnection(&dataError);
-    if (!dataSocket) {
+    DataChannel channel;
+    if (!openDataChannel(&channel, &dataError)) {
         emit transferFailed(localPath, dataError);
         return;
     }
@@ -777,7 +1079,8 @@ void FtpBackend::uploadFile(const QString &localPath, const QString &remotePath,
         const FtpReply restReply = sendCommand(QStringLiteral("REST %1").arg(effectiveOffset));
         if (!restReply.isValid() || restReply.code != 350) {
             emit transferFailed(localPath, QStringLiteral("Server refused REST (resume): %1").arg(restReply.text));
-            delete dataSocket;
+            delete channel.socket;
+            delete channel.server;
             return;
         }
     }
@@ -785,7 +1088,14 @@ void FtpBackend::uploadFile(const QString &localPath, const QString &remotePath,
     const FtpReply storReply = sendCommand(QStringLiteral("STOR %1").arg(remotePath));
     if (!storReply.isValid() || (storReply.code != 150 && storReply.code != 125)) {
         emit transferFailed(localPath, QStringLiteral("STOR failed: %1").arg(storReply.text));
-        delete dataSocket;
+        delete channel.socket;
+        delete channel.server;
+        return;
+    }
+
+    QTcpSocket *dataSocket = finalizeDataChannel(&channel, &dataError);
+    if (!dataSocket) {
+        emit transferFailed(localPath, dataError);
         return;
     }
 
@@ -924,8 +1234,8 @@ void FtpBackend::createFile(const QString &path)
     }
 
     QString dataError;
-    QTcpSocket *dataSocket = openPassiveDataConnection(&dataError);
-    if (!dataSocket) {
+    DataChannel channel;
+    if (!openDataChannel(&channel, &dataError)) {
         emit fileOperationFailed(QStringLiteral("Create file"), path, dataError);
         return;
     }
@@ -934,7 +1244,14 @@ void FtpBackend::createFile(const QString &path)
     if (!storReply.isValid() || (storReply.code != 150 && storReply.code != 125)) {
         emit fileOperationFailed(QStringLiteral("Create file"), path,
             storReply.isValid() ? storReply.text : QStringLiteral("No response from server"));
-        delete dataSocket;
+        delete channel.socket;
+        delete channel.server;
+        return;
+    }
+
+    QTcpSocket *dataSocket = finalizeDataChannel(&channel, &dataError);
+    if (!dataSocket) {
+        emit fileOperationFailed(QStringLiteral("Create file"), path, dataError);
         return;
     }
 

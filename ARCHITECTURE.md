@@ -651,9 +651,41 @@ headless/offscreen runs have been checked).
   (RFC 3659, standardized and machine-parseable) first and fall back to
   best-effort `LIST` parsing on a 500/502 reply; `LIST`'s output format
   is not standardized across server implementations, which makes it the
-  single largest real-world fragility source for any FTP client. Passive
-  mode only — no active/`PORT` fallback. FTPS is explicit only (`AUTH
-  TLS` upgrading an existing plaintext control connection).
+  single largest real-world fragility source for any FTP client. **PASV
+  is tried first always**; only if the server outright refuses the PASV
+  command does this fall back to active/PORT (`openDataChannel()`/
+  `finalizeDataChannel()`/`openActiveDataChannel()`) — a local
+  `QTcpServer` (via a small `SslAcceptingTcpServer` subclass so an
+  active-mode data connection can still act as the TLS client once PROT
+  P is active, regardless of which side dialed the TCP connection) is
+  opened and the server told to connect back to it via `PORT`. This is a
+  fallback, not a mode toggle — PASV's NAT-friendly default behavior is
+  unchanged for every server that accepts it. FTPS is explicit only
+  (`AUTH TLS` upgrading an existing plaintext control connection).
+  **Certificate verification is a real trust-on-first-use (TOFU) model**
+  — the SSH-host-key shape (see `SftpBackend`'s entry above and
+  `HostKeyVerifier`), not the old fail-closed-only behavior: an
+  unverifiable certificate (self-signed, unknown CA, ...) is routed to
+  `CertificateVerifier` (`src/ui/CertificateVerifier.h/.cpp`, a GUI-thread
+  object exactly mirroring `HostKeyVerifier`) via the same
+  blocking-cross-thread-call pattern `SftpBackend` uses for host keys.
+  The accepted certificate's SHA-256 fingerprint persists to
+  `AppConfigLocation/known_certs.json` (plain JSON — this project's own
+  convention for its own non-secret state, same as `SiteStore`; a
+  certificate fingerprint is public information, the same status an SSH
+  host-key fingerprint already has in plaintext `known_hosts`) and is
+  re-checked on every future connection to that host:port; a certificate
+  that later CHANGES gets a strong mismatch warning defaulting to no,
+  same as a changed SSH host key. Data connections reuse the control
+  connection's already-trusted fingerprint instead of prompting again — a
+  data connection presenting a DIFFERENT certificate fails closed with no
+  prompt, treated as suspicious rather than something to ask about. Data
+  connections also attempt real TLS session-ticket reuse
+  (`QSslConfiguration::sessionTicket()`/`setSessionTicket()`, refreshed on
+  `newSessionTicketReceived()`) before their own handshake — a real
+  best-effort attempt at the session reuse RFC 4217 permits servers to
+  require, not a guarantee (see Known gaps for what is and isn't
+  confirmed about it).
 - `Protocol` / `ConnectionRequest` (`src/backends/Protocol.h`,
   `ConnectionRequest.h`) — the seam between "the user picked a protocol"
   and "construct the matching backend." `Protocol` is a three-value enum
@@ -1215,53 +1247,96 @@ along the way — worth knowing about if it ever needs touching again.
 
 ## Known gaps (flagged, not fixed)
 
-- **FTP/FTPS has now actually touched a real server — the control
-  connection, PASV data connections, real transfers, and the `AUTH TLS`
-  upgrade are all confirmed working, not just unit-tested in isolation.**
-  `tools/local-test-servers/start-ftp.sh`/`start-ftps.sh` spin up a real,
-  throwaway local FTP/FTPS server (pyftpdlib), and
-  `src/verify_ftp_live.cpp` (built via the `verify-ftp-live`
-  `EXCLUDE_FROM_ALL` CMake target — not part of the ten-target
-  self-contained suite, since it needs that external server already
-  running) drives a real `FtpBackend` against it: connects, lists a real
-  directory, downloads a real file and confirms its exact byte content,
-  uploads a file and confirms it genuinely landed server-side (read back
-  directly from the server's own disk, not just inferred from a
-  `transferFinished` signal), then separately connects to the FTPS
-  server and confirms the `AUTH TLS` handshake itself completes and
-  `FtpBackend` correctly rejects the server's self-signed certificate as
-  untrusted — the exact fail-closed behavior described below, now
-  proven for real rather than just reasoned about. Confirmed reliably
-  across multiple repeated runs, not a one-off. **Still not covered by
-  this**: the `LIST`-format fallback parser specifically (pyftpdlib
-  answers `MLSD`, the modern standardized format, which is what this
-  exercised; a real server that only speaks legacy `LIST` — the actual
-  fragility risk `ftp-parsing-test`'s comments already flag — hasn't
-  been tried), and a full authenticated transfer *over* FTPS (`FtpBackend`
-  has no override to trust a self-signed cert, by design, so an actual
-  encrypted data transfer needs a CA-trusted cert to test, which this
-  local setup deliberately doesn't provide).
-- **FTPS rejects untrusted certificates with no way to proceed, unlike
-  SSH host keys, which get a real trust prompt.** `FtpBackend` never
-  calls `ignoreSslErrors()` and never weakens `setPeerVerifyMode`, so
-  `QSslSocket` validates the server certificate against the system trust
-  store and the handshake fails closed on anything it can't verify. That
-  is the right default and matches this project's refusal to trust
-  silently — but self-signed certificates are common on FTPS servers,
-  and today those servers simply cannot be connected to at all. The
-  error message names the actual certificate problem rather than a
-  generic socket failure, so the user at least learns why; there is
-  still no equivalent of `HostKeyVerifier`'s trust-on-first-use prompt
-  for certificates. Building one is a real design decision with new
-  security surface, deliberately not made unilaterally — it is the
-  clearest asymmetry in the app's current security model.
-- **FTPS data connections don't reuse the control connection's TLS
-  session.** Each data connection performs a fresh TLS handshake. RFC
-  4217 permits servers to *require* session reuse as an anti-hijacking
-  measure, so strict configurations may reject those data connections.
-  Known and deliberate rather than overlooked, but untested either way.
-- **FTP is passive-mode only.** There is no active/`PORT` fallback, so a
-  server that requires active mode won't work at all.
+- **FTP/FTPS has now actually touched a real server on every one of its
+  code paths, not just the happy path — control connection, PASV AND
+  active/PORT data connections, real transfers, the `AUTH TLS` upgrade,
+  the LIST fallback, and a full encrypted transfer, all confirmed
+  working, not just unit-tested in isolation.** `src/verify_ftp_live.cpp`
+  (the `verify-ftp-live` `EXCLUDE_FROM_ALL` CMake target — not part of
+  the ten-target self-contained suite, since it needs external servers
+  already running) drives a real `FtpBackend` through five phases
+  against five throwaway local servers
+  (`tools/local-test-servers/start-ftp.sh`, `start-ftps.sh`,
+  `start-ftp-legacy-list.sh`, `start-ftps-trusted.sh`,
+  `start-ftp-active-only.sh`): (1) plain FTP connect/list/download/upload,
+  content confirmed both client-side and read back directly off the
+  server's own disk; (2) FTPS against a self-signed cert with no
+  certificate verifier wired up — confirms the `AUTH TLS` handshake
+  completes and `FtpBackend` fails closed with nobody to ask, same "fails
+  safe" contract `SftpBackend::askUserToTrustHostKey()` already has (see
+  `verify-ftps-trust` below for the real trust-prompt flow with a
+  verifier actually wired up); (3) the same round trip as (1) against a
+  server with MLSD genuinely disabled (`ftp_server.py --legacy-list`
+  deletes it from `proto_cmds`, a real 502 from a real server, not a
+  crafted client-side toggle) — closes the gap that only the fallback
+  parser's logic had been exercised, never the real trigger; (4) the same
+  round trip again against a server with PASV/EPSV genuinely disabled
+  (`--no-pasv`), forcing `FtpBackend`'s real active/PORT fallback — a
+  connection the SERVER dials back to US, completing a full round trip;
+  (5) the same round trip over FTPS, with this harness (pure test code,
+  no `FtpBackend` change) pre-trusting a throwaway CA via
+  `QSslConfiguration::setDefaultConfiguration()` so the leaf certificate
+  `start-ftps-trusted.sh` presents genuinely validates — proves a full
+  ENCRYPTED transfer completes end to end, the one case (1)/(3)/(4) don't
+  cover and (2) deliberately doesn't reach. Confirmed reliably across
+  multiple repeated runs, not a one-off. **Still not covered by this**:
+  the LIST fallback is still pyftpdlib underneath, not a genuinely
+  different vendor's `LIST` dialect — a real server whose `LIST` output
+  doesn't match either format `parseListLine()` handles (see that
+  function's own comment) hasn't been tried.
+- **FTPS certificate verification is now a real trust-on-first-use (TOFU)
+  model, not fail-closed-only — confirmed end to end against a real
+  server, including the mismatch/decline path.** `CertificateVerifier`
+  (`src/ui/CertificateVerifier.h/.cpp`) mirrors `HostKeyVerifier` exactly:
+  an unverifiable certificate routes to a real person via the same
+  blocking-cross-thread-call pattern, and the decision persists to
+  `AppConfigLocation/known_certs.json` (a certificate fingerprint is
+  public information, same status as an SSH host-key fingerprint already
+  stored in plaintext `known_hosts`). `src/verify_ftps_trust.cpp` (the
+  `verify-ftps-trust` `EXCLUDE_FROM_ALL` target) drives this against the
+  real self-signed `start-ftps.sh` server, reusing
+  `verify-sftp-pubkey`'s "poll for the active modal, click its button"
+  technique (fully automated, not a manual click-through) for three
+  phases: first-ever sighting → prompt fires, auto-accepted, connects and
+  lists for real; a second connection to the same, unchanged certificate
+  → NO prompt at all, proving the fingerprint was actually persisted and
+  reused, not just accepted in memory; the stored fingerprint corrupted
+  to a value that can't match (simpler and fully deterministic than
+  regenerating the server's actual certificate) → the mismatch warning
+  fires, and declining it (auto-clicked here too) fails the connection
+  closed, same as declining a changed SSH host key. One real bug this
+  verification caught before it shipped: the active/PORT data-connection
+  helper (`SslAcceptingTcpServer`) originally parented each accepted
+  socket to the listening `QTcpServer`, so deleting that server right
+  after extracting the socket (per `finalizeDataChannel()`'s own
+  sequencing) also deleted the socket out from under its new owner — a
+  dangling-pointer crash only a real accept-then-use cycle surfaced, not
+  reasoning about the code.
+- **FTPS data connections now attempt real TLS session-ticket reuse,
+  confirmed non-regressing but not confirmed against a genuinely strict
+  server.** The control connection's session ticket
+  (`QSslConfiguration::sessionTicket()`, refreshed on
+  `newSessionTicketReceived()` since TLS 1.3 tickets commonly arrive
+  post-handshake) is applied to each data connection's
+  `QSslConfiguration` before its own handshake — a real resumption
+  attempt, not a comment, addressing the RFC 4217 anti-hijacking
+  requirement some servers enforce. `verify-ftp-live`'s FTPS phases
+  confirm transfers still complete correctly with the ticket set. What
+  this can't confirm: whether it actually satisfies a server that
+  *requires* session reuse — pyftpdlib's TLS handler doesn't enforce or
+  even check session reuse either way, so a strict server's acceptance
+  is unverified either direction in this environment.
+- **FTP now falls back to active/PORT mode when a server genuinely
+  refuses PASV, confirmed against a real server that does exactly
+  that.** `openDataChannel()` tries PASV first always (unchanged
+  NAT-friendly default for every server that accepts it); only on an
+  outright PASV refusal does `openActiveDataChannel()` open a local
+  `QTcpServer` and tell the server to connect back via `PORT`.
+  `verify-ftp-live`'s active-mode phase runs against
+  `start-ftp-active-only.sh` (PASV/EPSV genuinely deleted from the
+  server's own `proto_cmds`, a real refusal, not a client-side toggle)
+  and confirms a full list/download/upload round trip completes over the
+  connection the server dialed back to us.
 - **`SftpBackend::checkExists()` is now confirmed against a real
   server, for all three cases that matter.** Extended into
   `verify_sftp_pubkey.cpp` (see the public-key auth entry below for the

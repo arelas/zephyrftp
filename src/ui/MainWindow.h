@@ -6,6 +6,7 @@
 class FilePaneWidget;
 class TransferManager;
 class HostKeyVerifier;
+class CertificateVerifier;
 struct ConnectionRequest;
 
 // Top-level window: two FilePaneWidgets side by side (commander style),
@@ -76,4 +77,8 @@ private:
     // instances (on their own worker threads) call into this one via a
     // blocking cross-thread call to get a real host-key trust decision.
     HostKeyVerifier *m_hostKeyVerifier = nullptr;
+    // Same lifetime and cross-thread-call pattern as m_hostKeyVerifier
+    // above, but for FtpBackend's FTPS certificate trust-on-first-use
+    // decisions instead of SSH host keys.
+    CertificateVerifier *m_certificateVerifier = nullptr;
 };

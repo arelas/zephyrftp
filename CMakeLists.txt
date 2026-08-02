@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ZephyrFTP VERSION 0.2.7 LANGUAGES CXX)
+project(ZephyrFTP VERSION 0.2.8 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -49,6 +49,7 @@ set(SOURCES
     src/ui/ConnectionDialog.cpp
     src/ui/TransferQueueWidget.cpp
     src/ui/HostKeyVerifier.cpp
+    src/ui/CertificateVerifier.cpp
     src/ui/IconTheme.cpp
     src/ui/SiteManagerDialog.cpp
     src/backends/LocalBackend.cpp
@@ -78,6 +79,7 @@ set(HEADERS
     src/ui/ConnectionDialog.h
     src/ui/TransferQueueWidget.h
     src/ui/HostKeyVerifier.h
+    src/ui/CertificateVerifier.h
     src/ui/IconTheme.h
     src/ui/SiteManagerDialog.h
     src/backends/RemoteBackend.h
@@ -128,6 +130,7 @@ qt_add_executable(smoke-test EXCLUDE_FROM_ALL
     src/ui/ConnectionDialog.cpp
     src/ui/TransferQueueWidget.cpp
     src/ui/HostKeyVerifier.cpp
+    src/ui/CertificateVerifier.cpp
     src/ui/IconTheme.cpp
     src/ui/SiteManagerDialog.cpp
     src/backends/LocalBackend.cpp
@@ -156,6 +159,7 @@ qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
     src/ui/ConnectionDialog.cpp
     src/ui/TransferQueueWidget.cpp
     src/ui/HostKeyVerifier.cpp
+    src/ui/CertificateVerifier.cpp
     src/ui/IconTheme.cpp
     src/ui/SiteManagerDialog.cpp
     src/backends/LocalBackend.cpp
@@ -255,13 +259,20 @@ target_include_directories(conflict-resolution-test PRIVATE src)
 target_link_libraries(conflict-resolution-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
 
 # --- FTP directory-listing parser test (MLSD/LIST, realistic sample data — no real server available) ---
+# CertificateVerifier.cpp/Widgets are pulled in because FtpBackend.cpp
+# includes CertificateVerifier.h (a Q_OBJECT header) for its
+# m_certificateVerifier member — same "always pair the two" rule this
+# codebase already follows for SftpBackend.cpp + HostKeyVerifier.cpp
+# (see CONTRIBUTING.md's AUTOMOC build gotcha). This test never actually
+# constructs one (it only calls FtpBackend's static parser functions).
 qt_add_executable(ftp-parsing-test EXCLUDE_FROM_ALL
     src/ftp_parsing_test.cpp
     src/backends/FtpBackend.cpp
     src/backends/RemoteBackend.h
+    src/ui/CertificateVerifier.cpp
 )
 target_include_directories(ftp-parsing-test PRIVATE src)
-target_link_libraries(ftp-parsing-test PRIVATE Qt6::Core Qt6::Network)
+target_link_libraries(ftp-parsing-test PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
 
 # Protocol-selection wiring: ConnectionDialog's protocol choice, and
 # SavedSite's persistence of it. Needs Widgets (it constructs a real
@@ -308,6 +319,19 @@ qt_add_executable(verify-ftp-live EXCLUDE_FROM_ALL
     src/verify_ftp_live.cpp
     src/backends/FtpBackend.cpp
     src/backends/RemoteBackend.h
+    src/ui/CertificateVerifier.cpp
 )
 target_include_directories(verify-ftp-live PRIVATE src)
-target_link_libraries(verify-ftp-live PRIVATE Qt6::Core Qt6::Network)
+target_link_libraries(verify-ftp-live PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
+
+# --- FTPS certificate trust-on-first-use, against the real self-signed
+# test server (start-ftps.sh) — see src/verify_ftps_trust.cpp's own
+# header comment for the three phases this drives. ---
+qt_add_executable(verify-ftps-trust EXCLUDE_FROM_ALL
+    src/verify_ftps_trust.cpp
+    src/ui/CertificateVerifier.cpp
+    src/backends/FtpBackend.cpp
+    src/backends/RemoteBackend.h
+)
+target_include_directories(verify-ftps-trust PRIVATE src)
+target_link_libraries(verify-ftps-trust PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent)

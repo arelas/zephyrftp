@@ -2,10 +2,13 @@
 
 #include <QString>
 
-// Passive mode only (not active/PORT) — matches what essentially every
+// Passive mode always tried first — matches what essentially every
 // modern FTP client defaults to; active mode routinely fails behind
 // NAT/firewalls since it requires the SERVER to open a connection back
-// to the client. This is a deliberate scope decision, not an oversight.
+// to the client. FtpBackend falls back to active/PORT only if the
+// server outright refuses PASV (see FtpBackend.h's class doc comment) —
+// a fallback for the rare server that requires it, not a competing mode
+// this struct needs to expose a choice between.
 //
 // None: plain FTP, nothing encrypted — control connection and data both
 // travel in the clear.

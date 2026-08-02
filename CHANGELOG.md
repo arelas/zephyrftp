@@ -8,6 +8,44 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.2.8] — Close the remaining FTP/FTPS gaps
+
+### Added
+
+- **FTPS now has a real trust-on-first-use prompt for an unverifiable
+  certificate**, the same model SSH host keys already use. A self-signed
+  or otherwise unverifiable certificate is no longer a silent, permanent
+  refusal — you're shown its fingerprint and asked to trust it, once;
+  that decision is remembered (`known_certs.json`, alongside
+  `known_hosts`) and checked again on every future connection. If the
+  certificate ever changes, you get the same kind of strong warning a
+  changed SSH host key produces, defaulting to no.
+- **FTP now falls back to active (`PORT`) mode** if a server outright
+  refuses passive mode — passive stays the default for every server that
+  accepts it (still the NAT-friendly choice essentially every FTP client
+  makes), but a server that genuinely requires active mode now works
+  instead of failing outright.
+- **FTPS data connections now attempt to reuse the control connection's
+  TLS session**, addressing an anti-hijacking check some strict FTPS
+  servers require (RFC 4217). Best-effort — see ARCHITECTURE.md for what
+  is and isn't confirmed about it.
+
+### Fixed
+
+- **A crash in the new active-mode data-connection path** — caught by
+  this release's own live-server verification before it ever shipped,
+  not by a user report.
+
+### Verified
+
+- **A full encrypted transfer over FTPS, with a certificate that
+  genuinely validates** — previously only the `AUTH TLS` handshake and
+  expected self-signed rejection had been confirmed; the actual
+  encrypted-data-channel transfer path had not.
+- **The legacy `LIST` directory-listing fallback, against a real server
+  that genuinely doesn't support the modern `MLSD` format** — previously
+  only unit-tested against crafted sample data.
+
 ## [0.2.7] — Fix Site Manager field height glitches
 
 ### Fixed

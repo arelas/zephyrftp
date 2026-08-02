@@ -25,6 +25,15 @@ parser.add_argument("--pid-file", required=True)
 parser.add_argument("--passive-ports", required=True, help="e.g. 2130-2140")
 parser.add_argument("--tls", action="store_true")
 parser.add_argument("--certfile")
+parser.add_argument("--legacy-list", action="store_true",
+                     help="Disable MLSD/MLST so the server genuinely only understands "
+                          "the older, non-standardized LIST format — for exercising "
+                          "FtpBackend's real fallback trigger, not just its parser in "
+                          "isolation.")
+parser.add_argument("--no-pasv", action="store_true",
+                     help="Disable PASV/EPSV so the server genuinely requires active "
+                          "(PORT) mode — for exercising FtpBackend's real active-mode "
+                          "fallback against a server that actually refuses PASV.")
 args = parser.parse_args()
 
 authorizer = DummyAuthorizer()
@@ -44,6 +53,22 @@ else:
     handler = FTPHandler
 
 handler.authorizer = authorizer
+
+if args.legacy_list:
+    # Removing these from proto_cmds makes the server reply with a real
+    # 500/502 to MLSD/MLST, the same as a genuinely older server that
+    # never implemented RFC 3659 — forces FtpBackend's LIST fallback to
+    # trigger for real rather than only being unit-tested against
+    # crafted sample lines.
+    handler.proto_cmds.pop("MLSD", None)
+    handler.proto_cmds.pop("MLST", None)
+
+if args.no_pasv:
+    # Same idea for active/PORT mode: a genuine 502 to PASV/EPSV, not a
+    # client-side toggle, so FtpBackend's fallback is exercised against
+    # a server that actually behaves this way.
+    handler.proto_cmds.pop("PASV", None)
+    handler.proto_cmds.pop("EPSV", None)
 
 lo, hi = (int(x) for x in args.passive_ports.split("-"))
 handler.passive_ports = range(lo, hi)

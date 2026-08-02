@@ -4,7 +4,7 @@ A dual-pane SFTP client for Windows and Linux — browse your local files
 and a remote server side by side, then drag, drop, or double-click to
 move things between them. Think FileZilla or WinSCP, built fresh in Qt6.
 
-**Current version: 0.2.7 — alpha.** Real functionality, but real gaps
+**Current version: 0.2.8 — alpha.** Real functionality, but real gaps
 too — see [Known limitations](#known-limitations) before relying on
 this for anything you can't afford to get wrong. [Releases](https://github.com/arelas/zephyrftp/releases)
 has downloadable Windows and Linux builds; [CHANGELOG.md](CHANGELOG.md)
@@ -41,6 +41,12 @@ tracks what's changed between them.
   it. If that fingerprint ever changes on a later connection, you get a
   clear warning instead of a silent, invisible risk. This is the same
   protection SSH itself uses, and it's on by default here.
+- **Certificate verification for FTPS**, the same trust-on-first-use idea
+  as host-key verification above — the first time you connect to a
+  server whose certificate can't be automatically verified (a self-signed
+  one, for example), you're shown its fingerprint and asked to trust it.
+  That decision is remembered for next time, and you get a clear warning
+  if the certificate ever changes.
 - **Drag-and-drop or multi-select transfers — whole folders too, not just
   files.** Drag a folder from one pane to the other (or select several,
   mixing files and folders freely) and everything inside gets recreated
@@ -111,24 +117,22 @@ before being attached — see ARCHITECTURE.md's "Windows and Linux builds
 This is young software — a few things intentionally aren't supported yet
 rather than being half-implemented:
 
-- **FTP and FTPS work against a real server, but only a controlled local
-  one so far — not yet a production server out in the wild.** Connecting,
-  browsing, and transferring files over plain FTP, and the FTPS `AUTH
-  TLS` handshake itself, have all been confirmed against a real FTP/FTPS
-  server, not just tested in isolation. What hasn't been tried yet:
-  real-world servers that only speak the older, non-standardized `LIST`
-  format instead of the modern `MLSD` one (a likely source of rough
-  edges — `LIST`'s format varies by server), and a full encrypted
-  transfer over FTPS with a properly trusted certificate (see the next
-  point). Still newer and less battle-tested than SFTP; expect some
-  rough edges against servers this hasn't specifically been tried
-  against.
-- **FTPS won't connect to a server with a self-signed certificate.**
-  ZephyrFTP refuses to connect when it can't verify the server's
-  certificate, and there's currently no way to inspect one and choose to
-  trust it (unlike SSH host keys, where you're asked). Erring toward
-  refusing is deliberate; the missing "trust this certificate" prompt
-  is a real gap, not a decision that self-signed certificates are wrong.
+- **FTP and FTPS work against a real server, but only controlled local
+  ones so far — not yet a production server out in the wild.** Connecting,
+  browsing, and transferring files over plain FTP, active-mode fallback,
+  the legacy `LIST` directory-listing fallback, and a full encrypted
+  transfer over FTPS (including trusting a certificate and reusing that
+  trust) have all been confirmed against real FTP/FTPS servers, not just
+  tested in isolation. Still newer and less battle-tested than SFTP;
+  expect some rough edges against servers this hasn't specifically been
+  tried against — a real-world server's exact `LIST` output format in
+  particular varies enough between vendors that this hasn't seen every
+  variant.
+- **FTPS data connections reusing the control connection's TLS session
+  is best-effort, not guaranteed.** Some strict FTPS servers require this
+  (RFC 4217) as an anti-hijacking measure; ZephyrFTP now attempts real
+  session-ticket reuse, but whether that satisfies a genuinely strict
+  server hasn't been confirmed either way.
 - **Server-to-server transfers aren't supported** — ZephyrFTP always
   transfers between your computer and one server, not between two
   remote servers directly.

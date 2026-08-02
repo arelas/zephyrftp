@@ -4,6 +4,7 @@
 #include "SiteManagerDialog.h"
 #include "TransferQueueWidget.h"
 #include "HostKeyVerifier.h"
+#include "CertificateVerifier.h"
 #include "IconTheme.h"
 #include "../backends/LocalBackend.h"
 #include "../backends/SftpBackend.h"
@@ -41,6 +42,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_transferManager = new TransferManager(this);
     m_hostKeyVerifier = new HostKeyVerifier(this);
+    m_certificateVerifier = new CertificateVerifier(this);
 
     buildMenuBar();
     buildToolbar();
@@ -299,13 +301,17 @@ void MainWindow::startConnection(const ConnectionRequest &request)
         break;
     case Protocol::Ftp:
     case Protocol::Ftps:
-        // No host-key verifier equivalent is passed: FTPS authenticates the
-        // server with an X.509 certificate validated by QSslSocket against
-        // the system trust store, not with a TOFU-style key fingerprint.
-        // Plain FTP authenticates the server not at all — which is exactly
-        // what "unencrypted" means, and why the connection dialog labels it
-        // that way rather than leaving the user to infer it.
-        backend = new FtpBackend(request.ftp);
+        // m_certificateVerifier is FTPS's equivalent of m_hostKeyVerifier:
+        // an unverifiable server certificate (self-signed, unknown CA, ...)
+        // goes through the same real trust-on-first-use prompt a changed
+        // SSH host key would, rather than being silently accepted or
+        // silently, permanently refused. Harmless to pass for plain FTP
+        // too — FtpBackend only ever calls into it when ftpsMode is
+        // Explicit. Plain FTP itself still authenticates the server not at
+        // all, which is exactly what "unencrypted" means, and why the
+        // connection dialog labels it that way rather than leaving the
+        // user to infer it.
+        backend = new FtpBackend(request.ftp, m_certificateVerifier);
         break;
     }
 

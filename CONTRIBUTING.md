@@ -291,30 +291,34 @@ mid-transfer cancel/pause/resume, and all of `FtpBackend` used to be
 genuinely unverified as a result (see ARCHITECTURE.md's Known gaps):
 nothing in this environment could reach a real server that way.
 `tools/local-test-servers/` closes that — throwaway local `sshd`/FTP/FTPS
-servers (no root, no system config touched) plus three harnesses that
+servers (no root, no system config touched) plus four harnesses that
 drive the real backend classes against them:
 
 ```
 tools/local-test-servers/start-sftp-pubkey.sh
 tools/local-test-servers/start-ftp.sh
 tools/local-test-servers/start-ftps.sh
+tools/local-test-servers/start-ftp-legacy-list.sh
+tools/local-test-servers/start-ftps-trusted.sh
+tools/local-test-servers/start-ftp-active-only.sh
 
-cmake --build build --target verify-sftp-pubkey verify-ftp-live verify-sftp-pause-cancel
+cmake --build build --target verify-sftp-pubkey verify-ftp-live verify-sftp-pause-cancel verify-ftps-trust
 QT_QPA_PLATFORM=offscreen SFTP_TEST_SCRATCH=/tmp/zephyrftp-local-test-servers/sftp ./build/verify-sftp-pubkey
-QT_QPA_PLATFORM=offscreen FTP_TEST_SCRATCH=/tmp/zephyrftp-local-test-servers/ftp ./build/verify-ftp-live
+QT_QPA_PLATFORM=offscreen ./build/verify-ftp-live
 QT_QPA_PLATFORM=offscreen SFTP_TEST_SCRATCH=/tmp/zephyrftp-local-test-servers/sftp ./build/verify-sftp-pause-cancel
+QT_QPA_PLATFORM=offscreen ./build/verify-ftps-trust
 
 tools/local-test-servers/stop-all.sh
 ```
 
 See `tools/local-test-servers/README.md` for the full picture and
-ARCHITECTURE.md's Known gaps entries for FTP/FTPS, public-key
-authentication, and cancel/pause/resume for exactly what's confirmed and
-what still isn't, even after this. These three targets are
-`EXCLUDE_FROM_ALL` like the main ten but intentionally **not** part of
-that suite or CI — an external-server precondition is a different
-category from "always runs the same way," which is the whole point of
-the other ten.
+ARCHITECTURE.md's Known gaps entries for FTP/FTPS, certificate
+trust-on-first-use, public-key authentication, and cancel/pause/resume
+for exactly what's confirmed and what still isn't, even after this.
+These four targets are `EXCLUDE_FROM_ALL` like the main ten but
+intentionally **not** part of that suite or CI — an external-server
+precondition is a different category from "always runs the same way,"
+which is the whole point of the other ten.
 
 ## The core discipline this codebase runs on
 
