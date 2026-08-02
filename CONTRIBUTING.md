@@ -347,6 +347,21 @@ ten but intentionally **not** part of that suite or CI — an
 external-server precondition is a different category from "always runs
 the same way," which is the whole point of the other ten.
 
+**Deliberately never added to CI, on purpose, not just left out for
+lack of time**: unlike the ten self-contained targets, these need an
+external server (or, for the vendor containers, `podman`) already
+running, and the vendor containers specifically add real per-run cost
+(building/starting three containers) that isn't worth paying on every
+push. The actual rule this project runs on: **local testing is the gate
+before pushing, not CI** — if you've touched `FtpBackend`/`SftpBackend`,
+run the relevant live-server and vendor-container harnesses locally
+first, the same way you'd run the ten-target suite, and only push once
+those pass. CI (the ten-target suite, on every push/PR/tag; the full
+platform build on tags) is there to catch environment drift and confirm
+what already passed locally still passes on GitHub's own runners — it
+is not a substitute for having run the fuller local suite first when
+the change touches something these harnesses cover.
+
 ## The core discipline this codebase runs on
 
 This project has been built with one rule that matters more than any
