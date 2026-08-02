@@ -34,7 +34,13 @@ SiteManagerDialog::SiteManagerDialog(QWidget *parent)
     , m_tree(new QTreeWidget(this))
 {
     setWindowTitle(tr("Site Manager"));
-    resize(700, 440);
+    // 440 was correct before the "Save password" checkbox was added to
+    // the form; that extra row needs real vertical room too, and
+    // without it Qt's layout engine compresses the starting-directory
+    // field to fit — confirmed directly (440: compressed to 20px
+    // against its own 33px sizeHint; 520: renders at its full natural
+    // height) rather than guessed at.
+    resize(700, 520);
 
     m_sites = SiteStore::load();
     buildUi();
@@ -112,6 +118,14 @@ void SiteManagerDialog::buildUi()
     m_portSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
     m_portSpin->setRange(1, 65535);
     m_portSpin->setValue(22);
+    // QAbstractSpinBox's own sizeHint() reserves space for the spin
+    // button area even with NoButtons hiding it visually (confirmed
+    // directly: 36px vs. a sibling QLineEdit's 33px under the exact
+    // same QSS padding/border rules) — a real, visible height mismatch
+    // against every other field in this form. Matched to m_hostEdit's
+    // actual sizeHint rather than a hardcoded number, so this stays
+    // correct if the theme's font/padding ever changes.
+    m_portSpin->setFixedHeight(m_hostEdit->sizeHint().height());
     connect(m_portSpin, &QSpinBox::editingFinished, this, &SiteManagerDialog::onFieldEdited);
 
     m_usernameEdit = new QLineEdit(this);

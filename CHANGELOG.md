@@ -8,6 +8,16 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.2.7] — Fix Site Manager field height glitches
+
+### Fixed
+
+- **Site Manager's Port field rendered noticeably taller than every
+  other field, and the starting-directory field rendered too short.**
+  Both real, reported layout bugs — the Port spinbox is now the same
+  height as its siblings, and the dialog is tall enough that Qt's
+  layout no longer has to squeeze the starting-directory field to fit.
+
 ## [0.2.6] — Optional password saving; relicensed to GPL-3.0-or-later
 
 ### Added
@@ -167,7 +177,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.2.6...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.2.7...HEAD
+[0.2.7]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.7
 [0.2.6]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.6
 [0.2.5]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.5
 [0.2.4]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.4

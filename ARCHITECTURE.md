@@ -762,6 +762,22 @@ headless/offscreen runs have been checked).
   real, visible, one-click confirmation rather than a silent
   auto-connect, consistent with this project's refusal to do anything
   credential-related invisibly.
+  **A real, reported layout bug, fixed:** the checkbox row added real
+  height the dialog's original fixed `resize(700, 440)` (set before
+  this feature existed) didn't account for — confirmed directly by
+  measuring actual rendered geometry, not eyeballing: Qt's layout
+  engine compressed the starting-directory field to 20px against its
+  own 33px `sizeHint()` to make everything fit, while every sibling
+  `QLineEdit` still got its full height. Fixed by growing the dialog to
+  `resize(700, 520)`, the exact height (found by testing, not guessed)
+  where the field stops being squeezed. Separately, `m_portSpin` itself
+  rendered 3px taller than every `QLineEdit` beside it (36px vs. 33px)
+  under the identical QSS padding/border rules — `QAbstractSpinBox`
+  reserves sizeHint space for its spin-button area even with
+  `NoButtons` hiding it visually. Fixed with
+  `m_portSpin->setFixedHeight(m_hostEdit->sizeHint().height())` —
+  matched to a sibling field's actual height rather than a hardcoded
+  pixel count, so it stays correct if the theme's font/padding changes.
 - `HostKeyVerifier` — lives on the GUI thread for the app's lifetime.
   `SftpBackend`'s worker thread calls into it via
   `QMetaObject::invokeMethod(..., Qt::BlockingQueuedConnection)` to get a
