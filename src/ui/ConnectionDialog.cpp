@@ -176,6 +176,41 @@ void ConnectionDialog::onProtocolChanged()
     m_authRowLabel->setVisible(keyAuthAvailable);
 
     updateAuthFieldsVisibility();
+
+    // Real bug, found during a systematic dialog-consistency screenshot
+    // pass (not user-reported): hiding a QFormLayout row's widgets doesn't
+    // shrink the row's own reserved space — a dialog that starts in
+    // FTP/FTPS mode looks correctly compact, but switching the Protocol
+    // combo on an ALREADY-OPEN dialog (the actual common case: it always
+    // opens on SFTP first) left dead space where the Authentication row
+    // used to be, with no resize. adjustSize() re-fits the window to its
+    // layout's current sizeHint — smaller when switching away from SFTP,
+    // larger when switching back — matching what a freshly-opened dialog
+    // in that same protocol already looked like.
+    //
+    // Guarded on isVisible(): this same slot can also run before the
+    // dialog's first show() (setProtocol() called by a caller up front,
+    // or protocol-selection-test driving it directly) — calling
+    // adjustSize() on a not-yet-shown top-level widget computes its
+    // sizeHint from not-yet-fully-resolved style metrics and can produce
+    // a wrong (larger) size that then sticks, since it also marks the
+    // window as already explicitly sized and skips Qt's normal
+    // auto-size-on-first-show. Letting the first real show() do that
+    // initial sizing itself, untouched, avoids that.
+    if (isVisible()) {
+        // layout()->activate() forces the outer layout to recompute its
+        // cached size hint immediately. Without it, the setVisible() calls
+        // above only *invalidate* the layout and post a deferred
+        // LayoutRequest event to actually recompute it — so adjustSize()
+        // right after, in the same call, would read a stale (pre-hide)
+        // size hint. Confirmed directly: the first live protocol switch
+        // after opening the dialog silently used the previous size, and
+        // only the *next* switch (now reading a hint stale by one step)
+        // resized — layout()->activate() makes the very first switch
+        // correct too, not just eventually-consistent.
+        layout()->activate();
+        adjustSize();
+    }
 }
 
 void ConnectionDialog::updateAuthFieldsVisibility()

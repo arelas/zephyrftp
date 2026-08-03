@@ -2,10 +2,12 @@
 #include "FilePaneWidget.h"
 #include "ConnectionDialog.h"
 #include "SiteManagerDialog.h"
+#include "PreferencesDialog.h"
 #include "TransferQueueWidget.h"
 #include "HostKeyVerifier.h"
 #include "CertificateVerifier.h"
 #include "IconTheme.h"
+#include "../AppSettings.h"
 #include "../backends/LocalBackend.h"
 #include "../backends/SftpBackend.h"
 #include "../backends/FtpBackend.h"
@@ -38,16 +40,26 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
     setWindowTitle(tr("ZephyrFTP v%1").arg(QStringLiteral(APP_VERSION)));
-    resize(1100, 650);
+    resize(1100, 650);   // fallback default — overridden below if a previous session saved real geometry
 
+    m_settings = new AppSettings(this);
     m_transferManager = new TransferManager(this);
     m_hostKeyVerifier = new HostKeyVerifier(this);
     m_certificateVerifier = new CertificateVerifier(this);
 
+    // Ordered before buildMenuBar(): the View menu's "Transfers" entry is
+    // m_transfersDock->toggleViewAction(), so the dock has to exist first.
+    buildTransferQueue();
     buildMenuBar();
     buildToolbar();
     buildLayout();
-    buildTransferQueue();
+
+    // Restored last, after every dock/toolbar exists for restoreState() to
+    // apply to — an empty QByteArray (first run, or settings.json not
+    // written yet) is a documented safe no-op for both calls, so no
+    // isEmpty() guard is needed here.
+    restoreGeometry(m_settings->windowGeometry());
+    restoreState(m_settings->windowState());
 
     connect(m_transferManager, &TransferManager::transferSucceeded,
             this, &MainWindow::onTransferSucceeded);
@@ -100,6 +112,27 @@ void MainWindow::buildMenuBar()
     QAction *disconnectAction = connectionMenu->addAction(tr("&Disconnect"));
     connect(disconnectAction, &QAction::triggered, this, &MainWindow::onDisconnectTriggered);
 
+    // Standard File/Edit/View/.../Help menu convention — Edit is where a
+    // Preferences entry conventionally lives, and there's no separate File
+    // menu here for it to hide under instead.
+    QMenu *editMenu = menuBar()->addMenu(tr("&Edit"));
+    QAction *preferencesAction = editMenu->addAction(tr("&Preferences..."));
+    connect(preferencesAction, &QAction::triggered, this, &MainWindow::onPreferencesTriggered);
+
+    // toggleViewAction() is a checkable QAction Qt keeps in sync with the
+    // dock's own visibility automatically (both directions: toggling the
+    // action shows/hides the dock, and the dock being hidden any other way
+    // — a native close button on its floating window, for instance —
+    // unchecks the action). This is the fix for a real reported dead end:
+    // an undocked (floating) Transfers panel still gets a real, WM-drawn
+    // close button on its own top-level window regardless of this dock's
+    // own DockWidgetClosable feature, and closing it that way previously
+    // left no way to get it back at all.
+    QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
+    QAction *transfersToggle = m_transfersDock->toggleViewAction();
+    transfersToggle->setText(tr("&Transfers"));
+    viewMenu->addAction(transfersToggle);
+
     QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
     QAction *aboutAction = helpMenu->addAction(tr("&About ZephyrFTP..."));
     connect(aboutAction, &QAction::triggered, this, &MainWindow::onAboutTriggered);
@@ -146,8 +179,10 @@ void MainWindow::buildLayout()
     // Both panes start out on LocalBackend so the app is immediately
     // usable as a two-pane local file manager. The right pane's backend
     // gets swapped for an SftpBackend by onConnectTriggered() below.
-    m_leftPane = new FilePaneWidget(new LocalBackend(), splitter);
-    m_rightPane = new FilePaneWidget(new LocalBackend(), splitter);
+    // m_settings passed to both so a live "show hidden files" toggle in
+    // Preferences updates whichever pane(s) are showing at the time.
+    m_leftPane = new FilePaneWidget(new LocalBackend(), splitter, m_settings);
+    m_rightPane = new FilePaneWidget(new LocalBackend(), splitter, m_settings);
 
     splitter->addWidget(m_leftPane);
     splitter->addWidget(m_rightPane);
@@ -165,10 +200,21 @@ void MainWindow::buildLayout()
 
 void MainWindow::buildTransferQueue()
 {
-    auto *dock = new QDockWidget(tr("Transfers"), this);
-    dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
-    dock->setWidget(new TransferQueueWidget(m_transferManager, dock));
-    addDockWidget(Qt::BottomDockWidgetArea, dock);
+    m_transfersDock = new QDockWidget(tr("Transfers"), this);
+    // Named explicitly — QMainWindow::saveState()/restoreState() (not used
+    // yet, but this avoids the ambiguous-object warning if that's ever
+    // added) identify dock widgets by objectName, not the translatable
+    // window title.
+    m_transfersDock->setObjectName(QStringLiteral("TransfersDock"));
+    // DockWidgetClosable added so the dock's own (docked-state) title bar
+    // close button behaves the same, deliberate way a floating window's
+    // WM-drawn close button already does — both now go through the same
+    // toggleViewAction()-tracked visibility, recoverable from the View
+    // menu either way.
+    m_transfersDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable
+                                 | QDockWidget::DockWidgetClosable);
+    m_transfersDock->setWidget(new TransferQueueWidget(m_transferManager, m_transfersDock));
+    addDockWidget(Qt::BottomDockWidgetArea, m_transfersDock);
 }
 
 void MainWindow::onLeftFileActivated(const QString &name)
@@ -245,9 +291,19 @@ void MainWindow::onAboutTriggered()
             .arg(QStringLiteral(APP_VERSION)));
 }
 
+void MainWindow::onPreferencesTriggered()
+{
+    PreferencesDialog dialog(m_settings, this);
+    dialog.exec();
+}
+
 void MainWindow::onConnectTriggered()
 {
     ConnectionDialog dialog(this);
+    // setProtocol() already exists specifically for protocol-selection-test
+    // to drive the dialog through all three states — reused here to apply
+    // the user's own preferred default rather than always starting on SFTP.
+    dialog.setProtocol(m_settings->defaultProtocol());
     if (dialog.exec() != QDialog::Accepted)
         return;
 
@@ -328,6 +384,24 @@ void MainWindow::startConnection(const ConnectionRequest &request)
                                          // can't be, since IT is what moves.
     backend->moveToThread(thread);
 
+    // Real, reported bug: "Connecting to %1..." was never followed up —
+    // nothing ever showed success or failure, so the status bar was stuck
+    // on a permanently stale "Connecting..." even once the connection had
+    // long since succeeded (or failed). connect() here, before
+    // moveToThread() has taken effect, is still safe: Qt::AutoConnection
+    // decides direct-vs-queued by the sender's thread affinity at *emit*
+    // time, not at connect() time, so this correctly queues back to the
+    // GUI thread once backend is actually running on its worker thread —
+    // the same reasoning FilePaneWidget::setBackend() already relies on
+    // for its own connections to this backend.
+    const QString host = request.host();
+    connect(backend, &RemoteBackend::connected, this, [this, host]() {
+        statusBar()->showMessage(tr("Connected to %1").arg(host), 5000);
+    });
+    connect(backend, &RemoteBackend::connectionFailed, this, [this, host](const QString &reason) {
+        statusBar()->showMessage(tr("Failed to connect to %1: %2").arg(host, reason), 8000);
+    });
+
     statusBar()->showMessage(tr("Connecting to %1...").arg(request.host()));
     m_rightPane->setBackend(backend, thread);
 }
@@ -343,6 +417,13 @@ void MainWindow::onDisconnectTriggered()
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    // Saved on every close rather than only on a "clean" exit — there's no
+    // meaningfully different path here worth distinguishing, and this way
+    // even a close during an active transfer/connection still remembers
+    // layout for next time.
+    m_settings->setWindowGeometry(saveGeometry());
+    m_settings->setWindowState(saveState());
+
     // Same teardown as Disconnect (see MainWindow.h's doc comment on
     // why this needs to happen at all): if the right pane is still on a
     // thread-owning backend, this blocks briefly while that thread's

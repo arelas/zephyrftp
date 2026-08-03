@@ -8,6 +8,69 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.3.1] — Preferences, persisted window layout, and three real UI bugs fixed
+
+### Added
+
+- **A real settings/preferences system**, where none existed before —
+  `AppSettings`, persisted as `settings.json` alongside `sites.json` (same
+  hand-written-JSON convention, not `QSettings`). First put to use for:
+  - **Window geometry and dock layout now persist across restarts** —
+    previously the app always reopened at a fixed 1100x650 with the
+    Transfers dock in its default spot, every time.
+  - **A "Show hidden files" toggle** (Edit > Preferences), applied
+    uniformly to the local pane and both remote protocols. This also
+    fixes a real, pre-existing three-way inconsistency: the local pane
+    silently excluded every dotfile with no way to reveal them, while
+    the SFTP and FTP panes silently showed every dotfile with no way to
+    hide them — neither behavior was a deliberate choice, just whatever
+    each backend happened to already do. Whole-folder transfers
+    (drag-and-drop or "Transfer Selected" on a folder) are unaffected
+    either way — a folder's dotfiles were always included in what
+    actually gets recursively copied, on all three backends, since "hide
+    from view" and "don't transfer" were never the same thing and still
+    aren't.
+  - **A default protocol for new connections** (also in Preferences) —
+    the plain Connect dialog now preselects whichever protocol you use
+    most, instead of always defaulting to SFTP.
+
+### Fixed
+
+- **The status bar showed a permanently stale "Connecting to <host>..."
+  message, even long after the connection had actually succeeded or
+  failed.** Nothing ever followed up that message — `MainWindow` never
+  listened for `connected()`/`connectionFailed()` on the backend it had
+  just created, so the status bar was stuck reporting an in-progress
+  connect indefinitely, including in the specific reported case of it
+  still reading "Connecting..." after already being connected. Now shows
+  "Connected to <host>" or "Failed to connect to <host>: <reason>" once
+  the outcome is actually known.
+- **The Transfers dock, once undocked (floated) and then closed, had no
+  way to be brought back.** A floating `QDockWidget` gets a real,
+  WM-drawn close button on its own top-level window regardless of this
+  dock's own `DockWidgetClosable` feature (which wasn't even set), and
+  closing it that way was a dead end — reported as "double-clicking it
+  made it disappear with no way to bring it back." A new **View** menu
+  now hosts the dock's `toggleViewAction()`, a checkable action Qt keeps
+  in sync with the dock's actual visibility in both directions, so the
+  Transfers panel can always be shown again no matter how it was hidden.
+- **Switching the Connect dialog's Protocol dropdown away from SFTP (on
+  an already-open dialog — the normal way anyone actually does this,
+  since it always opens on SFTP first) left dead space where the
+  Authentication row used to be, instead of the window shrinking to
+  match.** A dialog opened directly in FTP/FTPS mode already looked
+  correctly compact — only the live switch was affected, which is also
+  the case that matters in practice. Found during a systematic
+  dialog-consistency screenshot pass (offscreen renders of every custom
+  dialog, both on Linux and cross-compiled under `wine` for a real
+  Windows comparison), not reported by a user first. Root cause:
+  `QFormLayout` doesn't shrink a row's reserved space just because its
+  widgets are hidden, and the fix (`adjustSize()` after toggling
+  visibility) needed its own care — called too early, it read a stale,
+  not-yet-recomputed layout size hint, which only would have made the
+  bug appear one switch late instead of fixed. See ARCHITECTURE.md for
+  the full root-cause writeup.
+
 ## [0.3.0] — Both core protocols now verified against real, independent servers
 
 Since 0.2.0 first wired FTP/FTPS into the UI unverified, every 0.2.x
@@ -438,7 +501,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.2.7...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.1
 [0.2.7]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.7
 [0.2.6]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.6
 [0.2.5]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.5

@@ -7,6 +7,8 @@ class FilePaneWidget;
 class TransferManager;
 class HostKeyVerifier;
 class CertificateVerifier;
+class QDockWidget;
+class AppSettings;
 struct ConnectionRequest;
 
 // Top-level window: two FilePaneWidgets side by side (commander style),
@@ -47,6 +49,7 @@ private slots:
     void onRefreshTriggered();
     void onTransferSucceeded();
     void onAboutTriggered();
+    void onPreferencesTriggered();
 
 private:
     void buildLayout();
@@ -81,4 +84,16 @@ private:
     // above, but for FtpBackend's FTPS certificate trust-on-first-use
     // decisions instead of SSH host keys.
     CertificateVerifier *m_certificateVerifier = nullptr;
+    // Built in buildTransferQueue(), before buildMenuBar() runs — the View
+    // menu's "Transfers" entry is this dock's own toggleViewAction(), so
+    // closing/floating-and-losing it (previously a dead end: the dock had
+    // no close button, but a floating QDockWidget still gets a real,
+    // WM-drawn close button on its own top-level window, which the app had
+    // no way to undo) always has a way back.
+    QDockWidget *m_transfersDock = nullptr;
+    // Owned for the app's whole lifetime, constructed before both panes
+    // (they take a pointer to it) and before buildMenuBar() (Preferences
+    // needs it too). Persists to settings.json on every change — see
+    // AppSettings's own doc comment for why this isn't QSettings.
+    AppSettings *m_settings = nullptr;
 };

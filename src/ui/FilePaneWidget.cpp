@@ -1,6 +1,7 @@
 #include "FilePaneWidget.h"
 #include "FileTreeView.h"
 #include "IconTheme.h"
+#include "../AppSettings.h"
 
 #include <QLineEdit>
 #include <QLabel>
@@ -32,7 +33,7 @@ QString joinPath(const QString &dir, const QString &name)
 }
 }
 
-FilePaneWidget::FilePaneWidget(RemoteBackend *backend, QWidget *parent)
+FilePaneWidget::FilePaneWidget(RemoteBackend *backend, QWidget *parent, AppSettings *settings)
     : QWidget(parent)
     , m_backend(nullptr)
     , m_view(nullptr)
@@ -42,9 +43,20 @@ FilePaneWidget::FilePaneWidget(RemoteBackend *backend, QWidget *parent)
     , m_pathBar(nullptr)
     , m_statusLabel(nullptr)
     , m_model(new QStandardItemModel(this))
+    , m_settings(settings)
 {
     buildUi();
     setBackend(backend, nullptr);
+
+    // Connected once here, not in setBackend() — setBackend() runs again
+    // every time the backend is swapped (connect/disconnect/reconnect),
+    // and re-adding this connection each time would fire rebuildModel()
+    // once per past connection instead of once.
+    if (m_settings) {
+        connect(m_settings, &AppSettings::showHiddenFilesChanged, this, [this](bool) {
+            rebuildModel();
+        });
+    }
 }
 
 void FilePaneWidget::setBackend(RemoteBackend *backend, QThread *thread)
@@ -217,14 +229,24 @@ void FilePaneWidget::onPathBarReturnPressed()
     navigateTo(m_pathBar->text());
 }
 
-void FilePaneWidget::onDirectoryListed(const QString &path, const QList<RemoteEntry> &entries)
+void FilePaneWidget::rebuildModel()
 {
-    m_currentEntries = entries;
-    m_pathBar->setText(path);
-    m_statusLabel->setText(tr("%1 items").arg(entries.size()));
+    // Real, existing inconsistency this filter also fixes: LocalBackend
+    // has always excluded dotfiles outright (its QDir::entryInfoList()
+    // call never passes QDir::Hidden), while SftpBackend/FtpBackend only
+    // ever excluded "."/".." and always showed every other dotfile — two
+    // panes disagreeing about what "the directory listing" even means,
+    // with no way to change either. Filtering centrally here, once,
+    // applies the same rule to every backend uniformly.
+    const bool showHidden = m_settings && m_settings->showHiddenFiles();
 
+    m_currentEntries.clear();
     m_model->removeRows(0, m_model->rowCount());
-    for (const RemoteEntry &e : entries) {
+    for (const RemoteEntry &e : m_lastRawEntries) {
+        if (!showHidden && e.name.startsWith(QLatin1Char('.')))
+            continue;
+
+        m_currentEntries.append(e);
         auto *nameItem = new QStandardItem(e.isDir ? QStringLiteral("[%1]").arg(e.name) : e.name);
         nameItem->setIcon(iconForEntry(e));
         auto *sizeItem = new QStandardItem(e.isDir ? QString() : QString::number(e.size));
@@ -232,6 +254,14 @@ void FilePaneWidget::onDirectoryListed(const QString &path, const QList<RemoteEn
         auto *permItem = new QStandardItem(e.permissions);
         m_model->appendRow({nameItem, sizeItem, modItem, permItem});
     }
+    m_statusLabel->setText(tr("%1 items").arg(m_currentEntries.size()));
+}
+
+void FilePaneWidget::onDirectoryListed(const QString &path, const QList<RemoteEntry> &entries)
+{
+    m_lastRawEntries = entries;
+    m_pathBar->setText(path);
+    rebuildModel();
 
     // History bookkeeping happens here — on a CONFIRMED successful
     // listing — rather than eagerly when navigateTo() is called, since a

@@ -740,6 +740,68 @@ to drive FileZilla itself for a same-desktop comparison.
   deliberately unchanged when Site Manager was added (see below) rather
   than risking regressing an already-verified flow; `MainWindow::startConnection()`
   is the shared code both paths funnel through afterward.
+  **A real, found-not-reported layout bug, fixed during a systematic
+  dialog-consistency pass across every custom dialog:** switching the
+  Protocol combo away from SFTP on an already-open dialog left dead
+  space where the Authentication row used to be, instead of the window
+  shrinking to match — while a dialog constructed directly in FTP/FTPS
+  mode from the start (e.g. via `setProtocol()` before the first `show()`,
+  which is exactly what `protocol-selection-test` does) already looked
+  correctly compact. This split — same hidden row, different outcome
+  depending on *when* the hide happens — is why the existing test suite
+  never caught it: it only ever drives the "fresh, already in the target
+  state" path, never the "user opens Connect, then changes their mind on
+  the dropdown" path, which is the one real people actually take, since
+  the dialog always opens on SFTP. Root cause: `QFormLayout` doesn't
+  shrink a row's reserved layout space just because both its widgets are
+  hidden — `onProtocolChanged()`'s `setVisible(false)` calls only
+  invalidate the layout and post a deferred `LayoutRequest` event to
+  actually recompute it. Fixed with `layout()->activate()` (forces the
+  recompute immediately) followed by `adjustSize()`, both guarded on
+  `isVisible()` — calling `adjustSize()` on a not-yet-shown dialog (the
+  `protocol-selection-test`/pre-configured-caller case) reads sizeHint
+  from not-yet-fully-resolved style metrics and can stick a wrong
+  (larger) size that then blocks Qt's own correct auto-size-on-first-show
+  behavior, so the fix deliberately leaves that path alone. Getting the
+  fix right took two iterations: the first version called `adjustSize()`
+  without `layout()->activate()` first, which read a stale (pre-hide)
+  size hint — confirmed by testing all three transitions in sequence,
+  not just one: the *first* live switch away from SFTP silently kept the
+  old size, and only the *next* switch (now reading a hint stale by one
+  step) resized, which would have shipped as "fixed" against a test that
+  only checked a single before/after pair instead of a full sequence.
+  **Confirmed on a real Windows build, not just Linux — the actual point
+  of this pass, not an afterthought:** cross-compiled via MinGW and run
+  under `wine` against a real KDE desktop already available in this
+  environment (no `Xvfb` needed — see CONTRIBUTING.md's note that a real
+  graphical session makes it unnecessary), the same live-switch sequence
+  produces the same correct shrink/grow on the actual Windows binary,
+  not just the Linux one. The same pass also turned up two more
+  Windows-specific renders worth recording honestly rather than either
+  fixing blindly or ignoring: (1) the Site Manager's Starting-directory
+  radio pair visually *appeared* to show "Home directory" checked instead
+  of "Specific directory" for a site saved with `useHomeDirectory=false`
+  — investigated directly rather than trusted, by reading
+  `isChecked()` on both radios through `findChildren<QRadioButton*>()`
+  rather than eyeballing the screenshot, which confirmed the actual
+  widget state is correct (`homeDirRadio=false`, `specificDirRadio=true`)
+  on *both* platforms; `theme.qss` has no radio-button styling at all
+  (confirmed by grep), so this is Qt's native-style indicator painting
+  under Wine specifically, not an app bug — but also not confirmed
+  innocent on genuine Windows hardware, since Wine has already shown
+  real, documented gaps from true Windows fidelity elsewhere in this
+  project (the `qDebug()`-doesn't-reach-terminal quirk in CONTRIBUTING.md).
+  (2) `QMessageBox`'s standard Warning/Question icons rendered as a
+  blank placeholder glyph under `wine` instead of the expected
+  triangle/question-mark — plausibly Wine's emulation of the native
+  Windows system-icon lookup `QMessageBox` uses under the "windows"
+  style, entirely inside Qt itself with nothing in this app's own code
+  to fix either way, but again not something a real Windows machine has
+  been available to confirm or rule out. Both flagged here rather than
+  silently accepted or silently "fixed" against a guess, per this
+  project's own rule: say so explicitly when something genuinely can't
+  be verified in the environment at hand, rather than letting silence
+  read as a claim of correctness.
 - `SavedSite` / `SiteStore` (`src/backends/SavedSite.h/.cpp`) — a saved
   connection profile (host/port/username/auth method/key path, optional
   starting directory, optionally grouped into a folder) and its JSON
@@ -845,6 +907,66 @@ to drive FileZilla itself for a same-desktop comparison.
   `m_portSpin->setFixedHeight(m_hostEdit->sizeHint().height())` —
   matched to a sibling field's actual height rather than a hardcoded
   pixel count, so it stays correct if the theme's font/padding changes.
+- `AppSettings` (`src/AppSettings.h/.cpp`) — app-wide preferences, the
+  first general settings mechanism this project has had (there was
+  nothing to persist before this). Follows `SiteStore`'s own convention
+  exactly: a hand-written JSON file (`settings.json`) in
+  `QStandardPaths::AppConfigLocation`, not `QSettings` — one persistence
+  mechanism across the app, not two. Unlike `SiteStore` (stateless static
+  `load()`/`save()` functions), this is a `QObject` with a real
+  lifetime, owned by `MainWindow` for the app's whole run: `showHiddenFiles`
+  needs to propagate live to both `FilePaneWidget`s the instant it's
+  toggled in `PreferencesDialog`, via `showHiddenFilesChanged`, without
+  either pane re-fetching its listing from the backend.
+  `windowGeometry`/`windowState` are opaque `QMainWindow::saveGeometry()`/
+  `saveState()` blobs, base64-encoded into the same JSON file, read once
+  at startup and written once from `MainWindow::closeEvent()` — no live
+  propagation needed for either, unlike `showHiddenFiles`.
+  **A real, verified bug, not a hypothetical one:** the first working
+  version filtered `showHiddenFiles` only in `FilePaneWidget`, on the
+  theory that every backend returns dotfiles raw and the UI layer
+  decides visibility centrally. A throwaway verification harness (not
+  committed — this project's established pattern for one-off functional
+  checks) constructed a real `FilePaneWidget` over a real `LocalBackend`
+  pointed at a real temp directory containing a dotfile, toggled
+  `showHiddenFiles` live, and found the toggle did nothing for the local
+  pane specifically: `LocalBackend::listDirectory()`/
+  `listDirectoryForEnumeration()` both called `QDir::entryInfoList()`
+  without `QDir::Hidden`, so a dotfile never reached `FilePaneWidget` in
+  the first place, filtered or not — while `SftpBackend`/`FtpBackend`
+  never excluded dotfiles from their own listings to begin with. Fixed
+  by adding `QDir::Hidden` to both `LocalBackend` call sites, making
+  "return everything, filter for display centrally" actually true across
+  all three backends, not just two of them. This also surfaced (and
+  fixed, in the same change) a related latent inconsistency: local
+  whole-folder transfers previously skipped a source folder's dotfiles
+  silently, while SFTP/FTP transfers already included them — enumeration
+  now includes dotfiles unconditionally on all three backends regardless
+  of the display setting, since "hidden from the browsing view" and
+  "excluded from what actually gets transferred" were never meant to be
+  the same thing. Re-run after the fix: all three toggle assertions
+  passed, including the live re-render with no fresh `listDirectory()`
+  round-trip.
+  `FilePaneWidget::rebuildModel()` is the one place that now applies this
+  filter, keeping `m_currentEntries` — which every row-indexed method
+  (`onRowDoubleClicked`, `selectedFileNames()`, `selectedEntries()`, the
+  context menu) relies on matching the view row-for-row — as the
+  *filtered* set, while a separate `m_lastRawEntries` holds everything
+  the last `listDirectory()` actually returned, so a live toggle can
+  re-filter and redraw instantly without a pointless backend round-trip.
+- `PreferencesDialog` (`src/ui/PreferencesDialog.h/.cpp`) — small by
+  design: a "Show hidden files" checkbox and a default-protocol combo box
+  are the only two real settings that exist to show, and nothing else
+  was invented just to fill the dialog out. Every field persists to
+  `AppSettings` the instant it changes (same immediate-persist
+  convention `SiteManagerDialog` already uses — "no separate Save step to
+  forget"), so the only button is Close. Verified with the same
+  screenshot-and-pixel-sample technique proven on `ConnectionDialog`/
+  `SiteManagerDialog` earlier (a throwaway harness, not committed): the
+  dialog's background sampled `rgb(20,23,28)`, matching the `#14171c`
+  dark-theme token, confirming it doesn't repeat the earlier
+  dialogs-ignoring-the-stylesheet bug now that a third dialog exists to
+  potentially get it wrong again.
 - `HostKeyVerifier` — lives on the GUI thread for the app's lifetime.
   `SftpBackend`'s worker thread calls into it via
   `QMetaObject::invokeMethod(..., Qt::BlockingQueuedConnection)` to get a

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ZephyrFTP VERSION 0.3.0 LANGUAGES CXX)
+project(ZephyrFTP VERSION 0.3.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -43,6 +43,7 @@ qt_standard_project_setup()
 
 set(SOURCES
     src/main.cpp
+    src/AppSettings.cpp
     src/ui/MainWindow.cpp
     src/ui/FilePaneWidget.cpp
     src/ui/FileTreeView.cpp
@@ -52,6 +53,7 @@ set(SOURCES
     src/ui/CertificateVerifier.cpp
     src/ui/IconTheme.cpp
     src/ui/SiteManagerDialog.cpp
+    src/ui/PreferencesDialog.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
     src/backends/FtpBackend.cpp
@@ -73,6 +75,7 @@ if(WIN32)
 endif()
 
 set(HEADERS
+    src/AppSettings.h
     src/ui/MainWindow.h
     src/ui/FilePaneWidget.h
     src/ui/FileTreeView.h
@@ -82,6 +85,7 @@ set(HEADERS
     src/ui/CertificateVerifier.h
     src/ui/IconTheme.h
     src/ui/SiteManagerDialog.h
+    src/ui/PreferencesDialog.h
     src/backends/RemoteBackend.h
     src/backends/RemoteEntry.h
     src/backends/LocalBackend.h
@@ -124,6 +128,7 @@ target_link_libraries(zephyrftp PRIVATE
 # --- smoke test (not part of the shipped app; verifies thread lifecycle) ---
 qt_add_executable(smoke-test EXCLUDE_FROM_ALL
     src/smoke_test.cpp
+    src/AppSettings.cpp
     src/ui/MainWindow.cpp
     src/ui/FilePaneWidget.cpp
     src/ui/FileTreeView.cpp
@@ -133,6 +138,7 @@ qt_add_executable(smoke-test EXCLUDE_FROM_ALL
     src/ui/CertificateVerifier.cpp
     src/ui/IconTheme.cpp
     src/ui/SiteManagerDialog.cpp
+    src/ui/PreferencesDialog.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
     src/backends/FtpBackend.cpp   # MainWindow.cpp constructs one — see startConnection()
@@ -153,6 +159,7 @@ target_link_libraries(smoke-test PRIVATE
 # --- transfer queue functional test (moves a real file end-to-end) ---
 qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
     src/transfer_queue_test.cpp
+    src/AppSettings.cpp
     src/ui/MainWindow.cpp
     src/ui/FilePaneWidget.cpp
     src/ui/FileTreeView.cpp
@@ -162,6 +169,7 @@ qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
     src/ui/CertificateVerifier.cpp
     src/ui/IconTheme.cpp
     src/ui/SiteManagerDialog.cpp
+    src/ui/PreferencesDialog.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
     src/backends/FtpBackend.cpp   # MainWindow.cpp constructs one — see startConnection()
@@ -190,6 +198,7 @@ target_link_libraries(site-store-test PRIVATE Qt6::Core)
 # --- Navigation history test (back/forward/up, real LocalBackend + real temp dirs) ---
 qt_add_executable(navigation-test EXCLUDE_FROM_ALL
     src/navigation_test.cpp
+    src/AppSettings.cpp
     src/ui/FilePaneWidget.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
@@ -204,6 +213,7 @@ target_link_libraries(navigation-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Con
 # --- Transfer pause/resume orchestration test (fake backend, no real server needed) ---
 qt_add_executable(transfer-pause-test EXCLUDE_FROM_ALL
     src/transfer_pause_test.cpp
+    src/AppSettings.cpp
     src/ui/FilePaneWidget.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
@@ -229,6 +239,7 @@ target_link_libraries(file-operations-test PRIVATE Qt6::Core)
 # --- Whole-folder transfer test (recursive enumeration + mirrored dirs, real LocalBackend) ---
 qt_add_executable(folder-transfer-test EXCLUDE_FROM_ALL
     src/folder_transfer_test.cpp
+    src/AppSettings.cpp
     src/ui/FilePaneWidget.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
@@ -245,6 +256,7 @@ target_link_libraries(folder-transfer-test PRIVATE Qt6::Widgets Qt6::Network Qt6
 # --- Destination conflict resolution test (Overwrite/Skip, Write Into/Skip, real dialog interaction) ---
 qt_add_executable(conflict-resolution-test EXCLUDE_FROM_ALL
     src/conflict_resolution_test.cpp
+    src/AppSettings.cpp
     src/ui/FilePaneWidget.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp

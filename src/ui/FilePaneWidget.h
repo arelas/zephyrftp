@@ -13,6 +13,7 @@ class QLabel;
 class QThread;
 class QAction;
 class QToolButton;
+class AppSettings;
 
 // One side of the dual-pane layout. Owns a backend (local or remote) and
 // renders its current directory listing. MainWindow instantiates two of
@@ -21,7 +22,12 @@ class QToolButton;
 class FilePaneWidget : public QWidget {
     Q_OBJECT
 public:
-    explicit FilePaneWidget(RemoteBackend *backend, QWidget *parent = nullptr);
+    // settings defaults to nullptr so every existing test-file call site
+    // (constructing a pane with just a backend, no live preferences)
+    // keeps compiling unchanged; a null settings pointer just means
+    // "hide dotfiles, and don't react live to a toggle that can't exist."
+    explicit FilePaneWidget(RemoteBackend *backend, QWidget *parent = nullptr,
+                             AppSettings *settings = nullptr);
 
     RemoteBackend *backend() const { return m_backend; }
     QString selectedEntryName() const;
@@ -116,6 +122,13 @@ private slots:
 private:
     void buildUi();
 
+    // Rebuilds the model from m_currentEntries, applying the current
+    // showHiddenFiles filter. Separate from onDirectoryListed() so a live
+    // preference toggle can re-render instantly without a fresh backend
+    // round-trip — m_currentEntries already holds everything the last
+    // listDirectory() returned, filtered or not.
+    void rebuildModel();
+
     // Sets/replaces the path bar's leading icon (device-laptop blue for
     // local, server green for remote) — called from setBackend() since
     // that's the only thing that can change which of the two applies.
@@ -148,7 +161,17 @@ private:
     QAction *m_pathBarLeadingIcon = nullptr;   // owned by m_pathBar once added; tracked so it can be replaced
     QLabel *m_statusLabel;
     QStandardItemModel *m_model;
+    // Exactly what's rendered in m_model, row for row — every other
+    // method indexing by view row (onRowDoubleClicked,
+    // selectedFileNames(), selectedEntries(), the context menu) relies on
+    // this 1:1 correspondence, so this must stay the FILTERED set, not
+    // everything the backend returned.
     QList<RemoteEntry> m_currentEntries;
+    // Everything the last listDirectory() call actually returned, before
+    // the showHiddenFiles filter — kept separately so a live preference
+    // toggle can re-filter and redraw instantly via rebuildModel(),
+    // without a fresh (and pointless) round-trip back to the backend.
+    QList<RemoteEntry> m_lastRawEntries;
 
     // Navigation history. m_historyIndex points at the currently-displayed
     // entry; entries after it are "forward" history, cleared whenever a
@@ -159,4 +182,8 @@ private:
     QStringList m_history;
     int m_historyIndex = -1;
     bool m_navigatingHistory = false;
+
+    // Non-owning — outlives this pane (MainWindow owns it for the app's
+    // whole lifetime). Null in every test that constructs a pane directly.
+    AppSettings *m_settings;
 };

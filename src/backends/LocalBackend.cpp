@@ -57,7 +57,14 @@ void LocalBackend::listDirectory(const QString &path)
     m_currentPath = dir.absolutePath();
 
     QList<RemoteEntry> entries;
-    const auto infoList = dir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot,
+    // QDir::Hidden included so dotfiles reach FilePaneWidget at all —
+    // filtering them here unconditionally (the previous behavior) meant
+    // AppSettings::showHiddenFiles() had nothing to reveal for the local
+    // pane specifically, while SftpBackend/FtpBackend never filtered them
+    // out of their own listings in the first place. FilePaneWidget's
+    // rebuildModel() is now the one place that decides visibility,
+    // uniformly across all three backends.
+    const auto infoList = dir.entryInfoList(QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot,
                                              QDir::DirsFirst | QDir::Name);
     for (const QFileInfo &info : infoList) {
         RemoteEntry e;
@@ -84,8 +91,17 @@ void LocalBackend::listDirectoryForEnumeration(const QString &path, int requestI
     // Deliberately does NOT touch m_currentPath — see RemoteBackend's
     // doc comment on why this needs to be a separate call from
     // listDirectory() rather than reusing it.
+    //
+    // QDir::Hidden included here too, unconditionally — a whole-folder
+    // transfer shouldn't silently skip a source folder's dotfiles just
+    // because they're hidden from the *browsing* view; "show hidden
+    // files" is a display preference (FilePaneWidget's concern, via
+    // AppSettings, which this backend has no reference to and shouldn't),
+    // never a "what actually gets transferred" one. This also matches
+    // SftpBackend/FtpBackend, which never filtered dotfiles out of their
+    // own enumeration to begin with.
     QList<RemoteEntry> entries;
-    const auto infoList = dir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot,
+    const auto infoList = dir.entryInfoList(QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot,
                                              QDir::DirsFirst | QDir::Name);
     for (const QFileInfo &info : infoList) {
         RemoteEntry e;
