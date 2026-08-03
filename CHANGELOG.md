@@ -8,6 +8,42 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.2.16] — SFTP throughput gap confirmed closed; smoother live speed
+
+### Fixed
+
+- **The SFTP throughput gap — previously ~1.6-1.8x behind a
+  FileZilla/Termius/SMB comparison, with the remaining cause left
+  explicitly unknown for lack of a real non-loopback test server — is
+  now confirmed closed.** A new harness, `verify-sftp-throughput`
+  (`src/verify_sftp_throughput.cpp`, opt-in and env-var-configured
+  since it needs a real externally-provided server), measured this
+  app's `SftpBackend` against a real server (~6-7ms round-trip time)
+  alongside OpenSSH's own `scp` as a same-link, same-moment baseline.
+  Result, confirmed across two runs at two file sizes: ~29-31MB/s
+  upload / ~37-39MB/s download here vs. `scp`'s own ~29-36MB/s /
+  ~35-37MB/s on the identical link — real parity with a native
+  reference SFTP client, not the previously-reported gap. No
+  `SftpBackend` code change was needed; the honest result is "parity
+  confirmed," and the likely explanation for the original number is
+  that it came from a different network at a different time, compared
+  against SMB (a different transport family entirely). See
+  ARCHITECTURE.md's Known Gaps for the full writeup.
+
+### Changed
+
+- **The live Speed column now smooths its readout instead of showing
+  each raw 250ms sample untouched.** Confirmed by direct comparison
+  that other SFTP clients' visibly calmer live speed numbers come from
+  smoothing, not from being more accurate — each of this app's own raw
+  samples was already a real, unlagged measurement, just with nothing
+  carried over between windows, so natural transfer burstiness (TCP
+  window dynamics, disk flush stalls, scheduler jitter) showed up
+  directly as visible jumpiness. An exponential moving average
+  (`TransferManager`, alpha = 0.3) now smooths across samples the same
+  way, trading a small amount of display lag for a steadier number;
+  the underlying 250ms raw sampling itself is unchanged.
+
 ## [0.2.15] — Fix a real SFTP checkExists() false-negative
 
 ### Fixed

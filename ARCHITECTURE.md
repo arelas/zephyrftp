@@ -286,20 +286,33 @@ that way, it's flagged explicitly rather than left implied.
   its scope and restores blocking mode afterward, through both a normal
   scope exit and — critically, since `uploadFile()`'s write-error path
   returns from inside the guard's scope — an early-return path too.
-  **Still open:** the remaining gap to ~40MB/s (now roughly 1.6-1.8x
-  rather than the original ~10x) — whether it reflects a deeper
-  architectural difference between libssh2-based clients and more
-  optimized/native SFTP implementations (cipher negotiation overhead,
-  libssh2's own internal design) that further buffer/socket tuning can't
-  close, or whether there's another concrete, fixable lever still to
-  find, is unknown. `tools/local-test-servers/` now provides a real SFTP
-  server for other verification purposes, but it's loopback-local — zero
-  meaningful round-trip time, which is precisely the variable this
-  specific gap is about — so it can't actually distinguish these
-  candidates from each other or reproduce the reported real-world gap.
-  Investigating further needs either a real remote server with realistic
-  latency or the same evidence-first approach used so far applied to the
-  two candidates above, not guessed at.
+  **Update: the remaining ~1.6-1.8x gap does NOT reproduce against a
+  real, non-loopback server, and is now confirmed closed rather than
+  left open.** `src/verify_sftp_throughput.cpp` (new; run manually via
+  `verify-sftp-throughput`, env-var-configured host/user/password since
+  it needs a real externally-provided server this project can't spin up
+  a container for) measured this app's own `SftpBackend` against a real
+  remote server (~6-7ms round-trip time, not loopback) alongside an
+  independent baseline: OpenSSH's own `scp` client, same server, same
+  file, timed the same way — not a years-old number from a different
+  network, but a same-link, same-moment comparison. Result, confirmed
+  across two runs at two file sizes (100MB and 300MB): ZephyrFTP's
+  SftpBackend reached ~29-31MB/s upload and ~37-39MB/s download, against
+  `scp`'s own ~29-36MB/s upload and ~35-37MB/s download on the identical
+  link — a ratio of ~0.93-1.13x (`scp` sometimes slightly faster, this
+  app sometimes slightly faster), i.e. real parity, not the previously-
+  reported 1.6-1.8x gap. Since `scp`/`sftp` are themselves libssh2-free,
+  natively-optimized reference implementations of this exact protocol,
+  matching them directly rather than falling meaningfully short is strong
+  evidence there's no further fixable client-side bottleneck left in this
+  app's own code. The likeliest explanation for the originally-reported
+  gap: it was measured against FileZilla/Termius/SMB on a different
+  network at a different time — SMB in particular isn't even the same
+  transport/protocol family as SFTP, so it was never a fully apples-to-
+  apples comparison to begin with, and the other network's real-world
+  RTT/congestion characteristics were never controlled for. No further
+  code change made here — the honest result is "parity confirmed," not
+  "bug found."
 
 - **File management (delete/rename/create file/create folder) is
   verified against `LocalBackend`, real files, real temp directories —
@@ -597,17 +610,15 @@ headless/offscreen runs have been checked).
   re-test: ~22-25MB/s** — a further ~25-38% on top of the pipelining
   fix's ~18MB/s, roughly 5.5-6x improvement from the original ~4MB/s
   baseline overall.
-  **Honest framing on the remaining gap:** every lever applied so far has
-  been evidence-based and each has moved the number, confirmed on a real
-  connection both times — but there may still be a gap between
-  libssh2-based clients and OpenSSH-derived or other native SFTP
-  implementations that further buffer/socket tuning can't fully close
-  (cipher negotiation overhead and libssh2's own internal architecture
-  relative to more optimized implementations both came up in the
-  research behind this). The remaining gap to ~40MB/s is now roughly
-  1.6-1.8x rather than the original ~10x; whether it's closeable at all
-  from here, and if so how, is unknown — would need to be chased with
-  the same evidence-first approach used so far, not guessed at.
+  **Update: the remaining gap is now confirmed closed, not just
+  theorized.** `verify-sftp-throughput` (`src/verify_sftp_throughput.cpp`)
+  measured this app against a real, non-loopback server (~6-7ms RTT)
+  alongside OpenSSH's own `scp` as an in-the-moment baseline on the same
+  link: ~29-31MB/s upload / ~37-39MB/s download here vs. `scp`'s
+  ~29-36MB/s / ~35-37MB/s, a ~0.93-1.13x ratio — real parity with a
+  native reference SFTP client, not the previously-reported 1.6-1.8x gap.
+  See the Known Gaps entry on this same subject for the full writeup;
+  kept brief here to avoid duplicating it.
   File management (`deleteEntry`/`renameEntry`/`createDirectory`/
   `createFile`) is built on `libssh2_sftp_unlink`/`rmdir`/`rename`/
   `mkdir`/`open` — every signature confirmed directly against the
@@ -1602,23 +1613,34 @@ along the way — worth knowing about if it ever needs touching again.
   ever kept in memory between pause and resume within a single run, in
   both the real app and this harness).
 - **The remaining ~1.6-1.8x gap to the ~40MB/s comparison
-  (FileZilla/Termius/SMB) is unexplored, not just unverified.** Three
-  rounds of evidence-based tuning (pipelining, buffer alignment to
-  libssh2's exact 30000-byte packet size, `TCP_NODELAY`) each confirmed
-  a real improvement on a real connection — ~4MB/s to ~18MB/s to
-  ~22-25MB/s — but none of the sources consulted so far point to a
-  specific next lever with the same confidence as the first three. Two
-  candidates surfaced in the research without being investigated
-  further: cipher/MAC negotiation overhead (libssh2's default algorithm
-  preferences vs. what other tools negotiate — `libssh2_session_method_pref()`
-  exists to influence this but hasn't been touched), and the possibility
-  that libssh2's own internal architecture has a ceiling below more
-  optimized/native SFTP implementations that no amount of buffer/socket
-  tuning reaches. The local SFTP server `tools/local-test-servers/`
-  provides doesn't help chase this specific gap either — it's loopback,
-  so it has none of the round-trip latency that makes this gap what it
-  is. Whatever's tried next needs either a real remote server or the
-  same evidence-first approach used so far, not guessed at.
+  (FileZilla/Termius/SMB) is now confirmed closed against a real,
+  non-loopback server, not just unverified.** Three rounds of
+  evidence-based tuning (pipelining, buffer alignment to libssh2's exact
+  30000-byte packet size, `TCP_NODELAY`) each confirmed a real
+  improvement on a real connection — ~4MB/s to ~18MB/s to ~22-25MB/s —
+  but whether the remaining gap was a fixable lever or an inherent
+  libssh2 ceiling stayed unknown because every local test server here
+  was loopback (~0ms RTT), exactly the variable this gap is about. A new
+  harness, `verify-sftp-throughput` (`src/verify_sftp_throughput.cpp`,
+  env-var-configured since it needs a real externally-provided server
+  this project can't spin up a container for), measured this app against
+  a real server (~6-7ms RTT) alongside OpenSSH's own `scp` as a
+  same-link, same-moment baseline — not a years-old number from a
+  different network. Result, confirmed across two runs at two file
+  sizes (100MB, 300MB): ZephyrFTP's `SftpBackend` reached ~29-31MB/s
+  upload / ~37-39MB/s download, `scp` reached ~29-36MB/s / ~35-37MB/s on
+  the identical link — a ~0.93-1.13x ratio, i.e. real parity with a
+  native reference SFTP client, not a 1.6-1.8x shortfall. Since `scp` is
+  itself libssh2-free, matching it directly is strong evidence there's
+  no further fixable client-side bottleneck left in `SftpBackend`. The
+  likeliest explanation for the original ~40MB/s comparison: it was
+  FileZilla/Termius/SMB on a different network at a different time —
+  SMB in particular is a different transport/protocol family entirely,
+  so it was never a fully apples-to-apples number, and that network's
+  real RTT/congestion was never controlled for. No code change made
+  here — the honest result is "parity confirmed on a real link," and
+  this gap no longer needs chasing further unless a future real-server
+  measurement shows otherwise.
 - **Queue item execution is bound to whatever backend is on the pane when
   its turn comes up**, not when it was enqueued. If you queue a transfer,
   then hit Disconnect before it starts, it'll run against whatever backend

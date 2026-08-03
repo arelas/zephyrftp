@@ -4,7 +4,7 @@ A dual-pane SFTP client for Windows and Linux — browse your local files
 and a remote server side by side, then drag, drop, or double-click to
 move things between them. Think FileZilla or WinSCP, built fresh in Qt6.
 
-**Current version: 0.2.15 — alpha.** Real functionality, but real gaps
+**Current version: 0.2.16 — alpha.** Real functionality, but real gaps
 too — see [Known limitations](#known-limitations) before relying on
 this for anything you can't afford to get wrong. [Releases](https://github.com/arelas/zephyrftp/releases)
 has downloadable Windows and Linux builds; [CHANGELOG.md](CHANGELOG.md)
@@ -122,17 +122,20 @@ rather than being half-implemented:
   browsing, and transferring files over plain FTP, active-mode fallback,
   the legacy `LIST` directory-listing fallback, and a full encrypted
   transfer over FTPS (including trusting a certificate and reusing that
-  trust) have all been confirmed against real FTP/FTPS servers, not just
-  tested in isolation. Still newer and less battle-tested than SFTP;
-  expect some rough edges against servers this hasn't specifically been
-  tried against — a real-world server's exact `LIST` output format in
-  particular varies enough between vendors that this hasn't seen every
-  variant.
+  trust) have all been confirmed against real, independently-implemented
+  FTP/FTPS server software (vsftpd and proftpd, not just this project's
+  own test stand-in), not just tested in isolation. Still newer and less
+  battle-tested than SFTP; expect some rough edges against servers this
+  hasn't specifically been tried against.
 - **FTPS data connections reusing the control connection's TLS session
-  is best-effort, not guaranteed.** Some strict FTPS servers require this
-  (RFC 4217) as an anti-hijacking measure; ZephyrFTP now attempts real
-  session-ticket reuse, but whether that satisfies a genuinely strict
-  server hasn't been confirmed either way.
+  is best-effort, and now confirmed NOT to satisfy every strict server.**
+  Some strict FTPS servers require this (RFC 4217) as an anti-hijacking
+  measure; ZephyrFTP attempts real session-ticket reuse, but a genuinely
+  strict real server (proftpd, configured to require it) confirmed
+  rejects this project's current reuse attempt — connecting still works,
+  but a data connection to that kind of server may fail where a more
+  established client would succeed. See ARCHITECTURE.md's Known gaps for
+  the full technical picture.
 - **Server-to-server transfers aren't supported** — ZephyrFTP always
   transfers between your computer and one server, not between two
   remote servers directly.

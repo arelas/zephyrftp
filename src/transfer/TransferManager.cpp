@@ -205,6 +205,8 @@ void TransferManager::dispatchActiveItem()
 
     m_speedSampleTimer.start();
     m_speedSampleBytesAtLastSample = item.bytesDone;   // nonzero when resuming a Paused item
+    m_smoothedSpeedBytesPerSec = 0.0;
+    m_hasSpeedSample = false;
 
     RemoteBackend *srcBackend = item.sourcePane->backend();
     RemoteBackend *dstBackend = item.destPane->backend();
@@ -489,7 +491,26 @@ void TransferManager::onBackendProgress(const QString &fileName, qint64 bytesDon
     const qint64 elapsedMs = m_speedSampleTimer.isValid() ? m_speedSampleTimer.elapsed() : 0;
     if (elapsedMs >= 250) {
         const qint64 bytesSinceLastSample = bytesDone - m_speedSampleBytesAtLastSample;
-        item.speedBytesPerSec = (bytesSinceLastSample * 1000) / elapsedMs;
+        const double rawSpeed = (bytesSinceLastSample * 1000.0) / elapsedMs;
+
+        // Exponential moving average across samples — see m_smoothedSpeedBytesPerSec's
+        // doc comment for why. alpha = 0.3 is a fairly standard middle
+        // ground (e.g. in the same range curl and several download
+        // managers use for their own live rate display): responsive
+        // enough to reflect a real speed change within a couple of
+        // seconds, calm enough that single-window noise doesn't dominate
+        // what's shown. The very first sample after a (re)start has
+        // nothing to blend with, so it's taken as-is rather than
+        // artificially damped toward zero.
+        if (!m_hasSpeedSample) {
+            m_smoothedSpeedBytesPerSec = rawSpeed;
+            m_hasSpeedSample = true;
+        } else {
+            constexpr double kSmoothingAlpha = 0.3;
+            m_smoothedSpeedBytesPerSec = kSmoothingAlpha * rawSpeed
+                + (1.0 - kSmoothingAlpha) * m_smoothedSpeedBytesPerSec;
+        }
+        item.speedBytesPerSec = static_cast<qint64>(m_smoothedSpeedBytesPerSec);
         m_speedSampleBytesAtLastSample = bytesDone;
         m_speedSampleTimer.restart();
     }

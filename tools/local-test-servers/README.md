@@ -200,6 +200,30 @@ deliberately **not** part of the ten-target `EXCLUDE_FROM_ALL` test
 suite or CI: they need an external server already running, which those
 ten are built specifically to avoid depending on.
 
+### `verify-sftp-throughput`: a real, non-loopback server only
+
+Unlike every harness above, `verify-sftp-throughput`
+(`src/verify_sftp_throughput.cpp`) can't be pointed at a container this
+project spins up for itself — the whole point is a real round-trip time,
+and every local container here is loopback (~0ms RTT). It reads
+connection details entirely from the environment and refuses to run
+without them:
+
+```
+ZEPHYR_THROUGHPUT_HOST=<host> ZEPHYR_THROUGHPUT_USER=<user> \
+    ZEPHYR_THROUGHPUT_PASSWORD=<password> [ZEPHYR_THROUGHPUT_PORT=22] \
+    [ZEPHYR_THROUGHPUT_FILE_SIZE_MB=100] \
+    cmake --build build --target verify-sftp-throughput && \
+    QT_QPA_PLATFORM=offscreen ./build/verify-sftp-throughput
+```
+
+It uploads and downloads a freshly-generated file of the requested size,
+verifies it byte-for-byte, and reports `SftpBackend`'s own MB/s
+alongside an independent `scp`/`ssh` baseline against the same server
+(non-interactive password auth via `SSH_ASKPASS_REQUIRE=force`, no extra
+package needed) — see ARCHITECTURE.md's throughput Known Gaps entry for
+the real result this produced.
+
 ## Stopping the servers
 
 ```

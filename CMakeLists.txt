@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ZephyrFTP VERSION 0.2.15 LANGUAGES CXX)
+project(ZephyrFTP VERSION 0.2.16 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -328,6 +328,22 @@ qt_add_executable(verify-sftp-vendors EXCLUDE_FROM_ALL
 )
 target_include_directories(verify-sftp-vendors PRIVATE src)
 target_link_libraries(verify-sftp-vendors PRIVATE
+    Qt6::Widgets Qt6::Network Qt6::Concurrent ${LIBSSH2_TARGET}
+)
+
+# --- SFTP throughput vs. a real, non-loopback remote server — see
+# src/verify_sftp_throughput.cpp's own header comment. Needs a real
+# externally-provided server (host/user/password via env vars); unlike
+# every other harness above, this project can't spin up its own for this
+# since the whole point is a real, non-zero round-trip time. ---
+qt_add_executable(verify-sftp-throughput EXCLUDE_FROM_ALL
+    src/verify_sftp_throughput.cpp
+    src/ui/HostKeyVerifier.cpp
+    src/backends/SftpBackend.cpp
+    src/backends/RemoteBackend.h
+)
+target_include_directories(verify-sftp-throughput PRIVATE src)
+target_link_libraries(verify-sftp-throughput PRIVATE
     Qt6::Widgets Qt6::Network Qt6::Concurrent ${LIBSSH2_TARGET}
 )
 

@@ -191,6 +191,19 @@ private:
     QElapsedTimer m_speedSampleTimer;
     qint64 m_speedSampleBytesAtLastSample = 0;
 
+    // Each raw 250ms sample above is a real, unlagged measurement, but
+    // with nothing carried over between windows it visibly jumps around
+    // with the transfer's natural burstiness (TCP window dynamics, disk
+    // flush stalls, scheduler jitter) — confirmed by directly comparing
+    // against other SFTP clients' noticeably calmer live readouts, which
+    // turned out to be smoothing their samples rather than being more
+    // accurate. An exponential moving average here trades a small amount
+    // of lag for the same calmer display, without changing how the raw
+    // 250ms sample itself is computed. Reset in dispatchActiveItem() so a
+    // new transfer doesn't start smoothed from a previous one's speed.
+    double m_smoothedSpeedBytesPerSec = 0.0;
+    bool m_hasSpeedSample = false;
+
     // Conflict resolution — "remembered" choices reset back to Ask
     // whenever the queue fully drains (see startNext()'s "nothing left
     // to run" path), so a fresh batch of transfers gets fresh decisions
