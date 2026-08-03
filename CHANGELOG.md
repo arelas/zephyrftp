@@ -8,6 +8,48 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.2.14] — FTPS against real vendor servers now works end to end
+
+### Fixed
+
+- **Three real, independent bugs in how `FtpBackend` handles a data
+  connection a real server closes uncleanly (no TLS `close_notify`)
+  once it's genuinely done with it, found chasing FTPS against real
+  vsftpd/proftpd containers (not reasoned about in advance):**
+  1. `listDirectoryInternal()`'s and `downloadFile()`'s read loops used
+     to block exclusively on the data connection, only checking the
+     control connection's reply *after* giving up — discarding a
+     perfectly good, already-arrived, specific server error in favor of
+     a generic "timed out" message whenever the server's close didn't
+     also produce a clean disconnect Qt's `waitForReadyRead()` would
+     notice promptly (confirmed via strace: a real vsftpd closing a
+     completed data connection without a TLS `close_notify` first).
+     Both now poll in short slices and check the control connection for
+     a decisive reply in between; `downloadFile()` additionally exits
+     early once it's received as many bytes as the server's own `SIZE`
+     reply promised, since that's an unambiguous "done" regardless of
+     what the connection's close behavior does or doesn't signal.
+  2. `uploadFile()` closed its data socket abruptly (`close()`) rather
+     than gracefully (`disconnectFromHost()`, which sends a proper TLS
+     `close_notify` before the TCP connection actually closes) — against
+     a real vsftpd container, the abrupt close made every
+     otherwise-correct upload fail with vsftpd's own `"Failure reading
+     network stream"` error. Same underlying problem as (1), just
+     triggered from the client's side of the connection instead of the
+     server's.
+- **FTPS against a real vendor server (vsftpd) now completes a genuine
+  full round trip — connect, list, download, upload, content verified
+  both ways.** Previously only ever tested against this project's own
+  pyftpdlib stand-in. Also confirmed, honestly: this project's TLS
+  session-ticket reuse does NOT satisfy a genuinely strict server
+  (proftpd's `mod_tls`, left at its own default strict enforcement) — a
+  real, informative negative result, not a bug to fix. See
+  ARCHITECTURE.md's Known Gaps for the complete investigation,
+  including a real, confirmed deadlock inside vsftpd's own
+  privilege-separated architecture (unrelated to this project's code)
+  that shows up specifically when its own `require_ssl_reuse` strict
+  mode is enabled in this container environment.
+
 ## [0.2.13] — Fix a misleading FTP active-mode error message
 
 ### Fixed
