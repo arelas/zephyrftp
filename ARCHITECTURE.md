@@ -1310,7 +1310,10 @@ along the way — worth knowing about if it ever needs touching again.
   configuration, not reasoned about in advance — the trigger now also
   treats `550` as a fallback signal, since "MLSD present but
   administratively denied" is a real, plausible server configuration,
-  not a hypothetical one.
+  not a hypothetical one. **FTPS against these same two real vendors is
+  now also confirmed — a full working round trip against vsftpd, and an
+  honest, understood, real rejection against proftpd — see the
+  TLS-session-ticket-reuse entry below for the full story.**
 - **SSH-daemon diversity for SFTP has a real, honest ceiling: OpenSSH's
   own `sftp-server` is very likely the SFTP implementation underneath
   almost anything you'll connect to, no matter which daemon fronts it.**
@@ -1356,20 +1359,104 @@ along the way — worth knowing about if it ever needs touching again.
   sequencing) also deleted the socket out from under its new owner — a
   dangling-pointer crash only a real accept-then-use cycle surfaced, not
   reasoning about the code.
-- **FTPS data connections now attempt real TLS session-ticket reuse,
-  confirmed non-regressing but not confirmed against a genuinely strict
-  server.** The control connection's session ticket
+- **FTPS against real vendor servers is now fully working end to end
+  (vsftpd) — and confirmed, honestly, that this project's TLS
+  session-ticket reuse does NOT satisfy a genuinely strict server
+  (proftpd), plus three real client-side bugs found and fixed along the
+  way that a headless, single-shot test harness was never going to
+  surface.** The control connection's session ticket
   (`QSslConfiguration::sessionTicket()`, refreshed on
   `newSessionTicketReceived()` since TLS 1.3 tickets commonly arrive
   post-handshake) is applied to each data connection's
   `QSslConfiguration` before its own handshake — a real resumption
   attempt, not a comment, addressing the RFC 4217 anti-hijacking
   requirement some servers enforce. `verify-ftp-live`'s FTPS phases
-  confirm transfers still complete correctly with the ticket set. What
-  this can't confirm: whether it actually satisfies a server that
-  *requires* session reuse — pyftpdlib's TLS handler doesn't enforce or
-  even check session reuse either way, so a strict server's acceptance
-  is unverified either direction in this environment.
+  (pyftpdlib, which doesn't enforce or even check reuse either way) had
+  been the only prior evidence, confirming non-regression but nothing
+  about whether a strict server would actually accept it.
+
+  `verify_ftp_vendors.cpp`'s two FTPS phases
+  (`tools/local-test-servers/containers/vsftpd.conf`;
+  `proftpd.conf`'s `mod_tls` left at its own default strict
+  session-reuse enforcement — see that file's comment on why omitting
+  `TLSOptions NoSessionReuseRequired` is what keeps it on) both confirm
+  the AUTH TLS handshake and CA-signed-certificate trust genuinely work
+  against a real vendor's TLS stack. What happened next, at the data
+  connection, took real investigation (strace against live containers,
+  an independent reference client, a deliberately controlled variable
+  elimination — not guessed at):
+
+  - **proftpd: a clean, consistent, real rejection — the actual answer
+    to "does our reuse satisfy a strict server."** Its own `TLSLog`
+    reports it directly — `"client did not reuse TLS session, rejecting
+    data connection"` — meaning this project's TLS-1.3-ticket-based
+    reuse does not read as genuine session reuse to `mod_tls`'s check
+    (most likely a real protocol-generation gap: `mod_tls`'s
+    reuse-detection predates TLS 1.3's PSK-based ticket resumption
+    model and may simply not recognize it as equivalent to the
+    session-ID-based reuse it was written to check for). A real,
+    negative, genuinely informative answer — not previously known
+    either way, and the container is deliberately left this way rather
+    than relaxed so this stays confirmed on every future run.
+  - **vsftpd: a full round trip (list, download, upload, content
+    verified both ways) now genuinely completes — but only with
+    `require_ssl_reuse` left off, and that's a deliberate, documented
+    trade, not a cop-out.** With `require_ssl_reuse=YES`, vsftpd's
+    AUTH TLS handshake and login succeed, but the subsequent data
+    connection then just hangs indefinitely — confirmed reproducible on
+    freshly rebuilt containers, confirmed NOT specific to session-ticket
+    reuse (the identical hang happens with `FtpBackend`'s own reuse
+    attempt disabled entirely), and — the deciding piece of evidence —
+    confirmed to depend on `ptrace` observation: attaching `strace` to
+    the whole process tree reliably makes vsftpd send a clean `"522 SSL
+    connection failed: session reuse required"` within seconds, while
+    the *identical* scenario left completely undisturbed never resolves
+    even after 4+ minutes. That points at a genuine deadlock inside
+    vsftpd's own privilege-separated architecture under this specific
+    container environment (very plausibly interacting with
+    `seccomp_sandbox=NO`, a setting this container already needs just
+    to run at all) — a real vsftpd/environment bug, not a `FtpBackend`
+    one, and not something further client-side changes can fix since
+    the server itself never responds. `vsftpd.conf` ships with
+    `require_ssl_reuse=NO` as a result — the scenario this project's
+    own code is confirmed correct and fast for — with the reasoning and
+    the option to flip it back for further investigation documented
+    directly in that file, plus permanent protocol-level logging left
+    on for whoever picks it back up.
+
+  Three real, independent client-side bugs found and fixed along the
+  way — none of them specific to either vendor, all genuine gaps a
+  single-attempt, happy-path test was never going to hit:
+  1. `listDirectoryInternal()`'s read loop used to block exclusively on
+     the data connection for the full 15s timeout, only ever checking
+     the control connection's reply *after* giving up — discarding a
+     perfectly good, already-arrived, specific error reply in favor of
+     a generic "timed out" message whenever a server's data-connection
+     close didn't also produce a clean disconnect Qt's
+     `waitForReadyRead()` would notice promptly (confirmed via strace:
+     vsftpd closing a completed data connection without a TLS
+     `close_notify` first — `state()` never leaves `ConnectedState`).
+     Now polls in short slices, checking the control connection for a
+     decisive reply in between, and treats one further idle poll after
+     any data has arrived as "done" (safe specifically because a real
+     directory listing is always small and arrives essentially all at
+     once — a large transfer legitimately pausing mid-stream is a
+     different case, deliberately not covered by this same heuristic).
+  2. `downloadFile()`'s read loop had the identical blind spot, fixed
+     the same way, plus a second, more precise fix available here that
+     `listDirectoryInternal()` doesn't have: once at least as many bytes
+     have arrived as the server's own `SIZE` reply promised, the
+     transfer is unambiguously complete regardless of what the
+     connection's close behavior does or doesn't signal afterward.
+  3. `uploadFile()` used to call `close()` (abrupt) on the data socket
+     once the last byte was written, rather than `disconnectFromHost()`
+     (graceful — flushes and sends a proper TLS `close_notify` before
+     the TCP connection actually closes) — against a real vsftpd
+     container, the abrupt close made every otherwise-correct upload
+     fail with vsftpd's own `"Failure reading network stream"` error,
+     the exact same class of "unclean-shutdown" problem as bug 1/2,
+     just triggered from the opposite direction (the *client's* close
+     being unclean this time, not the server's).
 - **FTP now falls back to active/PORT mode when a server genuinely
   refuses PASV, confirmed against a real server that does exactly
   that.** `openDataChannel()` tries PASV first always (unchanged

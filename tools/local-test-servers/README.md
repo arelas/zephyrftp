@@ -55,6 +55,34 @@ as a fallback signal, exactly because this container found a real,
 plausible server configuration (MLSD present but administratively
 denied) the trigger didn't originally cover.
 
+Both containers also serve FTPS (explicit `AUTH TLS`, a throwaway
+CA-signed cert baked into each image at build time, whose CA
+certificate each `start-*.sh` script copies out via `podman cp` and
+prints the path to). `proftpd.conf`'s `mod_tls` is left at its own
+default **strict TLS-session-reuse enforcement** (see that file's
+comment on why omitting `TLSOptions NoSessionReuseRequired` is what
+keeps it on) — the real, honest test of whether `FtpBackend`'s
+TLS-session-ticket reuse actually satisfies a strict server, and the
+answer is a clean, consistent no (confirmed via proftpd's own
+`TLSLog`, real evidence this project's TLS 1.3-ticket-based reuse
+doesn't read as genuine reuse to `mod_tls`'s check — a real,
+informative negative result, not previously known either way).
+
+`vsftpd.conf` ships with `require_ssl_reuse=NO`, and that's a
+deliberate, documented trade, not an oversight: turning it on
+reproduces a genuine deadlock inside vsftpd's own privilege-separated
+architecture in this specific container environment (confirmed via
+strace — attaching `ptrace` to the process tree reliably unsticks it
+within seconds; left undisturbed, it never resolves even after 4+
+minutes), not a `FtpBackend` bug, and not something further client-side
+changes can fix since the server itself never responds. With it off,
+FTPS against vsftpd now completes a full real round trip — connect,
+list, download, upload, content verified both ways — closing the
+vendor-diversity gap for real. See ARCHITECTURE.md's Known Gaps for the
+complete investigation, including three real client-side bugs this
+same testing found and fixed along the way (none specific to either
+vendor).
+
 `start-dropbear.sh` is a genuinely different SSH daemon from the
 `start-sftp-pubkey.sh`/OpenSSH server above, with password auth instead
 of that one's pubkey-only setup — real transport/session/auth-layer
@@ -129,6 +157,17 @@ QT_QPA_PLATFORM=offscreen ./build/verify-ftps-trust
 QT_QPA_PLATFORM=offscreen ./build/verify-ftp-vendors    # needs start-vsftpd.sh + start-proftpd.sh
 QT_QPA_PLATFORM=offscreen ./build/verify-sftp-vendors   # needs start-dropbear.sh
 ```
+
+`verify-ftp-vendors` currently exits non-zero, honestly — but only
+because of `proftpd-ftps`, which is *expected* to fail: proftpd's own
+strict TLS-session-reuse enforcement genuinely and correctly rejects
+this project's current reuse implementation (see ARCHITECTURE.md's
+Known Gaps — that rejection is the real, intended result this phase
+exists to confirm, not a bug). Its other three phases — plain FTP and
+FTPS against vsftpd, and plain FTP against proftpd — all pass, with the
+vsftpd-ftps phase completing a full real round trip (connect, list,
+download, upload, content verified both ways) over genuine FTPS against
+a real vendor server.
 
 All six drive the real backend classes directly
 (`src/verify_sftp_pubkey.cpp`, `src/verify_ftp_live.cpp`,

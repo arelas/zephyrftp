@@ -855,20 +855,50 @@ QList<RemoteEntry> FtpBackend::listDirectoryInternal(const QString &path, bool *
         return entries;
     }
 
+    // Polls the data connection in short slices (rather than one 15s
+    // wait) so the control connection can also be checked in between,
+    // AND so a real, root-caused gap can be worked around: a real
+    // vsftpd's FTPS data connection was confirmed (strace on the server
+    // side, against a live container) to send the complete listing and
+    // then close the raw TCP connection WITHOUT a TLS close_notify alert
+    // first. QSslSocket never surfaces that as a state change or a
+    // distinguishable error — state() stays ConnectedState and
+    // waitForReadyRead() just times out (SocketTimeoutError) forever,
+    // even though every byte already arrived; downloadFile()'s own
+    // version of this loop has a precise fix available (the server's own
+    // SIZE reply gives an exact expected byte count), but a directory
+    // listing has no equivalent size to check against. Once any data has
+    // actually arrived, one full additional idle poll with nothing more
+    // coming is treated as "done" — safe here specifically because a
+    // real directory listing is always small and arrives essentially all
+    // at once (confirmed directly, not assumed), unlike a large file
+    // transfer where a legitimate multi-second pause is plausible and
+    // this same heuristic would be the wrong trade.
     QByteArray raw;
+    qint64 waitedMs = 0;
+    constexpr qint64 pollIntervalMs = 1000;
+    constexpr qint64 totalTimeoutMs = 15000;
     for (;;) {
         if (dataSocket->state() != QAbstractSocket::ConnectedState) {
             raw.append(dataSocket->readAll());
             break;
         }
-        if (!dataSocket->waitForReadyRead(15000)) {
-            if (dataSocket->state() != QAbstractSocket::ConnectedState)
-                continue;   // loop once more to drain and hit the branch above
+        if (dataSocket->waitForReadyRead(pollIntervalMs)) {
+            raw.append(dataSocket->readAll());
+            continue;
+        }
+        if (!raw.isEmpty())
+            break;   // already got the (necessarily small) listing; nothing more is coming
+        if (m_controlSocket && m_controlSocket->waitForReadyRead(0))
+            break;   // a decisive reply already arrived — readReply() below will report it
+        if (dataSocket->state() != QAbstractSocket::ConnectedState)
+            continue;   // loop once more to drain and hit the branch above
+        waitedMs += pollIntervalMs;
+        if (waitedMs >= totalTimeoutMs) {
             if (errorOut) *errorOut = QStringLiteral("Timed out waiting for directory listing");
             delete dataSocket;
             return entries;
         }
-        raw.append(dataSocket->readAll());
     }
     delete dataSocket;
 
@@ -1051,11 +1081,51 @@ void FtpBackend::downloadFile(const QString &remotePath, const QString &localPat
         if (dataSocket->state() != QAbstractSocket::ConnectedState && dataSocket->bytesAvailable() == 0)
             break;   // server closed the data connection — transfer complete
 
+        // Known-size early exit — found for real, not a defensive
+        // nicety: a real vsftpd's data connection was confirmed (via
+        // strace on the server side) to send the complete file and then
+        // close the raw TCP connection WITHOUT a TLS close_notify alert
+        // first. QSslSocket never surfaces that as a state change or a
+        // distinguishable error here — state() stays ConnectedState and
+        // waitForReadyRead() below just times out (SocketTimeoutError)
+        // forever, even though every byte already arrived. Once we've
+        // received at least as many bytes as the server's own SIZE
+        // reply promised, the transfer genuinely is complete regardless
+        // of what the connection's close behavior does or doesn't
+        // signal — closing our own end here (below, after the loop) is
+        // also what unblocks the server's own pending final reply, per
+        // the same strace session.
+        if (totalSize > 0 && done >= totalSize)
+            break;
+
         // Short (1s) poll rather than one long wait — lets the
         // cancel/pause checks above actually run periodically during a
-        // stalled transfer, not just between chunks.
+        // stalled transfer, not just between chunks. No overall timeout
+        // here (unlike listDirectoryInternal()'s bounded wait) — a large,
+        // legitimately slow transfer can stall for a while without that
+        // meaning anything is wrong, so this keeps polling indefinitely
+        // UNLESS the control connection has something to say (checked
+        // below), which during an active transfer should never happen
+        // except when it genuinely matters.
         if (!dataSocket->waitForReadyRead(1000) && dataSocket->bytesAvailable() == 0) {
             if (dataSocket->state() != QAbstractSocket::ConnectedState)
+                break;
+            // Found for real (strace against a live vsftpd container,
+            // require_ssl_reuse=YES): the server can reject the data
+            // connection's failure to demonstrate TLS session reuse by
+            // reporting it over the CONTROL channel — "522 SSL connection
+            // failed: session reuse required" — arriving anywhere from
+            // seconds to (confirmed directly) several minutes after the
+            // data connection's own handshake completes, having sent
+            // nothing at all on the data connection itself and never
+            // transitioning it out of ConnectedState either — see
+            // ARCHITECTURE.md's Known Gaps for why that delay is so
+            // unpredictable (a real vsftpd-side stall this project's own
+            // container ships worked around rather than papered over).
+            // Without this check, downloadFile() had no way to ever
+            // notice that reply and would poll the silent data socket
+            // forever, however long the server eventually took.
+            if (m_controlSocket && m_controlSocket->waitForReadyRead(0))
                 break;
             continue;
         }
@@ -1179,7 +1249,18 @@ void FtpBackend::uploadFile(const QString &localPath, const QString &remotePath,
         emit transferProgress(localPath, done, totalSize);
     }
 
-    dataSocket->close();
+    // disconnectFromHost() (graceful — flushes and sends a proper TLS
+    // close_notify before the underlying TCP connection actually closes),
+    // NOT close() (abrupt — found for real, not assumed: a plain close()
+    // here against a real vsftpd container made every otherwise-correct
+    // upload fail with "Failure reading network stream", vsftpd's own
+    // error for a client that stopped writing without a clean TLS-level
+    // shutdown — the same class of problem as this project's own FTPS
+    // vendor-container work found on the download side, just triggered
+    // from the opposite direction; see ARCHITECTURE.md's Known Gaps).
+    dataSocket->disconnectFromHost();
+    if (dataSocket->state() != QAbstractSocket::UnconnectedState)
+        dataSocket->waitForDisconnected(3000);
     delete dataSocket;
 
     if (paused) {

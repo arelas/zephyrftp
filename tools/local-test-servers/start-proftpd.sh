@@ -9,10 +9,17 @@
 # real containerization gotchas those files document, including the
 # discovery that a denied MLSD here replies 550, not 500/502, which
 # FtpBackend.cpp's fallback trigger now also handles.
+#
+# Also copies out the FTPS CA certificate (see proftpd.conf/
+# Containerfile.proftpd) to a small host-side path below — public
+# information, same status this project already gives SSH host-key
+# fingerprints and FTPS leaf-cert fingerprints, not a departure from
+# "self-contained" in the way a bind-mounted volume would be.
 set -euo pipefail
 
 PORT="${PROFTPD_TEST_PORT:-2127}"
 PASSIVE_PORTS="${PROFTPD_TEST_PASSIVE_PORTS:-2201-2210}"
+CA_SCRATCH="${PROFTPD_TEST_CA_SCRATCH:-/tmp/zephyrftp-local-test-servers/proftpd-ftps-ca}"
 CONTAINER_NAME="zephyrftp-test-proftpd"
 IMAGE_NAME="zephyrftp-test-proftpd-image"
 
@@ -32,7 +39,13 @@ if [ "$(podman inspect "$CONTAINER_NAME" --format '{{.State.Status}}' 2>/dev/nul
     exit 1
 fi
 
+rm -rf "$CA_SCRATCH"
+mkdir -p "$CA_SCRATCH"
+podman cp "$CONTAINER_NAME:/etc/proftpd/ftps-ca-cert.pem" "$CA_SCRATCH/ca-cert.pem"
+
 echo "proftpd test server listening on 127.0.0.1:$PORT (container: $CONTAINER_NAME)"
 echo "Username: proftpduser   Password: proftppass"
 echo "Root dir: /srv/ftp inside the container (sample.txt there; writable uploads/ subdir)"
 echo "MLSD explicitly denied (550) — a second, independent LIST-fallback example."
+echo "FTPS also available (AUTH TLS), with strict TLS session reuse enforced by default."
+echo "CA cert: $CA_SCRATCH/ca-cert.pem — trust this to validate the FTPS handshake."

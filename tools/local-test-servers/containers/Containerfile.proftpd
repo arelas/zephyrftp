@@ -10,7 +10,7 @@
 # this whole project's containers rather than a second distro.
 FROM fedora:44
 
-RUN dnf install -y --setopt=install_weak_deps=False proftpd proftpd-utils && dnf clean all
+RUN dnf install -y --setopt=install_weak_deps=False proftpd proftpd-utils openssl && dnf clean all
 
 # No system user created at all — mod_auth_file's UserFile carries its
 # own uid/gid fields directly, matched against plain chown below, so
@@ -27,6 +27,26 @@ RUN mkdir -p /srv/ftp/uploads \
     && touch /etc/proftpd/proftpd.group
 
 COPY proftpd.conf /etc/proftpd/proftpd.conf
+
+# Throwaway CA + leaf cert for FTPS, baked into the image at build time —
+# same shape and same reasoning as Containerfile.vsftpd's own build-time
+# cert generation (see that file's comment): 10-year validity since this
+# bakes in once rather than regenerating per run, SAN IP:127.0.0.1 to
+# match what both the control and data connections validate against,
+# and only the CA certificate is meant to leave the container (via
+# `podman cp`, done by start-proftpd.sh).
+RUN openssl genrsa -out /etc/proftpd/ftps-ca-key.pem 2048 \
+    && openssl req -x509 -new -key /etc/proftpd/ftps-ca-key.pem -days 3650 \
+        -out /etc/proftpd/ftps-ca-cert.pem -subj "/CN=ZephyrFTP proftpd Test CA" \
+    && openssl genrsa -out /etc/proftpd/ftps-key.pem 2048 \
+    && openssl req -new -key /etc/proftpd/ftps-key.pem \
+        -out /tmp/ftps-server.csr -subj "/CN=127.0.0.1" \
+    && printf "subjectAltName=IP:127.0.0.1" > /tmp/ftps-san.ext \
+    && openssl x509 -req -in /tmp/ftps-server.csr \
+        -CA /etc/proftpd/ftps-ca-cert.pem -CAkey /etc/proftpd/ftps-ca-key.pem -CAcreateserial \
+        -out /etc/proftpd/ftps-cert.pem -days 3650 -extfile /tmp/ftps-san.ext \
+    && chmod 600 /etc/proftpd/ftps-key.pem /etc/proftpd/ftps-ca-key.pem \
+    && rm -f /tmp/ftps-server.csr /tmp/ftps-san.ext
 
 EXPOSE 21 2201-2210
 

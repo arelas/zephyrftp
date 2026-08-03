@@ -14,7 +14,7 @@
 # rootless container's user namespace.
 FROM fedora:44
 
-RUN dnf install -y --setopt=install_weak_deps=False vsftpd gdbm && dnf clean all
+RUN dnf install -y --setopt=install_weak_deps=False vsftpd gdbm openssl && dnf clean all
 
 # Virtual users via pam_userdb, NOT a real system account against
 # /etc/shadow — confirmed the hard way, not assumed: system-account PAM
@@ -49,6 +49,40 @@ RUN useradd -m -d /srv/ftp -s /sbin/nologin vsftpuser \
 
 COPY vsftpd.conf /etc/vsftpd/vsftpd.conf
 COPY pam-vsftpd-virtual /etc/pam.d/vsftpd.virtual
+
+# Throwaway CA + leaf cert for FTPS, baked into the image at build time —
+# same "self-contained, no host-mounted volume" reasoning as everything
+# else above. 10-year validity (not the 1-day validity
+# start-ftps.sh/start-ftps-trusted.sh use): those regenerate on every
+# run; this bakes in once and needs to keep working across many
+# container restarts until the image is next rebuilt. SAN IP:127.0.0.1
+# matches start-ftps-trusted.sh's exact pattern — both the control and
+# data connections validate against that identity. The SAN extension is
+# written to a real temp file rather than process substitution
+# (`<(...)`) since a Containerfile RUN step's default shell is /bin/sh,
+# not bash. Only the CA certificate is meant to leave the container
+# (via `podman cp`, done by start-vsftpd.sh) — it's public information,
+# same status this project already gives SSH host-key fingerprints and
+# FTPS leaf-cert fingerprints stored in plaintext elsewhere.
+RUN openssl genrsa -out /etc/vsftpd/ftps-ca-key.pem 2048 \
+    && openssl req -x509 -new -key /etc/vsftpd/ftps-ca-key.pem -days 3650 \
+        -out /etc/vsftpd/ftps-ca-cert.pem -subj "/CN=ZephyrFTP vsftpd Test CA" \
+    && openssl genrsa -out /etc/vsftpd/ftps-key.pem 2048 \
+    && openssl req -new -key /etc/vsftpd/ftps-key.pem \
+        -out /tmp/ftps-server.csr -subj "/CN=127.0.0.1" \
+    && printf "subjectAltName=IP:127.0.0.1" > /tmp/ftps-san.ext \
+    && openssl x509 -req -in /tmp/ftps-server.csr \
+        -CA /etc/vsftpd/ftps-ca-cert.pem -CAkey /etc/vsftpd/ftps-ca-key.pem -CAcreateserial \
+        -out /etc/vsftpd/ftps-cert.pem -days 3650 -extfile /tmp/ftps-san.ext \
+    && chmod 600 /etc/vsftpd/ftps-key.pem /etc/vsftpd/ftps-ca-key.pem \
+    && rm -f /tmp/ftps-server.csr /tmp/ftps-san.ext
+
+# Pre-create vsftpd.conf's log file with open permissions — confirmed
+# the hard way, not assumed: /var/log isn't writable by vsftpd's
+# dropped-privilege connection worker, so vsftpd_log_file silently never
+# gets created at all unless something else creates it first, and the
+# log stays permanently empty with no error anywhere.
+RUN touch /var/log/vsftpd.log && chmod 666 /var/log/vsftpd.log
 
 EXPOSE 21 2191-2200
 
