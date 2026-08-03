@@ -8,6 +8,26 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.3.2] — Real screenshots, and a verified per-distro dependency list
+
+### Added
+
+- **Two real screenshots in the README** — the actual app, actually
+  connected to a real local SFTP server via the genuine Connect dialog
+  flow (not a mockup): a calm dual-pane browsing view, and a real 300MB
+  transfer genuinely in progress with a live speed reading. Neither is a
+  staged image; both were captured driving the real `MainWindow` through
+  the same UI path a person uses.
+- **A real per-distro dependency list in CONTRIBUTING.md**, replacing
+  the previous Debian/Ubuntu-only line. Debian/Ubuntu, Fedora, and Arch
+  are all directly verified — Arch via a real `archlinux:latest`
+  `podman` container (`pacman -Sy` against the live repos, a real
+  `cmake`/`make` build, and a real headless run of the resulting
+  binary, not just a successful link), Fedora against this project's
+  own development environment (confirmed via `rpm -q`). openSUSE is
+  included by package-name convention only, explicitly flagged as
+  unverified rather than presented with false confidence.
+
 ## [0.3.1] — Preferences, persisted window layout, and three real UI bugs fixed
 
 ### Added
@@ -501,7 +521,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.2
 [0.3.1]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.1
 [0.2.7]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.7
 [0.2.6]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.6

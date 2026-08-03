@@ -13,18 +13,59 @@ cmake .. -DCMAKE_BUILD_TYPE=Debug
 make -j$(nproc)
 ```
 
-Dependencies (Debian/Ubuntu): `cmake build-essential qt6-base-dev
-qt6-svg-dev libssh2-1-dev libsecret-1-dev pkg-config` — `pkg-config`
-specifically isn't pulled in by `build-essential` on a clean install
-(CMake's libssh2 discovery needs it); confirmed directly after a
-from-scratch container build failed on `Could NOT find PkgConfig`, not
-assumed from a desktop machine that already happened to have it
-installed. `libsecret-1-dev` (Fedora: `libsecret-devel`) is
-`CredentialStore`'s Linux backend — the OS keychain SiteManagerDialog's
-"Save password" checkbox writes to; see ARCHITECTURE.md's
-`CredentialStore` entry. Not needed at all for the MinGW/Windows build
-below — that path uses the real Win32 Credential Manager API
+Every dependency below is the same seven things — a C++ toolchain,
+CMake, `pkg-config`, Qt6's base and SVG modules (dev/headers package),
+libssh2, and libsecret (`CredentialStore`'s Linux backend — the OS
+keychain SiteManagerDialog's "Save password" checkbox writes to; see
+ARCHITECTURE.md's `CredentialStore` entry) — just under each distro's
+own package names. None of this is needed for the MinGW/Windows build
+further down; that path uses the real Win32 Credential Manager API
 (`wincred.h`) instead, already present in the mingw sysroot.
+
+**Debian/Ubuntu** (`apt`), directly verified — a from-scratch container
+build with exactly this line, nothing assumed from a desktop machine
+that already happened to have some of it installed:
+
+```
+sudo apt install cmake build-essential qt6-base-dev qt6-svg-dev \
+    libssh2-1-dev libsecret-1-dev pkg-config
+```
+
+`pkg-config` specifically isn't pulled in by `build-essential` on a
+clean install (CMake's libssh2 discovery needs it) — confirmed directly
+after a from-scratch container build failed on `Could NOT find
+PkgConfig` before this line included it explicitly.
+
+**Fedora** (`dnf`), also directly verified — these are the exact
+packages already installed on this project's own Fedora 44 development
+environment, confirmed via `rpm -q` against a real successful native
+build and full test-suite run, not just plausible package names:
+
+```
+sudo dnf install cmake gcc-c++ qt6-qtbase-devel qt6-qtsvg-devel \
+    libssh2-devel libsecret-devel pkgconf-pkg-config
+```
+
+**Arch** (`pacman`), directly verified — a real `archlinux:latest`
+`podman` container, `pacman -Sy` against the live package repos, this
+exact line, then a real `cmake`/`make` build and a real headless run
+(`QT_QPA_PLATFORM=offscreen`, clean exit) of the resulting binary, not
+just a successful link:
+
+```
+sudo pacman -S --needed cmake base-devel qt6-base qt6-svg libssh2 libsecret pkgconf
+```
+
+**openSUSE** (`zypper`), by package-name convention — **not directly
+verified**, unlike the three lines above, since it isn't available in
+this environment to actually build against. Flagged rather than
+presented with the same confidence; please open an issue if it needs a
+correction.
+
+```
+sudo zypper install cmake gcc-c++ qt6-base-devel qt6-svg-devel \
+    libssh2-devel libsecret-devel pkg-config
+```
 
 Both Windows and Linux release builds run via GitHub Actions
 (`.github/workflows/build.yml`) — see ARCHITECTURE.md's "Windows and
