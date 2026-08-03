@@ -520,15 +520,27 @@ void SftpBackend::checkExists(const QString &path, int requestId)
     LIBSSH2_SFTP_ATTRIBUTES attrs;
     const int rc = libssh2_sftp_stat(m_sftp, path.toUtf8().constData(), &attrs);
     if (rc != 0) {
-        // Non-zero here almost always means "doesn't exist" for our
-        // purposes — a genuine permission/connection problem would have
-        // already surfaced via ensureSession() above, and libssh2 itself
-        // doesn't give a way to reliably distinguish "not found" from
-        // other stat failures without walking sftpErrorString()'s same
-        // ambiguous-code territory (see that helper's own comment on
-        // LIBSSH2_FX_FAILURE) — not worth the complexity for an
-        // existence check specifically.
-        emit existsChecked(path, false, false, requestId);
+        // LIBSSH2_FX_NO_SUCH_FILE is the one code that actually confirms
+        // nonexistence. Anything else — LIBSSH2_FX_PERMISSION_DENIED (a
+        // real, plausible case: stat() needs execute/traverse permission
+        // on every ancestor directory, not just read permission on the
+        // target itself, so a path can be denied without being missing),
+        // or the server's own generic LIBSSH2_FX_FAILURE (confirmed
+        // elsewhere in this file, see sftpErrorString()'s comment, to
+        // show up for reasons that have nothing to do with "not found")
+        // — means we genuinely don't know. Confirmed directly, not
+        // assumed: reporting "doesn't exist" for that ambiguous case
+        // used to risk a silent overwrite of something real just because
+        // it couldn't be stat()'d; reporting "exists" instead is the
+        // safe direction to be wrong in — worst case this prompts an
+        // unnecessary Overwrite/Skip confirmation, never a silent loss.
+        // isDir stays false since it's unknowable here either way — the
+        // one production caller (TransferManager::onDestinationExistsChecked())
+        // already ignores it, taking isDirectory from the transfer's own
+        // context instead (a file transfer vs. a folder transfer), not
+        // from this signal.
+        const unsigned long code = libssh2_sftp_last_error(m_sftp);
+        emit existsChecked(path, code != LIBSSH2_FX_NO_SUCH_FILE, false, requestId);
         return;
     }
 

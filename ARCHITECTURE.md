@@ -1486,19 +1486,34 @@ along the way — worth knowing about if it ever needs touching again.
   an absent reply now reports `"Lost connection to the server"`
   directly instead.
 - **`SftpBackend::checkExists()` is now confirmed against a real
-  server, for all three cases that matter.** Extended into
-  `verify_sftp_pubkey.cpp` (see the public-key auth entry below for the
-  harness itself): three concurrent `checkExists()` calls, matched back
-  by `requestId` — the same disambiguation contract `TransferManager`
-  relies on for real, exercised with more than one call in flight at
-  once, not just the single best case — against a real existing file
-  (`exists=true, isDir=false`), a real existing directory
-  (`exists=true, isDir=true`), and a path that genuinely doesn't exist
-  (`exists=false`). All three confirmed correct. **Not covered by
-  this**: the ambiguous-stat-failure fallback specifically (a
-  permission-denied-but-actually-exists case, say) still hasn't been
-  distinguished from genuine nonexistence against a real server — the
-  three cases above don't exercise that ambiguity, only the clean ones.
+  server, for all four cases that matter — including the
+  ambiguous-stat-failure fallback, which used to just guess wrong.**
+  Extended into `verify_sftp_pubkey.cpp` (see the public-key auth entry
+  below for the harness itself): four concurrent `checkExists()` calls,
+  matched back by `requestId` — the same disambiguation contract
+  `TransferManager` relies on for real, exercised with more than one
+  call in flight at once, not just the single best case — against a
+  real existing file (`exists=true, isDir=false`), a real existing
+  directory (`exists=true, isDir=true`), a path that genuinely doesn't
+  exist (`exists=false`), and a real permission-denied path
+  (`start-sftp-pubkey.sh` creates `restricted/secret.txt` under a
+  `chmod 000` directory — genuinely existing, genuinely unstat()able,
+  a real EACCES from `libssh2_sftp_stat()`, not simulated). All four
+  confirmed correct. The bug this last case caught: `libssh2_sftp_stat()`
+  failing for ANY reason — including `LIBSSH2_FX_PERMISSION_DENIED`,
+  not just `LIBSSH2_FX_NO_SUCH_FILE` — used to be reported as
+  `exists=false`, a guess that was actively wrong for a path that's
+  genuinely there but couldn't be stat()'d (`stat()` needs
+  execute/traverse permission on every ancestor directory, not
+  read/write permission on the target itself, so this is a real,
+  reachable case, not a hypothetical one). Now only
+  `LIBSSH2_FX_NO_SUCH_FILE` is treated as confirmed nonexistence;
+  anything else reports `exists=true` — the safe direction to be wrong
+  in, since the one production caller
+  (`TransferManager::onDestinationExistsChecked()`) uses this to decide
+  whether to show an Overwrite/Skip prompt, and an unnecessary prompt is
+  a much smaller problem than a silent overwrite of something that was
+  actually there.
 - **Directory deletion is never recursive, on either backend, by
   design.** Deleting a non-empty folder fails with a clear error rather
   than removing its contents first. This wasn't an oversight or a

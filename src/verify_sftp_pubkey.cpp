@@ -1,8 +1,11 @@
 // Exercises SftpBackend against a REAL server — not a mock, not just
-// "the code compiles" — closing three gaps flagged in ARCHITECTURE.md's
+// "the code compiles" — closing gaps flagged in ARCHITECTURE.md's
 // Known gaps: (1) public-key auth had never been tried against a real
 // key file, (2) checkExists() — the destination-conflict-detection
-// primitive — was unverified against a real server, (3) so was
+// primitive — was unverified against a real server, including the
+// ambiguous-stat-failure fallback specifically (a real permission-denied
+// path, genuinely existing but unstat()able — see
+// SftpBackend::checkExists()'s own comment), (3) so was
 // listDirectoryForEnumeration(), the primitive the whole-folder-transfer
 // recursive walk depends on. Needs
 // tools/local-test-servers/start-sftp-pubkey.sh already running; this is
@@ -100,9 +103,11 @@ int main(int argc, char *argv[])
     bool existsFileChecked = false, existsFileResult = false, existsFileIsDir = true;
     bool existsDirChecked = false, existsDirResult = false, existsDirIsDir = false;
     bool existsMissingChecked = false, existsMissingResult = true;
+    bool existsRestrictedChecked = false, existsRestrictedResult = false;
     constexpr int kExistsFileRequestId = 101;
     constexpr int kExistsDirRequestId = 102;
     constexpr int kExistsMissingRequestId = 103;
+    constexpr int kExistsRestrictedRequestId = 104;
 
     // --- FolderEnumerator phase state ---
     bool enumerationDone = false;
@@ -151,11 +156,16 @@ int main(int argc, char *argv[])
                                            Q_ARG(qint64, 0));
             } else if (fileName == localUploadSourcePath && !uploadOk) {
                 uploadOk = true;
-                // Three checkExists() calls in flight at once, matched
+                // Four checkExists() calls in flight at once, matched
                 // back by requestId in existsChecked below — exercises
                 // the same requestId-disambiguation contract
                 // TransferManager relies on for real, not just a single
-                // best-case call.
+                // best-case call. The fourth (restricted/secret.txt,
+                // chmod 000 by start-sftp-pubkey.sh) is the real,
+                // previously-unverified ambiguous-stat-failure case: it
+                // genuinely exists but can't be stat()'d (EACCES on the
+                // parent's traversal permission, not a missing-file
+                // error) — see SftpBackend::checkExists()'s own comment.
                 QMetaObject::invokeMethod(backend, "checkExists", Qt::QueuedConnection,
                                            Q_ARG(QString, "sample.txt"),
                                            Q_ARG(int, kExistsFileRequestId));
@@ -165,6 +175,9 @@ int main(int argc, char *argv[])
                 QMetaObject::invokeMethod(backend, "checkExists", Qt::QueuedConnection,
                                            Q_ARG(QString, "this_does_not_exist_at_all.xyz"),
                                            Q_ARG(int, kExistsMissingRequestId));
+                QMetaObject::invokeMethod(backend, "checkExists", Qt::QueuedConnection,
+                                           Q_ARG(QString, "restricted/secret.txt"),
+                                           Q_ARG(int, kExistsRestrictedRequestId));
             }
         });
 
@@ -193,11 +206,16 @@ int main(int argc, char *argv[])
                 existsMissingChecked = true;
                 existsMissingResult = exists;
                 break;
+            case kExistsRestrictedRequestId:
+                existsRestrictedChecked = true;
+                existsRestrictedResult = exists;
+                break;
             default:
                 return;
             }
 
-            if (existsFileChecked && existsDirChecked && existsMissingChecked) {
+            if (existsFileChecked && existsDirChecked && existsMissingChecked
+                && existsRestrictedChecked) {
                 // Real recursive walk against the real server — same
                 // class TransferManager::enqueueFolder() uses, same
                 // requestId-per-call contract as above, now exercising
@@ -268,6 +286,9 @@ int main(int argc, char *argv[])
           existsDirChecked && existsDirResult && existsDirIsDir);
     check("checkExists() on a genuinely nonexistent path reports exists=false",
           existsMissingChecked && !existsMissingResult);
+    check("checkExists() on a real, permission-denied (but genuinely existing) "
+          "path reports exists=true, not a false 'doesn't exist' guess",
+          existsRestrictedChecked && existsRestrictedResult);
 
     // --- listDirectoryForEnumeration() / FolderEnumerator recursive walk
     // against a real server, over a real multi-level tree with a

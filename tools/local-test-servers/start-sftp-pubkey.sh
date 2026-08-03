@@ -29,6 +29,12 @@ if [ -f "$SCRATCH/sshd.pid" ]; then
     sleep 0.2
 fi
 
+# Restore traversal permission on a previous run's chmod-000 fixture (see
+# "restricted" below) before wiping — confirmed directly, not assumed:
+# plain `rm -rf` on this system does NOT auto-recover from that on its
+# own (no chmod-and-retry fallback), it just fails outright and — with
+# `set -euo pipefail` above — aborts the whole script on a second run.
+chmod -R u+rwx "$SCRATCH" 2>/dev/null || true
 rm -rf "$SCRATCH"
 mkdir -p "$SCRATCH/root" "$SCRATCH/root/uploads" "$SCRATCH/root/pause_test"
 echo "hello from the local sftp test server" > "$SCRATCH/root/sample.txt"
@@ -44,6 +50,19 @@ echo "hi from a" > "$SCRATCH/root/testfolder/a.txt"
 echo "hi from b" > "$SCRATCH/root/testfolder/subdir1/b.txt"
 echo "hi from c" > "$SCRATCH/root/testfolder/subdir1/c.txt"
 echo "hi from d" > "$SCRATCH/root/testfolder/subdir2/nested/d.txt"
+
+# A real permission-denied fixture for checkExists()'s ambiguous-stat-
+# failure case — see SftpBackend::checkExists()'s own comment. chmod 000
+# denies EVEN THE OWNER traversal (execute) permission into this
+# directory, which is enough on its own: stat()-ing a path needs
+# execute permission on every ancestor directory, not read/write
+# permission on the target itself, so this genuinely reproduces
+# EACCES from libssh2_sftp_stat() without needing a second test user —
+# this server already runs as the current user (see this script's own
+# header comment on why: AllowUsers $(whoami), no privilege drop).
+mkdir -p "$SCRATCH/root/restricted"
+echo "never readable by design" > "$SCRATCH/root/restricted/secret.txt"
+chmod 000 "$SCRATCH/root/restricted"
 
 ssh-keygen -t ed25519 -f "$SCRATCH/host_key" -N "" -q -C "zephyrftp-test-host"
 ssh-keygen -t ed25519 -f "$SCRATCH/client_key" -N "" -q -C "zephyrftp-test-client"
