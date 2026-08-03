@@ -221,6 +221,58 @@ generates its vtable and you get a link error that points nowhere near
 the actual cause. This has bitten essentially every new test target
 added to this project — check it first when a new target won't link.
 
+### Linux distro packages (.deb/.rpm)
+
+`cpack` (bundled with CMake, no extra tool to install) builds real
+`.deb` and `.rpm` packages from the same `zephyrftp` target the plain
+build above produces — a proper system install layout (`/usr/bin`,
+a `.desktop` file, hicolor-theme icons at every size
+`tools/generate_app_icon.cpp` already produces), not just the bare
+binary the tarball release ships. Both formats coexist deliberately:
+the tarball needs no install and no root and just needs matching
+system packages already present; the `.deb`/`.rpm` integrate with a
+desktop environment's app launcher and icon theme in exchange for
+actually installing.
+
+```
+cmake --build build --target zephyrftp
+cd build
+cpack -G DEB   # needs dpkg-dev + file (for real dependency scanning)
+cpack -G RPM   # needs rpm-build (only on an RPM-based distro, obviously)
+```
+
+Dependencies in both packages are **auto-detected from the actual
+linked binary**, not a hand-maintained list — `dpkg-shlibdeps` for
+`.deb` (`CPACK_DEBIAN_PACKAGE_SHLIBDEPS`), rpmbuild's own scanner for
+`.rpm` (`CPACK_RPM_PACKAGE_AUTOREQPROV`) — so they can't silently drift
+from what the binary actually needs the way a manually-written
+dependency line eventually would.
+
+**Both fully verified end to end, not just "cpack didn't error," in
+real, disposable `podman` containers — a fresh build container, then a
+*separate*, completely clean install container with no build tooling at
+all, matching how a real user's machine would look:**
+- `.deb`: built in `debian:stable` (`apt install` the exact
+  Debian/Ubuntu dependency line from earlier in this document, plus
+  `dpkg-dev`/`file` for the dependency scan), then `apt install
+  ./zephyrftp_*.deb` in a fresh `debian:stable` container — dependencies
+  resolved automatically from the package's own `Depends:` field,
+  `desktop-file-validate` passed, and the installed binary actually ran
+  headlessly (`QT_QPA_PLATFORM=offscreen`, clean exit).
+- `.rpm`: same shape, `fedora:latest` both times (this project's own
+  Fedora dependency line plus `rpm-build`/`file`), `dnf install
+  ./zephyrftp-*.rpm` resolving dependencies from the package's own
+  `Requires:` automatically.
+
+One real, non-obvious gap this caught: `CPACK_PACKAGE_DESCRIPTION_SUMMARY`
+alone is enough for the `.deb`'s one-line `Description:`, but the RPM
+generator silently falls back to a generic CPack-authored placeholder
+("This is an installer created using CPack...") for the long
+description without `CPACK_RPM_PACKAGE_DESCRIPTION` set explicitly —
+caught by actually inspecting a real built `.rpm` (`rpm -qip`), not by
+assuming the generic `CPACK_PACKAGE_DESCRIPTION` variable would be
+enough (it wasn't; RPM needed its own).
+
 ## Running the test suites
 
 Ten `EXCLUDE_FROM_ALL` CMake targets — not part of a normal `make`, built

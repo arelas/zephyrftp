@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ZephyrFTP VERSION 0.3.2 LANGUAGES CXX)
+project(ZephyrFTP VERSION 0.3.3 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -124,6 +124,97 @@ target_link_libraries(zephyrftp PRIVATE
     ${LIBSSH2_TARGET}
     ${CREDENTIAL_STORE_TARGET}
 )
+
+# --- Linux distro packaging (.deb/.rpm via CPack) ---
+#
+# Windows has no equivalent block here: that platform is distributed as
+# a plain zip (see build.yml's Windows job) with its own separate
+# collect-win-runtime.sh DLL-bundling step, nothing CPack is involved in.
+#
+# install() rules below are what CPack actually packages — a real
+# system install layout (bin/, share/applications/, share/icons/), not
+# just the bare binary the existing plain tarball ships (see
+# build.yml's "Assemble deployable folder" step) . Both distribution
+# forms coexist on purpose: the tarball needs no install and no root,
+# the .deb/.rpm integrate properly with a desktop environment's app
+# launcher/icon theme in exchange for actually installing.
+if(NOT WIN32)
+    install(TARGETS zephyrftp RUNTIME DESTINATION bin)
+    install(FILES resources/zephyrftp.desktop DESTINATION share/applications)
+
+    # hicolor icon theme convention: one file per resolution, all named
+    # identically, under share/icons/hicolor/<size>x<size>/apps/ — this
+    # is what desktop environments actually look up by the .desktop
+    # file's bare "Icon=zephyrftp" key (no path, no extension). Reuses
+    # the exact PNGs tools/generate_app_icon.cpp already produces for
+    # the Windows .ico and the in-app window icon — one source of icon
+    # truth, not a separate packaging-only copy.
+    foreach(size 16 32 48 64 128 256)
+        install(FILES resources/icons/app-icon-${size}.png
+                DESTINATION share/icons/hicolor/${size}x${size}/apps
+                RENAME zephyrftp.png)
+    endforeach()
+
+    # /usr, not CMAKE_INSTALL_PREFIX's default /usr/local — a real
+    # system package (unlike a from-source `make install`) belongs at
+    # the FHS path a distro's own packages use, so the .desktop
+    # file/icon actually get found by the desktop environment without
+    # each user needing /usr/local in their icon theme search path.
+    set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
+
+    set(CPACK_PACKAGE_NAME "zephyrftp")
+    set(CPACK_PACKAGE_VENDOR "Bad Cluster")
+    set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Dual-pane SFTP/FTP client")
+    # CPACK_PACKAGE_DESCRIPTION_SUMMARY alone is enough for the .deb's
+    # one-line Description field, but the RPM generator's long
+    # description falls back to a generic CPack-authored placeholder
+    # ("This is an installer created using CPack...") without this set
+    # explicitly — confirmed directly: a first real .rpm built without
+    # it actually shipped that placeholder text as the package
+    # description, not caught by only inspecting the .deb.
+    set(CPACK_PACKAGE_DESCRIPTION
+        "Browse your local files and a remote server side by side, then \
+drag, drop, or double-click to move things between them. SFTP with \
+password or private-key login, host-key verification, a real transfer \
+queue with pause/resume, and whole-folder transfers.")
+    set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/arelas/zephyrftp")
+    set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
+    # No dedicated project email exists (a deliberate choice, not an
+    # oversight) — points at the GitHub repo (Issues) instead of
+    # inventing or exposing a personal address.
+    set(CPACK_PACKAGE_CONTACT "ZephyrFTP Maintainers <https://github.com/arelas/zephyrftp>")
+
+    set(CPACK_GENERATOR "DEB;RPM")
+
+    # SHLIBDEPS runs dpkg-shlibdeps against the actual linked binary to
+    # compute real runtime dependencies (exact Qt6/libssh2/libsecret
+    # package names+versions this distro's own linker resolved to) —
+    # deliberately not a hand-maintained list, which would drift from
+    # what the binary actually needs and silently go stale.
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+    set(CPACK_DEBIAN_PACKAGE_SECTION "net")
+    set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
+
+    # RPM's equivalent of SHLIBDEPS — rpmbuild's own automatic
+    # dependency scanner, on by default, set explicitly here so the
+    # intent (real scanned deps, not a hand list) reads the same way
+    # the Debian block above does.
+    set(CPACK_RPM_PACKAGE_AUTOREQPROV YES)
+    set(CPACK_RPM_PACKAGE_LICENSE "GPL-3.0-or-later")
+    # The generic CPACK_PACKAGE_DESCRIPTION above turned out NOT to be
+    # enough for RPM specifically — confirmed directly by rebuilding and
+    # re-inspecting: the placeholder text still shipped with only that
+    # set. The RPM generator apparently needs its own
+    # CPACK_RPM_PACKAGE_DESCRIPTION, unlike CPACK_RPM_PACKAGE_LICENSE/
+    # _GROUP/etc., which do fall back to their generic CPACK_PACKAGE_*
+    # equivalents.
+    set(CPACK_RPM_PACKAGE_DESCRIPTION "${CPACK_PACKAGE_DESCRIPTION}")
+    set(CPACK_RPM_PACKAGE_GROUP "Applications/Internet")
+    set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
+
+    include(CPack)
+endif()
 
 # --- smoke test (not part of the shipped app; verifies thread lifecycle) ---
 qt_add_executable(smoke-test EXCLUDE_FROM_ALL

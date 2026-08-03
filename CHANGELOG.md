@@ -8,6 +8,32 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.3.3] — Real .deb/.rpm Linux packages
+
+### Added
+
+- **Real Linux distro packages** — `.deb` and `.rpm`, built via CPack
+  from the same source the existing plain tarball already ships,
+  alongside it (not a replacement). A proper system install layout
+  (`/usr/bin`, a `.desktop` file, hicolor-theme icons at every size),
+  with dependencies **auto-detected from the actual linked binary**
+  (`dpkg-shlibdeps` for `.deb`, rpmbuild's own scanner for `.rpm`)
+  rather than a hand-maintained list that could quietly drift from what
+  the binary actually needs. Verified end to end in disposable
+  containers before ever being wired into CI: built in one container,
+  then installed in a *separate*, completely clean container with no
+  build tooling at all — dependencies resolved automatically, the
+  `.desktop` file validated, and the installed binary actually ran.
+- **CI now builds both automatically on every tagged release** — a new
+  `build-linux-rpm` job (Fedora 44 container, matching `build-windows`'s
+  existing pattern) runs the full ten-target test suite independently
+  on top of building the `.rpm`; the existing `build-linux` job now also
+  produces the `.deb`. Both get attached to the GitHub Release alongside
+  the existing Windows zip and Linux tarball.
+- **CONTRIBUTING.md's dependency list now covers building the packages
+  themselves** locally (`cpack -G DEB` / `cpack -G RPM`), documenting
+  exactly what was verified and how.
+
 ## [0.3.2] — Real screenshots, and a verified per-distro dependency list
 
 ### Added
@@ -521,7 +547,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.3
 [0.3.2]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.2
 [0.3.1]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.1
 [0.2.7]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.7

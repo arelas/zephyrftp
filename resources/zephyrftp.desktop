@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=ZephyrFTP
+GenericName=SFTP/FTP Client
+Comment=Dual-pane SFTP/FTP client
+Exec=zephyrftp
+Icon=zephyrftp
+Categories=Network;FileTransfer;
+Terminal=false
+StartupWMClass=zephyrftp

@@ -193,11 +193,16 @@ jobs:
     # libsecret-1-dev is CredentialStore's Linux backend (the OS
     # keychain SiteManagerDialog's "Save password" checkbox writes to).
     steps:
+      # dpkg-dev + file are only for the cpack -G DEB step further down
+      # (dpkg-shlibdeps needs both to compute real runtime dependencies
+      # from the actual linked binary) — not needed for the plain build
+      # or test suite above.
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
-            cmake build-essential qt6-base-dev qt6-svg-dev libssh2-1-dev libsecret-1-dev pkg-config
+            cmake build-essential qt6-base-dev qt6-svg-dev libssh2-1-dev libsecret-1-dev pkg-config \
+            dpkg-dev file
 
       - uses: actions/checkout@v7
 
@@ -280,6 +285,123 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+      # A real .deb, not just the bare tarball above — see
+      # CONTRIBUTING.md's "Linux distro packages" section for the full
+      # reasoning (auto-detected dependencies via dpkg-shlibdeps, real
+      # install layout with a .desktop file and hicolor icons) and how
+      # this was verified end to end in disposable containers before
+      # ever being wired in here.
+      - name: Build .deb package
+        run: |
+          cd build
+          cpack -G DEB
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: zephyrftp-deb
+          path: build/*.deb
+          if-no-files-found: error
+
+  # Fedora container rather than native ubuntu-latest — building an RPM
+  # on a Debian-based distro works in principle (the `rpm` tool itself
+  # is packaged for Ubuntu) but pulls in rpm macro/path assumptions this
+  # project has no reason to fight when a real RPM-based environment is
+  # one container away, the same reasoning build-windows already uses
+  # for its own Fedora container. Pinned to 44, matching build-windows,
+  # for the same reason: this is the exact release this pipeline was
+  # developed and verified against, bumped deliberately rather than
+  # silently drifting on `latest`.
+  build-linux-rpm:
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:44
+
+    steps:
+      # git isn't in the base fedora image (same gap build-windows's own
+      # comment already flags); rpm-build + file are only for the cpack
+      # -G RPM step further down (rpmbuild's own dependency scanner
+      # needs both to compute real runtime dependencies from the actual
+      # linked binary).
+      - name: Install build dependencies
+        run: |
+          dnf install -y --setopt=install_weak_deps=False \
+            git cmake gcc-c++ qt6-qtbase-devel qt6-qtsvg-devel \
+            libssh2-devel libsecret-devel pkgconf-pkg-config rpm-build file
+
+      - uses: actions/checkout@v7
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build app
+        run: cmake --build build --target zephyrftp -- -j$(nproc)
+
+      - name: Build test suite
+        run: >
+          cmake --build build --target
+          smoke-test transfer-queue-test site-store-test navigation-test
+          transfer-pause-test file-operations-test folder-transfer-test
+          conflict-resolution-test ftp-parsing-test protocol-selection-test
+          -- -j$(nproc)
+
+      # Same reasoning as build-linux's own test-suite step: a genuinely
+      # headless container, no wine/xvfb needed for native Linux
+      # binaries. Run again here (not just on Ubuntu) since this is a
+      # different distro's own toolchain building the same source —
+      # worth confirming independently rather than assuming Ubuntu's
+      # result carries over, the same cross-distro-diversity reasoning
+      # this project already applies to FTP/SFTP server verification
+      # (vsftpd/proftpd/Dropbear, not just one implementation).
+      - name: Run test suite
+        run: |
+          set -e
+          cd build
+          export QT_QPA_PLATFORM=offscreen
+
+          ./smoke-test
+
+          rm -rf /tmp/transfer_test
+          mkdir -p /tmp/transfer_test/src_dir /tmp/transfer_test/dst_dir
+          head -c 500000 /dev/urandom > /tmp/transfer_test/src_dir/testfile.bin
+          ./transfer-queue-test
+
+          rm -rf /tmp/zephyrftp_test_config
+          XDG_CONFIG_HOME=/tmp/zephyrftp_test_config ./site-store-test
+
+          ./navigation-test
+          ./transfer-pause-test
+          ./file-operations-test
+
+          rm -rf /tmp/folder_transfer_test
+          mkdir -p /tmp/folder_transfer_test/src/myfolder/subdir1 \
+                   /tmp/folder_transfer_test/src/myfolder/subdir2/nested \
+                   /tmp/folder_transfer_test/src/myfolder/emptydir \
+                   /tmp/folder_transfer_test/dst
+          echo "hi from a" > /tmp/folder_transfer_test/src/myfolder/a.txt
+          echo "hi from b" > /tmp/folder_transfer_test/src/myfolder/subdir1/b.txt
+          echo "hi from c" > /tmp/folder_transfer_test/src/myfolder/subdir1/c.txt
+          echo "hi from d" > /tmp/folder_transfer_test/src/myfolder/subdir2/nested/d.txt
+          ./folder-transfer-test
+
+          ./conflict-resolution-test
+          ./ftp-parsing-test
+
+          rm -rf /tmp/zephyrftp_proto_config
+          XDG_CONFIG_HOME=/tmp/zephyrftp_proto_config ./protocol-selection-test
+
+      - name: Build .rpm package
+        run: |
+          cd build
+          cpack -G RPM
+
+      - name: Upload .rpm artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: zephyrftp-rpm
+          path: build/*.rpm
+          if-no-files-found: error
+
   # Only runs on version tags (v1.0.0 etc.) — attaches both platform
   # builds as zipped/tarred assets on a GitHub Release, matching the
   # Phat32 pipeline pattern. Plain ubuntu-latest (no PowerShell needed) —
@@ -287,7 +409,7 @@ jobs:
   # GitHub Releases API, neither of which has ever depended on either
   # build job's OS.
   release:
-    needs: [build-windows, build-linux]
+    needs: [build-windows, build-linux, build-linux-rpm]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     # Confirmed necessary directly from a real failed run, not
@@ -312,6 +434,20 @@ jobs:
           name: zephyrftp-linux-x64
           path: dist-linux
 
+      # Both already named correctly by cpack itself (DEB-DEFAULT/
+      # RPM-DEFAULT in CMakeLists.txt — e.g. zephyrftp_0.3.2_amd64.deb,
+      # zephyrftp-0.3.2-1.x86_64.rpm) — downloaded straight into the
+      # working directory rather than a dist-*/ subfolder like the two
+      # above, since there's no folder-to-archive step needed for a
+      # single already-finished package file.
+      - uses: actions/download-artifact@v8
+        with:
+          name: zephyrftp-deb
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: zephyrftp-rpm
+
       - name: Package release assets
         run: |
           cd dist-windows && zip -r ../zephyrftp-windows-x64.zip . && cd ..
@@ -324,6 +460,8 @@ jobs:
           files: |
             zephyrftp-windows-x64.zip
             zephyrftp-linux-x64.tar.gz
+            *.deb
+            *.rpm
           # Derived from the tag itself (e.g. "v0.1.0") rather than
           # hardcoded — avoids a name that silently goes stale the next
           # time this fires on a different tag.
