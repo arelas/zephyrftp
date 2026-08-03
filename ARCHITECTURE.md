@@ -172,11 +172,14 @@ that way, it's flagged explicitly rather than left implied.
   inspecting the raw `sites.json` content directly after the full
   save/update flow (isolated via `XDG_CONFIG_HOME`, same as
   `site-store-test`): still zero `password`/`passphrase` keys, exactly
-  as before this feature existed. **Not verified this way: the Windows
-  side** — `CredentialStore`'s `wincred.h` backend only compiles, links,
-  and runs without crashing under `wine`; the actual
-  `CredWriteW`/`CredReadW`/`CredDeleteW` round trip has not been
-  exercised on real Windows.
+  as before this feature existed. **The Windows side is now confirmed
+  too, on real hardware, not just compiled/linked under `wine`.**
+  `CredentialStore`'s `wincred.h` backend (`CredWriteW`/`CredReadW`/
+  `CredDeleteW`) has been manually confirmed saving and reloading a real
+  password through the real Windows Credential Manager on an actual
+  Windows machine — not just running without crashing under `wine`,
+  which only ever proved the code path executes, not that Windows'
+  own credential store actually round-trips the secret correctly.
 
 - **Back/forward/up navigation is verified against real filesystem
   behavior, including the tricky cases, not just the happy path.**
@@ -501,9 +504,18 @@ that way, it's flagged explicitly rather than left implied.
   authentication, and cancel/pause/resume below — this bullet is the
   short version.
 
-**Still not verified:** real window rendering on a real physical display
-(this development environment has no windowing system; only
-headless/offscreen runs have been checked).
+**Real window rendering on a real physical display is now confirmed
+too, not just headless/offscreen runs.** A real KDE Plasma (Wayland)
+desktop has since become available in this environment, and the app has
+actually been launched and clicked through on it for real: the local
+pane's permissions column, a real FTP server's directory listing (a
+vsftpd container, not pyftpdlib), and a genuine download+upload round
+trip, all driven through the real GUI (not a headless harness) and
+visually confirmed via real screenshots — see the FTP/FTPS and SFTP
+Known gaps entries below for what those sessions specifically found and
+fixed. The same real-display capability (screenshot-driven, AT-SPI- and
+XTest-automated) was used again investigating the SFTP throughput gap,
+to drive FileZilla itself for a same-desktop comparison.
 
 ## Architecture
 
@@ -781,12 +793,13 @@ headless/offscreen runs have been checked).
   actually has one running — KDE's `ksecretd`), independently
   cross-checked with the `secret-tool` CLI (not just this app's own
   code self-reporting success) — real entry, correct schema, correct
-  secret value. **The Windows `wincred.h` path only compiles and links
-  cleanly (including a full mingw cross-build) and runs without
-  crashing under `wine`** — the actual `CredWriteW`/`CredReadW`/
-  `CredDeleteW` behavior has not been exercised on real Windows, the
-  same category of gap already flagged for other Windows-specific code
-  in this project.
+  secret value. **The Windows `wincred.h` path is now confirmed too, on
+  real Windows hardware, not just compiling/linking cleanly (including a
+  full mingw cross-build) and running without crashing under `wine`.**
+  The `CredWriteW`/`CredReadW`/`CredDeleteW` round trip has been manually
+  confirmed saving and reloading a real password through the actual
+  Windows Credential Manager, closing what had been the same category of
+  gap already flagged for other Windows-specific code in this project.
 - `SiteManagerDialog` — the saved-sites UI: a grouped tree on the left,
   a details form on the right, matching the design package's
   site-manager.html mockup, plus a starting-directory radio choice
@@ -935,7 +948,16 @@ headless/offscreen runs have been checked).
   Live speed (`TransferItem::speedBytesPerSec`) is sampled roughly every
   250ms in `onBackendProgress()` (via `QElapsedTimer`) rather than on
   every single progress signal, which for SFTP's 32KB-chunk read/write
-  loop would be far too frequent to read as a stable "live" number.
+  loop would be far too frequent to read as a stable "live" number. Each
+  raw 250ms sample is then run through an exponential moving average
+  (alpha = 0.3, reset whenever a transfer (re)starts) before being shown —
+  added after directly comparing against other SFTP clients' live speed
+  readouts, which turned out to be smoothing their own numbers rather
+  than being more accurate: this app's raw per-window sample was already
+  a real, unlagged measurement, it just had nothing carried over between
+  windows, so ordinary transfer burstiness (TCP window dynamics, disk
+  flush stalls, scheduler jitter) showed up directly as visible jumpiness
+  with nothing to damp it.
   `enqueueFolder()` handles whole-folder transfer: enumerates the source
   folder via `FolderEnumerator` (see below), creates the mirrored
   directory structure on the destination, then hands every discovered

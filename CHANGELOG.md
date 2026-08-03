@@ -8,6 +8,37 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.3.0] — Both core protocols now verified against real, independent servers
+
+Since 0.2.0 first wired FTP/FTPS into the UI unverified, every 0.2.x
+release chased down a real, evidence-backed answer for one gap at a
+time: FTP and FTPS confirmed end to end against real, independently-implemented
+server software (vsftpd, proftpd), not just this project's own test
+stand-ins; SFTP's public-key auth, `checkExists()`, the recursive
+folder-transfer walk, and mid-transfer cancel/pause/resume all confirmed
+against a real server; the SFTP throughput gap that was an honest
+unknown (no real non-loopback server to test it against) now confirmed
+closed, at parity with `scp` on a real link; and — most recently —
+opt-in password storage confirmed round-tripping through the real
+credential store on both platforms this app ships for, Linux's Secret
+Service and Windows' actual Credential Manager, not just compiling and
+running crash-free under `wine`. That's the same kind of milestone
+0.2.0 itself marked (a real capability landing, not just a fix) — this
+one closes the verification gaps that release opened, for both
+protocols this app speaks. What's left in
+[ARCHITECTURE.md](ARCHITECTURE.md)'s Known Gaps is now either a
+deliberate, documented scope boundary (no recursive delete, no
+remote-to-remote transfers, the SSH-daemon-diversity ceiling) rather
+than something still owed, or the [README](README.md#known-limitations)'s
+honest, ongoing list — this changelog doesn't duplicate either.
+
+### Changed
+
+- Live Speed column smoothing (exponential moving average) and the
+  new `verify-sftp-throughput` real-server harness — see 0.2.16 below,
+  the last patch release before this one — are the concrete changes
+  underlying this milestone's throughput claim.
+
 ## [0.2.16] — SFTP throughput gap confirmed closed; smoother live speed
 
 ### Fixed

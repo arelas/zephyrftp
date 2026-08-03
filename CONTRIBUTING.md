@@ -336,6 +336,20 @@ QT_QPA_PLATFORM=offscreen ./build/verify-sftp-vendors
 tools/local-test-servers/stop-all.sh   # stops everything above too, containers included
 ```
 
+One more harness goes a step further still: `verify-sftp-throughput`
+needs a real, externally-provided, non-loopback server — nothing in
+`tools/local-test-servers/` can substitute, since the whole point is a
+real round-trip time, and every throwaway server above is loopback
+(~0ms RTT). Env-var-configured rather than pointed at a fixed local
+container:
+
+```
+cmake --build build --target verify-sftp-throughput
+ZEPHYR_THROUGHPUT_HOST=<host> ZEPHYR_THROUGHPUT_USER=<user> \
+    ZEPHYR_THROUGHPUT_PASSWORD=<password> \
+    QT_QPA_PLATFORM=offscreen ./build/verify-sftp-throughput
+```
+
 See `tools/local-test-servers/README.md` for the full picture (including
 the real containerization gotchas — PAM/GDBM/foreground-mode quirks —
 hit and fixed while building the vsftpd/proftpd/Dropbear containers) and
