@@ -8,6 +8,26 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.2.15] — Fix a real SFTP checkExists() false-negative
+
+### Fixed
+
+- **`SftpBackend::checkExists()` reported a permission-denied path as
+  "doesn't exist," a real, reachable false negative, not a hypothetical
+  one.** `libssh2_sftp_stat()` fails for more reasons than "not
+  found" — a `stat()` call needs execute/traverse permission on every
+  ancestor directory, not read/write permission on the target itself,
+  so a path can be denied without being missing. Only
+  `LIBSSH2_FX_NO_SUCH_FILE` is now treated as confirmed nonexistence;
+  any other stat failure (permission denied, or the server's own
+  generic "something went wrong" code) reports `exists=true` instead —
+  the safe direction to be wrong in, since the one place this feeds
+  into (the Overwrite/Skip conflict prompt before a transfer) would
+  otherwise have silently overwritten something that was actually
+  there. Confirmed against a real server: a genuine `chmod 000`
+  directory reproduces a real `EACCES` from `libssh2_sftp_stat()`, not
+  simulated.
+
 ## [0.2.14] — FTPS against real vendor servers now works end to end
 
 ### Fixed
