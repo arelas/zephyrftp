@@ -402,6 +402,107 @@ jobs:
           path: build/*.rpm
           if-no-files-found: error
 
+  # A third, distinct container/toolchain from build-linux (ubuntu-latest)
+  # and build-linux-rpm (fedora:44) — deliberately not the newest
+  # available base. AppImages link dynamically against the build
+  # system's own glibc (forward- but not backward-compatible), so the
+  # standard AppImage advice is to build on the oldest base that still
+  # works. Debian 12 (glibc 2.36, Qt 6.4.2) is that base for this
+  # project specifically — Ubuntu 22.04 has older glibc (2.35) but its
+  # Qt (6.2.4) is too old for this project's own
+  # qt_standard_project_setup() CMake call (needs Qt 6.3+), confirmed
+  # directly via a real failed build, not assumed. See
+  # CONTRIBUTING.md's "AppImage" section for the full reasoning,
+  # including the real, one-at-a-time missing-library gaps
+  # tools/build-appimage.sh's own comments explain.
+  build-linux-appimage:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:12
+
+    steps:
+      # git isn't in the base debian image (same gap build-windows's own
+      # comment already flags for fedora); libgl1-mesa-dev provides the
+      # OpenGL headers CMake's find_package(OpenGL) needs at build time
+      # (separate from the mesa runtime libraries deliberately NOT
+      # bundled into the AppImage itself — see CONTRIBUTING.md); wget is
+      # for fetching linuxdeploy itself.
+      - name: Install build dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq \
+            git cmake build-essential qt6-base-dev qt6-svg-dev libssh2-1-dev libsecret-1-dev \
+            pkg-config wget file libgl1-mesa-dev
+
+      - uses: actions/checkout@v7
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build app
+        run: cmake --build build --target zephyrftp -- -j$(nproc)
+
+      - name: Build test suite
+        run: >
+          cmake --build build --target
+          smoke-test transfer-queue-test site-store-test navigation-test
+          transfer-pause-test file-operations-test folder-transfer-test
+          conflict-resolution-test ftp-parsing-test protocol-selection-test
+          -- -j$(nproc)
+
+      # Same reasoning as build-linux-rpm's own test-suite step: a
+      # distinct distro's toolchain (and here, a distinctly OLDER Qt,
+      # 6.4.2 vs. 6.8+ elsewhere) building and running the same source
+      # is worth confirming independently, not assumed to carry over.
+      - name: Run test suite
+        run: |
+          set -e
+          cd build
+          export QT_QPA_PLATFORM=offscreen
+
+          ./smoke-test
+
+          rm -rf /tmp/transfer_test
+          mkdir -p /tmp/transfer_test/src_dir /tmp/transfer_test/dst_dir
+          head -c 500000 /dev/urandom > /tmp/transfer_test/src_dir/testfile.bin
+          ./transfer-queue-test
+
+          rm -rf /tmp/zephyrftp_test_config
+          XDG_CONFIG_HOME=/tmp/zephyrftp_test_config ./site-store-test
+
+          ./navigation-test
+          ./transfer-pause-test
+          ./file-operations-test
+
+          rm -rf /tmp/folder_transfer_test
+          mkdir -p /tmp/folder_transfer_test/src/myfolder/subdir1 \
+                   /tmp/folder_transfer_test/src/myfolder/subdir2/nested \
+                   /tmp/folder_transfer_test/src/myfolder/emptydir \
+                   /tmp/folder_transfer_test/dst
+          echo "hi from a" > /tmp/folder_transfer_test/src/myfolder/a.txt
+          echo "hi from b" > /tmp/folder_transfer_test/src/myfolder/subdir1/b.txt
+          echo "hi from c" > /tmp/folder_transfer_test/src/myfolder/subdir1/c.txt
+          echo "hi from d" > /tmp/folder_transfer_test/src/myfolder/subdir2/nested/d.txt
+          ./folder-transfer-test
+
+          ./conflict-resolution-test
+          ./ftp-parsing-test
+
+          rm -rf /tmp/zephyrftp_proto_config
+          XDG_CONFIG_HOME=/tmp/zephyrftp_proto_config ./protocol-selection-test
+
+      - name: Build AppImage
+        run: |
+          export VERSION="${GITHUB_REF_NAME#v}"
+          tools/build-appimage.sh build
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: zephyrftp-appimage
+          path: '*.AppImage'
+          if-no-files-found: error
+
   # Only runs on version tags (v1.0.0 etc.) — attaches both platform
   # builds as zipped/tarred assets on a GitHub Release, matching the
   # Phat32 pipeline pattern. Plain ubuntu-latest (no PowerShell needed) —
@@ -409,7 +510,7 @@ jobs:
   # GitHub Releases API, neither of which has ever depended on either
   # build job's OS.
   release:
-    needs: [build-windows, build-linux, build-linux-rpm]
+    needs: [build-windows, build-linux, build-linux-rpm, build-linux-appimage]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     # Confirmed necessary directly from a real failed run, not
@@ -448,11 +549,16 @@ jobs:
         with:
           name: zephyrftp-rpm
 
+      - uses: actions/download-artifact@v8
+        with:
+          name: zephyrftp-appimage
+
       - name: Package release assets
         run: |
           cd dist-windows && zip -r ../zephyrftp-windows-x64.zip . && cd ..
           chmod +x dist-linux/zephyrftp
           tar -czf zephyrftp-linux-x64.tar.gz -C dist-linux zephyrftp
+          chmod +x *.AppImage
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
@@ -462,6 +568,7 @@ jobs:
             zephyrftp-linux-x64.tar.gz
             *.deb
             *.rpm
+            *.AppImage
           # Derived from the tag itself (e.g. "v0.1.0") rather than
           # hardcoded — avoids a name that silently goes stale the next
           # time this fires on a different tag.

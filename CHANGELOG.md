@@ -8,6 +8,41 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.3.4] — A real, self-contained AppImage; Flatpak built and verified (not yet on Flathub)
+
+### Added
+
+- **A real, self-contained AppImage**, built via `linuxdeploy` and
+  verified end to end across several fresh, unrelated containers with
+  zero Qt/libssh2/libsecret installed — the actual point of an
+  AppImage. Built deliberately on Debian 12, not the newest available
+  base: AppImages link dynamically against the build system's own
+  glibc, so the standard advice is to build on the oldest base that
+  still works, and Debian 12 is the oldest that also satisfies this
+  project's own Qt 6.3+ requirement (Ubuntu 22.04 has older glibc but
+  only Qt 6.2.4 — confirmed via a real failed build, not assumed).
+  Testing surfaced three real gaps `linuxdeploy`'s automatic
+  (`ldd`-based) dependency scan misses — fontconfig, harfbuzz, and
+  freetype, all reached via `dlopen()` rather than direct linking — now
+  bundled explicitly in `tools/build-appimage.sh`. The GL/EGL/GLX stack
+  and fontconfig's own configuration are deliberately left to the host,
+  confirmed (not assumed) to be a safe assumption: every real desktop
+  already has both, or its own UI couldn't render.
+- **A real, working Flatpak manifest** (`io.github.arelas.zephyrftp.yml`)
+  — builds cleanly, installs, and runs, with its two non-standard
+  permissions (`--filesystem=host`, `--talk-name=org.freedesktop.secrets`)
+  individually confirmed actually working from inside the sandbox, not
+  just declared. **Deliberately not submitted to Flathub yet** — their
+  own current requirements flag broad-scope file managers as a category
+  needing extra scrutiny (waived for submissions from the actual
+  upstream project with a demonstrated maintenance history), worth
+  having more of that history first. Build and test it locally per
+  CONTRIBUTING.md's "Flatpak" section.
+- **CI now builds the AppImage automatically on every tagged release**
+  — a new `build-linux-appimage` job (Debian 12) runs the full
+  ten-target test suite independently on top of building it; attached
+  to the GitHub Release alongside the existing tarball/zip/`.deb`/`.rpm`.
+
 ## [0.3.3] — Real .deb/.rpm Linux packages
 
 ### Added
@@ -547,7 +582,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.4
 [0.3.3]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.3
 [0.3.2]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.2
 [0.3.1]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.1

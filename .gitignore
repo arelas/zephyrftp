@@ -1,5 +1,12 @@
 build/
 build-win/
+build-flatpak/
+flatpak-repo/
+.flatpak-builder/
+*.flatpak
+AppDir/
+*.AppImage
+linuxdeploy*.AppImage*
 dist/
 dist-windows/
 dist-linux/

@@ -1,0 +1,122 @@
+# Flatpak manifest — build/test locally now (see CONTRIBUTING.md's
+# "Flatpak" section), Flathub submission deliberately deferred until
+# closer to beta. See that same section for the full reasoning: Flathub's
+# own current requirements explicitly flag broad-scope file managers as
+# a category needing extra scrutiny, waived for submissions actually
+# coming from the upstream project (which this would be) with a
+# demonstrated maintenance history — worth having more of that history
+# before asking for the exception.
+#
+# At the top level, matching where Flathub requires the manifest to live
+# if/when this is actually submitted there.
+app-id: io.github.arelas.zephyrftp
+runtime: org.kde.Platform
+runtime-version: '6.11'
+sdk: org.kde.Sdk
+command: zephyrftp
+
+# All three renames below let resources/zephyrftp.desktop,
+# resources/zephyrftp.metainfo.xml, and the hicolor-theme
+# resources/icons/*.png/svg stay the SAME files the .deb/.rpm CPack
+# packaging already installs (see CMakeLists.txt's Linux install()
+# rules) — one source of truth per asset, not a Flatpak-specific copy
+# that could drift from the "real" one.
+rename-desktop-file: zephyrftp.desktop
+rename-appdata-file: zephyrftp.metainfo.xml
+rename-icon: zephyrftp
+
+finish-args:
+  # SFTP/FTP connections to whatever host/port the user enters — this
+  # app's entire purpose, not optional.
+  - --share=network
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  # GPU-accelerated Qt rendering rather than falling back to software
+  # rendering — standard for a Qt Widgets app, not exotic.
+  - --device=dri
+  # CredentialStore's Linux backend (opt-in "Save password" checkbox)
+  # talks to the same Secret Service D-Bus interface either way
+  # (GNOME Keyring/KWallet) — this is the real dependency that
+  # capability needs, confirmed against how CredentialStore.cpp's
+  # libsecret backend actually reaches it outside Flatpak.
+  - --talk-name=org.freedesktop.secrets
+  # Broad, deliberately, for now: this is a dual-pane file manager —
+  # typing an arbitrary path, browsing external drives under /media or
+  # /run/media, etc. are core functionality, not edge cases, and no
+  # existing XDG portal covers "commander-style browse anywhere,
+  # continuously" the way the one-shot file-open/save portals do.
+  # Flathub's own requirements doc calls out exactly this tension for
+  # file managers specifically (see the top comment) — this is the
+  # first thing to revisit, and possibly narrow, before an actual
+  # Flathub submission at beta, not something settled here.
+  - --filesystem=host
+
+# Applies to every module below except where a module sets its own
+# (more specific) cleanup list — strips dependency build artifacts
+# (headers, pkgconfig, cmake configs, man pages) that only matter while
+# compiling libssh2/libsecret, never at runtime. Deliberately does NOT
+# touch /share (zephyrftp's own .desktop file, icons, and metainfo all
+# live there and must survive).
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /lib/cmake
+  - /share/man
+
+modules:
+  # No shared-modules/libssh2 recipe exists upstream (checked directly
+  # against github.com/flathub/shared-modules, not assumed) — hand
+  # written instead, using the exact version (1.11.1) already used
+  # everywhere else in this project (CONTRIBUTING.md's Fedora/Arch/
+  # Debian dependency lines all confirmed against this same version).
+  # Config options confirmed directly against libssh2's own upstream
+  # CMakeLists.txt: CRYPTO_BACKEND auto-detects OpenSSL (already part
+  # of the runtime) with no explicit flag needed; only the
+  # examples/tests/static-lib options need turning off.
+  - name: libssh2
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DBUILD_EXAMPLES=OFF
+      - -DBUILD_TESTING=OFF
+      - -DBUILD_STATIC_LIBS=OFF
+    sources:
+      - type: archive
+        url: https://github.com/libssh2/libssh2/releases/download/libssh2-1.11.1/libssh2-1.11.1.tar.gz
+        sha256: d9ec76cbe34db98eec3539fe2c899d26b0c837cb3eb466a56b0f109cabf658f7
+
+  # This one DOES have a real, current shared-modules recipe (pulled
+  # directly from github.com/flathub/shared-modules/libsecret, not
+  # hand-guessed) — reused verbatim rather than reinvented, same
+  # version (0.21.7) this project's own Fedora dependency line already
+  # confirmed working.
+  - name: libsecret
+    buildsystem: meson
+    config-opts:
+      - -Dmanpage=false
+      - -Dvapi=false
+      - -Dgtk_doc=false
+      - -Dintrospection=false
+    cleanup:
+      - /bin
+      - /include
+      - /lib/pkgconfig
+      - /share/man
+    sources:
+      - type: archive
+        url: https://download.gnome.org/sources/libsecret/0.21/libsecret-0.21.7.tar.xz
+        sha256: 6b452e4750590a2b5617adc40026f28d2f4903de15f1250e1d1c40bfd68ed55e
+
+  - name: zephyrftp
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+    sources:
+      # Local checkout, for building/testing here and now — Flathub's
+      # own requirements explicitly forbid this for a real submission
+      # ("no circumstances should source code... be included"), so this
+      # source block is exactly what needs to change to
+      # `type: git, url: https://github.com/arelas/zephyrftp, tag: vX.Y.Z`
+      # before that ever happens, not an oversight left in by accident.
+      - type: dir
+        path: .

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ZephyrFTP VERSION 0.3.3 LANGUAGES CXX)
+project(ZephyrFTP VERSION 0.3.4 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -154,6 +154,23 @@ if(NOT WIN32)
                 DESTINATION share/icons/hicolor/${size}x${size}/apps
                 RENAME zephyrftp.png)
     endforeach()
+
+    # Scalable companion to the fixed-size PNGs above — Flathub's own
+    # guidelines prefer an SVG icon where available, and appstreamcli
+    # compose (part of the Flatpak build) picks it up automatically.
+    # wind.svg is the same source tools/generate_app_icon.cpp already
+    # renders the PNGs from, not a separate icon.
+    install(FILES resources/icons/wind.svg
+            DESTINATION share/icons/hicolor/scalable/apps
+            RENAME zephyrftp.svg)
+
+    # AppStream metainfo — read by software centers (GNOME Software, KDE
+    # Discover) for both this native package and the Flatpak build later;
+    # share/metainfo/ is the standard location either way. Deliberately
+    # the same packaging-agnostic file the Flatpak manifest also
+    # consumes via rename-appdata-file — see that file's own header
+    # comment for why it isn't named after a reverse-DNS app-id here.
+    install(FILES resources/zephyrftp.metainfo.xml DESTINATION share/metainfo)
 
     # /usr, not CMAKE_INSTALL_PREFIX's default /usr/local — a real
     # system package (unlike a from-source `make install`) belongs at

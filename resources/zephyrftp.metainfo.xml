@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2026 Bad Cluster -->
+<component type="desktop-application">
+  <!--
+    Deliberately packaging-agnostic: "zephyrftp", not the Flatpak app-id
+    (io.github.arelas.zephyrftp). The Flatpak manifest's
+    rename-appdata-file/rename-desktop-file/rename-icon directives
+    rewrite this file's <id>/<launchable> and the desktop
+    file/icon names to the full reverse-DNS form at build time, so this
+    stays one source of truth shared with the plain .desktop file
+    resources/zephyrftp.desktop already uses for the .deb/.rpm builds,
+    not a second, packaging-specific copy that could drift.
+  -->
+  <id>zephyrftp</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>ZephyrFTP</name>
+  <summary>Dual-pane SFTP/FTP client</summary>
+  <developer id="io.github.arelas">
+    <name>arelas</name>
+  </developer>
+  <description>
+    <p>
+      Browse your local files and a remote server side by side, then
+      drag, drop, or double-click to move things between them. Think
+      FileZilla or WinSCP, built fresh in Qt6.
+    </p>
+    <ul>
+      <li>Dual-pane browsing with back/forward/up navigation per pane</li>
+      <li>SFTP with password or private-key login</li>
+      <li>FTP and FTPS (explicit TLS)</li>
+      <li>Site Manager for saved connections, organized into groups</li>
+      <li>Real trust-on-first-use host-key and certificate verification</li>
+      <li>Drag-and-drop or multi-select transfers, whole folders included</li>
+      <li>A real transfer queue: live progress and speed, pause/resume, cancel, retry</li>
+      <li>Destination conflict handling — always asks before overwriting anything</li>
+    </ul>
+    <p>
+      This is alpha software: real functionality, but real gaps too —
+      see the Known Limitations section in the project's README before
+      relying on it for anything you can't afford to get wrong.
+    </p>
+  </description>
+  <launchable type="desktop-id">zephyrftp.desktop</launchable>
+  <categories>
+    <category>Network</category>
+    <category>FileTransfer</category>
+  </categories>
+  <keywords>
+    <keyword>sftp</keyword>
+    <keyword>ftp</keyword>
+    <keyword>ftps</keyword>
+    <keyword>ssh</keyword>
+    <keyword>file transfer</keyword>
+    <keyword>file manager</keyword>
+  </keywords>
+  <url type="homepage">https://github.com/arelas/zephyrftp</url>
+  <url type="bugtracker">https://github.com/arelas/zephyrftp/issues</url>
+  <url type="vcs-browser">https://github.com/arelas/zephyrftp</url>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/arelas/zephyrftp/v0.3.3/docs/screenshots/dual-pane-browsing.png</image>
+      <caption>Dual-pane browsing, connected to a real SFTP server</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/arelas/zephyrftp/v0.3.3/docs/screenshots/active-transfer.png</image>
+      <caption>A real transfer in progress in the Transfers panel</caption>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.3.3" date="2026-08-03">
+      <description>
+        <p>Real .deb/.rpm Linux packages, built via CPack and verified end to end in disposable containers, alongside the existing plain tarball.</p>
+      </description>
+    </release>
+    <release version="0.3.2" date="2026-08-03">
+      <description>
+        <p>Real README screenshots and a per-distro dependency list, with Debian/Ubuntu, Fedora, and Arch all directly verified against real builds.</p>
+      </description>
+    </release>
+    <release version="0.3.1" date="2026-08-03">
+      <description>
+        <p>A real preferences system (show-hidden-files toggle, default protocol, persisted window layout) plus three real UI bug fixes.</p>
+      </description>
+    </release>
+    <release version="0.3.0" date="2026-08-03">
+      <description>
+        <p>Both core protocols — SFTP and FTP/FTPS — now verified end to end against real, independently-implemented servers.</p>
+      </description>
+    </release>
+  </releases>
+</component>

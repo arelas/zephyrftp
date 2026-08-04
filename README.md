@@ -4,7 +4,7 @@ A dual-pane SFTP client for Windows and Linux — browse your local files
 and a remote server side by side, then drag, drop, or double-click to
 move things between them. Think FileZilla or WinSCP, built fresh in Qt6.
 
-**Current version: 0.3.3 — alpha.** Real functionality, but real gaps
+**Current version: 0.3.4 — alpha.** Real functionality, but real gaps
 too — see [Known limitations](#known-limitations) before relying on
 this for anything you can't afford to get wrong. [Releases](https://github.com/arelas/zephyrftp/releases)
 has downloadable Windows and Linux builds; [CHANGELOG.md](CHANGELOG.md)
@@ -84,19 +84,27 @@ Grab the latest build from [Releases](https://github.com/arelas/zephyrftp/releas
 
 - **Windows**: `zephyrftp-windows-x64.zip` — unzip it, no installer, just
   launch `zephyrftp.exe`.
-- **Linux**: three options, same binary either way — dynamically linked
-  against system Qt6/libssh2 (not a bundled/portable build), so any of
-  them needs those already installed (the exact packages
-  CONTRIBUTING.md's build instructions use). If your distro doesn't
-  have matching versions, build from source instead (see
-  [CONTRIBUTING.md](CONTRIBUTING.md)), which is quick on any recent
-  distro.
+- **Linux**: four options.
   - `zephyrftp_<version>_amd64.deb` — Debian/Ubuntu, `apt install
     ./zephyrftp_*.deb` resolves dependencies automatically.
   - `zephyrftp-<version>-1.x86_64.rpm` — Fedora/openSUSE/RHEL-family,
     `dnf install ./zephyrftp-*.rpm` (or your distro's equivalent).
   - `zephyrftp-linux-x64.tar.gz` — extracts to a single `zephyrftp`
     binary, no install/root needed, for anything else.
+
+    These three are all dynamically linked against system Qt6/libssh2
+    (not a bundled/portable build), so any of them needs those already
+    installed (the exact packages CONTRIBUTING.md's build instructions
+    use). If your distro doesn't have matching versions, use the
+    AppImage below instead, or build from source (see
+    [CONTRIBUTING.md](CONTRIBUTING.md)), which is quick on any recent
+    distro.
+  - `ZephyrFTP-<version>-x86_64.AppImage` — self-contained: Qt6,
+    libssh2, and libsecret are all bundled, so no matching system
+    packages are needed. `chmod +x` it and run it directly, no
+    install/root/package-manager needed either. Only relies on the host
+    for things every real desktop already has anyway (graphics drivers,
+    fonts).
 
 Every release is built and tested (the full automated test suite, not
 just "it compiled") by [`.github/workflows/build.yml`](.github/workflows/build.yml)

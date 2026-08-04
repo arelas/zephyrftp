@@ -273,6 +273,144 @@ caught by actually inspecting a real built `.rpm` (`rpm -qip`), not by
 assuming the generic `CPACK_PACKAGE_DESCRIPTION` variable would be
 enough (it wasn't; RPM needed its own).
 
+### Flatpak
+
+`io.github.arelas.zephyrftp.yml` (repo root, matching where Flathub
+requires the manifest to eventually live) builds a real Flatpak locally
+right now — **deliberately not yet submitted to Flathub**. Flathub's own
+current requirements explicitly flag broad-scope file managers as a
+category needing extra scrutiny (waived for submissions actually coming
+from the upstream project with a demonstrated maintenance history) —
+worth having more of that history first. Build and test it locally:
+
+```
+flatpak install --user flathub org.flatpak.Builder org.kde.Platform//6.11 org.kde.Sdk//6.11
+flatpak run --user org.flatpak.Builder --user --force-clean --repo=flatpak-repo build-flatpak io.github.arelas.zephyrftp.yml
+
+flatpak remote-add --user --if-not-exists --no-gpg-verify zephyrftp-local-repo ./flatpak-repo
+flatpak install -y --user zephyrftp-local-repo io.github.arelas.zephyrftp
+flatpak run --user io.github.arelas.zephyrftp
+```
+
+Runtime is `org.kde.Platform`/`org.kde.Sdk` `//6.11` — ships Qt6
+directly (unlike `freedesktop-sdk`, which would need Qt bundled as an
+extra extension), and happens to be the exact Qt version this project
+already develops against locally. libssh2 and libsecret aren't part of
+that runtime, so the manifest builds both from source as their own
+modules: libsecret's module is the **real, current recipe pulled
+directly from `github.com/flathub/shared-modules`**, not hand-guessed;
+no equivalent shared module exists for libssh2 (checked directly, not
+assumed), so that one is hand-written against libssh2's own upstream
+CMakeLists.txt (confirmed directly: `CRYPTO_BACKEND` auto-detects
+OpenSSL, already part of the runtime, with no explicit flag needed).
+Both pin the same versions (1.11.1, 0.21.7) already used everywhere
+else in this project's own dependency lines.
+
+`resources/zephyrftp.desktop`, `resources/zephyrftp.metainfo.xml`, and
+the hicolor-theme icons are the exact same files the `.deb`/`.rpm`
+packaging above already installs — one source of truth, not a
+Flatpak-specific copy. The manifest's `rename-desktop-file`/
+`rename-appdata-file`/`rename-icon` directives rewrite them to the full
+`io.github.arelas.zephyrftp` naming automatically at build time; the
+Metainfo file is deliberately written with the plain `zephyrftp` ID
+(confirmed via `appstreamcli validate` both before the rename, where it
+produces exactly one expected warning about not being reverse-DNS yet,
+and after simulating the rename by hand, where it validates completely
+clean).
+
+**Verified for real, not just "the build didn't fail":**
+- The full manifest builds cleanly end to end (`flatpak-builder`,
+  `appstreamcli compose` succeeding as part of that).
+- Installed from the local build output into a real, separate
+  `flatpak remote` and actually launched — ran headlessly
+  (`QT_QPA_PLATFORM=offscreen`) for a full 8 seconds with a clean kill,
+  not a crash.
+- **The two permissions unique to this app were individually confirmed
+  to actually work, not just declared in `finish-args`:**
+  `flatpak run --command=ls io.github.arelas.zephyrftp /home/david`
+  genuinely lists the real host home directory (`--filesystem=host`
+  actually in effect), and a direct `gdbus call` to
+  `org.freedesktop.secrets` from inside the sandbox succeeds
+  (`--talk-name=org.freedesktop.secrets` actually reaches the real
+  Secret Service `CredentialStore` needs).
+
+**The one real, open tradeoff, called out directly in the manifest's
+own `--filesystem=host` comment, not glossed over:** a dual-pane
+commander-style file manager wants continuous, arbitrary-path browsing
+— typing any path, reaching external drives under `/media`/`/run/media`
+— which no existing XDG portal covers the way the one-shot
+file-open/save portals do. `--filesystem=host` is the pragmatic choice
+for now; it's also exactly the kind of static, broad permission
+Flathub's requirements ask submissions to minimize, and the first thing
+worth revisiting (narrowing, or leaning harder on portals for the
+cases that can tolerate it) before an actual Flathub submission at
+beta, not something settled here.
+
+### AppImage
+
+`tools/build-appimage.sh <build-dir>` builds a real, self-contained
+AppImage from an already-built `zephyrftp` (`linuxdeploy` +
+`linuxdeploy-plugin-qt`, pinned versions):
+
+```
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target zephyrftp
+VERSION=<version> tools/build-appimage.sh build
+```
+
+**Built on Debian 12 (bookworm), not the newest available base** —
+confirmed directly, not assumed: AppImages link dynamically against the
+build system's own glibc, and glibc is forward- but not
+backward-compatible, so the standard AppImage advice is to build on the
+oldest base that still works. Ubuntu 22.04 was tried first (older
+glibc, 2.35) but only has Qt 6.2.4, which is too old for this project's
+own `qt_standard_project_setup()` CMake call (needs Qt 6.3+) — a real
+build failure, not a hypothetical concern. Debian 12 (glibc 2.36, Qt
+6.4.2) is the oldest base that actually satisfies both constraints.
+
+**Verified end to end across several real, disposable containers, not
+just "linuxdeploy didn't error"** — build in one container, then run
+the resulting `.AppImage` in a *separate*, completely unrelated distro
+with zero Qt/libssh2/libsecret installed at all (the actual point of an
+AppImage). This surfaced real, fixed-in-the-script gaps one at a time,
+each confirmed by an actual missing-library crash, not anticipated in
+advance:
+
+- `libfontconfig`/`libharfbuzz`/`libfreetype` are bundled explicitly
+  (`linuxdeploy --library=`) — `linuxdeploy-plugin-qt`'s automatic
+  dependency scan is `ldd`-based and misses these, since Qt reaches
+  them via `dlopen()` at runtime rather than a direct link-time
+  dependency. Without this, the AppImage failed to even start on a
+  fresh distro, one missing `.so` at a time, until all three were added.
+- The Qt "offscreen" platform plugin is bundled manually (copied into
+  `AppDir` after the main `linuxdeploy` run) — `linuxdeploy-plugin-qt`
+  only auto-bundles platform plugins it detects as actually used during
+  a normal run (`xcb`); "offscreen" is a headless-testing-only backend
+  real users never select, but this project's whole test/CI story runs
+  via `QT_QPA_PLATFORM=offscreen`, so it needs to work here too.
+
+**Deliberately NOT bundled — confirmed to be fine relying on the host
+for, not just assumed** — a bare-minimum container missing these isn't
+representative of any real desktop:
+- The GL/EGL/GLX/OpenGL stack (`mesa-libEGL`, `mesa-libGL`,
+  `libglvnd-opengl`, `libglvnd-glx`) — must match the host's actual GPU
+  driver (proprietary vs. Mesa vs. whatever else), and every real
+  desktop already has some working version of it, or the desktop
+  environment itself couldn't render anything. Confirmed directly:
+  installing just those five packages (nothing Qt/libssh2/libsecret
+  related) on an otherwise bare system was enough for the AppImage to
+  run cleanly.
+- fontconfig's own *configuration* (`/etc/fonts/fonts.conf` and actual
+  font files) — the library is bundled (see above), but real font data
+  isn't; every real desktop already has both, and bundling a fixed font
+  set would silently override the user's own choices for no real
+  benefit. Confirmed directly: the one remaining error
+  (`Fontconfig error: Cannot load default config file`) on an otherwise
+  fully-bundled AppImage disappeared entirely once the host's own
+  `fontconfig` package (config + fonts, not a rebuild) was installed —
+  and the app never actually crashed even without it, just logged the
+  warning and kept running.
+
 ## Running the test suites
 
 Ten `EXCLUDE_FROM_ALL` CMake targets — not part of a normal `make`, built
