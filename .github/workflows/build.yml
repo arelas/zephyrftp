@@ -496,11 +496,18 @@ jobs:
           export VERSION="${GITHUB_REF_NAME#v}"
           tools/build-appimage.sh build
 
+      # Real, reported bug, fixed here: a bare '*.AppImage' glob also
+      # matched linuxdeploy-x86_64.AppImage and
+      # linuxdeploy-plugin-qt-x86_64.AppImage — tools/build-appimage.sh
+      # downloads both of those into this same working directory as
+      # build-time dependencies, and they rode along into a real
+      # published release before this was caught. Only the actual app
+      # output starts with "ZephyrFTP-".
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@v7
         with:
           name: zephyrftp-appimage
-          path: '*.AppImage'
+          path: 'ZephyrFTP-*.AppImage'
           if-no-files-found: error
 
   # Only runs on version tags (v1.0.0 etc.) — attaches both platform

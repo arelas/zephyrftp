@@ -8,6 +8,21 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.3.5] — Fix the AppImage release upload sweeping up build tools too
+
+### Fixed
+
+- **The `build-linux-appimage` CI job's release upload used a bare
+  `*.AppImage` glob, which also matched `linuxdeploy-x86_64.AppImage`
+  and `linuxdeploy-plugin-qt-x86_64.AppImage`** —
+  `tools/build-appimage.sh` downloads both of those into the same
+  working directory as build-time dependencies, and they rode along
+  into the real v0.3.4 GitHub Release as extra, unwanted assets. Found
+  by actually inspecting the published release, not assumed correct
+  because CI was green. Fixed by narrowing the glob to
+  `ZephyrFTP-*.AppImage`, the actual app output; the two erroneous
+  assets were also removed from the already-published v0.3.4 release.
+
 ## [0.3.4] — A real, self-contained AppImage; Flatpak built and verified (not yet on Flathub)
 
 ### Added
@@ -582,7 +597,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.3.5...HEAD
+[0.3.5]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.5
 [0.3.4]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.4
 [0.3.3]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.3
 [0.3.2]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.2
