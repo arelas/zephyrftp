@@ -1553,6 +1553,38 @@ along the way — worth knowing about if it ever needs touching again.
     negative, genuinely informative answer — not previously known
     either way, and the container is deliberately left this way rather
     than relaxed so this stays confirmed on every future run.
+
+    **The obvious fix was tried and falsified.** Forcing max TLS
+    protocol version 1.2 on both the control and data `QSslSocket`s
+    (`QSslConfiguration::setProtocol(QSsl::TlsV1_2)`) — a real-world
+    workaround other FTPS clients use for exactly this class of
+    strict-reuse rejection, on the theory that classic TLS 1.2
+    session-ID/ticket resumption is what `mod_tls`'s check actually
+    recognizes — does *not* work, and not for a subtle reason: with TLS
+    1.2 forced, `QSslSocket::newSessionTicketReceived()` never fires at
+    all. Confirmed directly (temporary debug instrumentation, since
+    reverted) rather than assumed. That signal is TLS-1.3-only in Qt's
+    public API — the RFC 8446 post-handshake `NewSessionTicket`/PSK
+    mechanism specifically — and neither `QSslConfiguration` nor
+    `QSslSocket` expose any equivalent for classic TLS 1.2 session-ID or
+    RFC 5077 session-ticket resumption anywhere in Qt 6.11's public
+    headers (`qsslsocket.h`, `qsslconfiguration.h` — checked directly,
+    no `nativeHandle()`/`sslHandle()`-style escape hatch to the
+    underlying OpenSSL `SSL*` either). So capping to TLS 1.2 doesn't
+    trade an unrecognized-but-attempted resumption for a
+    recognized-and-working one — it removes resumption entirely, since
+    Qt gives the application no way to drive TLS 1.2's session
+    cache/session-ID resumption at all. Confirmed via proftpd's own
+    `TLSLog`: the control handshake correctly negotiates TLSv1.2, but
+    the data connection is still rejected with the identical "client
+    did not reuse TLS session" message. The change was fully reverted;
+    `FtpBackend.cpp` is back to its original state. A genuine fix would
+    require bypassing `QSslSocket` for the data connection's handshake
+    entirely (raw OpenSSL socket/BIO plumbing to call
+    `SSL_set_session()`/`SSL_get1_session()` directly) — a much larger
+    change than a config tweak, not yet attempted, and worth weighing
+    against just documenting this as a permanent limitation against
+    reuse-strict servers.
   - **vsftpd: a full round trip (list, download, upload, content
     verified both ways) now genuinely completes — but only with
     `require_ssl_reuse` left off, and that's a deliberate, documented
