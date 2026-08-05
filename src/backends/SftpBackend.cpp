@@ -440,8 +440,12 @@ bool SftpBackend::ensureSession()
 
 void SftpBackend::connectToHost()
 {
-    if (ensureSession())
+    emit commandLogged(QStringLiteral("Status: Connecting to %1:%2")
+                        .arg(m_credentials.host).arg(m_credentials.port));
+    if (ensureSession()) {
+        emit commandLogged(QStringLiteral("Status: Connected, authentication succeeded"));
         emit connected();
+    }
 }
 
 void SftpBackend::listDirectory(const QString &path)
@@ -450,6 +454,7 @@ void SftpBackend::listDirectory(const QString &path)
         return;
 
     const QString target = path.isEmpty() ? m_currentPath : path;
+    emit commandLogged(QStringLiteral("Command: LIST %1").arg(target));
     LIBSSH2_SFTP_HANDLE *handle =
         libssh2_sftp_opendir(m_sftp, target.toUtf8().constData());
     if (!handle) {
@@ -551,6 +556,10 @@ void SftpBackend::downloadFile(const QString &remotePath, const QString &localPa
 {
     if (!ensureSession())
         return;
+
+    emit commandLogged(resumeOffset > 0
+        ? QStringLiteral("Command: GET %1 -> %2 (resuming at byte %3)").arg(remotePath, localPath).arg(resumeOffset)
+        : QStringLiteral("Command: GET %1 -> %2").arg(remotePath, localPath));
 
     m_cancelRequested.storeRelaxed(false);   // reset — backend persists across transfers
     m_pauseRequested.storeRelaxed(false);
@@ -663,6 +672,10 @@ void SftpBackend::uploadFile(const QString &localPath, const QString &remotePath
 {
     if (!ensureSession())
         return;
+
+    emit commandLogged(resumeOffset > 0
+        ? QStringLiteral("Command: PUT %1 -> %2 (resuming at byte %3)").arg(localPath, remotePath).arg(resumeOffset)
+        : QStringLiteral("Command: PUT %1 -> %2").arg(localPath, remotePath));
 
     m_cancelRequested.storeRelaxed(false);   // reset — backend persists across transfers
     m_pauseRequested.storeRelaxed(false);
@@ -782,6 +795,8 @@ void SftpBackend::deleteEntry(const QString &path, bool isDirectory)
     if (!ensureSession())
         return;
 
+    emit commandLogged(QStringLiteral("Command: %1 %2").arg(isDirectory ? QStringLiteral("RMDIR") : QStringLiteral("DELETE"), path));
+
     // Empty-only for directories — libssh2_sftp_rmdir() already has
     // exactly this behavior at the protocol level (SFTP's RMDIR fails
     // with LIBSSH2_FX_DIR_NOT_EMPTY rather than recursing), matching
@@ -805,6 +820,8 @@ void SftpBackend::renameEntry(const QString &oldPath, const QString &newPath)
 {
     if (!ensureSession())
         return;
+
+    emit commandLogged(QStringLiteral("Command: RENAME %1 -> %2").arg(oldPath, newPath));
 
     // The libssh2_sftp_rename() convenience macro already bakes in
     // OVERWRITE | ATOMIC | NATIVE flags — overwrite-on-conflict matches
@@ -830,6 +847,8 @@ void SftpBackend::createDirectory(const QString &path)
     if (!ensureSession())
         return;
 
+    emit commandLogged(QStringLiteral("Command: MKDIR %1").arg(path));
+
     // 0755-equivalent (owner rwx, group/other rx) — a reasonable default
     // or a fresh remote folder; the server's own umask may still narrow
     // this further, same as it would for any other SFTP client's mkdir.
@@ -849,6 +868,8 @@ void SftpBackend::createFile(const QString &path)
 {
     if (!ensureSession())
         return;
+
+    emit commandLogged(QStringLiteral("Command: MKFILE %1").arg(path));
 
     // LIBSSH2_FXF_EXCL: fail if something's already there rather than
     // silently truncating an existing file — matches

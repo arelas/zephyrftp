@@ -106,6 +106,13 @@ signals:
     // itself.
     void filesDropped(FilePaneWidget *sourcePane, const QList<RemoteEntry> &entries);
 
+    // Straight passthrough of whatever backend is currently set (see
+    // setBackend()) — stays a stable signal across backend swaps
+    // (Connect/Disconnect) so MainWindow only has to wire it up once per
+    // pane, to the Commands pane's single log, rather than re-wiring it
+    // every time a pane's backend changes.
+    void commandLogged(const QString &line);
+
 private slots:
     void onDirectoryListed(const QString &path, const QList<RemoteEntry> &entries);
     void onRowDoubleClicked(const QModelIndex &index);

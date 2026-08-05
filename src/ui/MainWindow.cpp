@@ -4,6 +4,7 @@
 #include "SiteManagerDialog.h"
 #include "PreferencesDialog.h"
 #include "TransferQueueWidget.h"
+#include "CommandsPaneWidget.h"
 #include "HostKeyVerifier.h"
 #include "CertificateVerifier.h"
 #include "IconTheme.h"
@@ -47,12 +48,20 @@ MainWindow::MainWindow(QWidget *parent)
     m_hostKeyVerifier = new HostKeyVerifier(this);
     m_certificateVerifier = new CertificateVerifier(this);
 
-    // Ordered before buildMenuBar(): the View menu's "Transfers" entry is
-    // m_transfersDock->toggleViewAction(), so the dock has to exist first.
+    // Ordered before buildMenuBar(): the View menu's "Transfers"/"Commands"
+    // entries are each dock's own toggleViewAction(), so both docks have
+    // to exist first.
     buildTransferQueue();
+    buildCommandsPane();
     buildMenuBar();
     buildToolbar();
     buildLayout();
+
+    // Wired here (after buildLayout() creates both panes and
+    // buildCommandsPane() creates m_commandsPane) rather than inside
+    // either build*() method — this is the one place both already exist.
+    connect(m_leftPane, &FilePaneWidget::commandLogged, m_commandsPane, &CommandsPaneWidget::appendLine);
+    connect(m_rightPane, &FilePaneWidget::commandLogged, m_commandsPane, &CommandsPaneWidget::appendLine);
 
     // Restored last, after every dock/toolbar exists for restoreState() to
     // apply to — an empty QByteArray (first run, or settings.json not
@@ -132,6 +141,13 @@ void MainWindow::buildMenuBar()
     QAction *transfersToggle = m_transfersDock->toggleViewAction();
     transfersToggle->setText(tr("&Transfers"));
     viewMenu->addAction(transfersToggle);
+
+    // Same toggleViewAction() pattern as Transfers above — same fix for
+    // the same dead end (a floating dock's WM-drawn close button has no
+    // other way back without this).
+    QAction *commandsToggle = m_commandsDock->toggleViewAction();
+    commandsToggle->setText(tr("&Commands"));
+    viewMenu->addAction(commandsToggle);
 
     QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
     QAction *aboutAction = helpMenu->addAction(tr("&About ZephyrFTP..."));
@@ -215,6 +231,28 @@ void MainWindow::buildTransferQueue()
                                  | QDockWidget::DockWidgetClosable);
     m_transfersDock->setWidget(new TransferQueueWidget(m_transferManager, m_transfersDock));
     addDockWidget(Qt::BottomDockWidgetArea, m_transfersDock);
+}
+
+void MainWindow::buildCommandsPane()
+{
+    m_commandsDock = new QDockWidget(tr("Commands"), this);
+    m_commandsDock->setObjectName(QStringLiteral("CommandsDock"));
+    // Same features/reasoning as m_transfersDock — see its own comment.
+    m_commandsDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable
+                                 | QDockWidget::DockWidgetClosable);
+    m_commandsPane = new CommandsPaneWidget(m_commandsDock);
+    m_commandsDock->setWidget(m_commandsPane);
+    // Top, not Bottom (where Transfers goes) — this is what actually puts
+    // it between the toolbar and the file panes (the central widget),
+    // matching FileZilla's own message-log placement.
+    addDockWidget(Qt::TopDockWidgetArea, m_commandsDock);
+
+    // Without this, QPlainTextEdit's default sizeHint gives the dock a
+    // tall first-run height that crowds out the file panes below it —
+    // only matters for a brand new settings.json; restoreState() further
+    // down overrides this on every later launch with whatever size (if
+    // any) the person actually left it at.
+    resizeDocks({m_commandsDock}, {120}, Qt::Vertical);
 }
 
 void MainWindow::onLeftFileActivated(const QString &name)

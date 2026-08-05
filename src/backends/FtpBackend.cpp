@@ -192,7 +192,9 @@ FtpBackend::FtpReply FtpBackend::readReply()
         QByteArray raw = m_controlSocket->readLine();
         while (raw.endsWith('\n') || raw.endsWith('\r'))
             raw.chop(1);
-        return QString::fromUtf8(raw);
+        const QString stripped = QString::fromUtf8(raw);
+        emit commandLogged(stripped);   // Commands pane — see RemoteBackend's doc comment
+        return stripped;
     };
 
     bool ok = true;
@@ -236,9 +238,16 @@ FtpBackend::FtpReply FtpBackend::sendCommand(const QString &text)
     if (!m_controlSocket || m_controlSocket->state() != QAbstractSocket::ConnectedState)
         return FtpReply{};
 
-    // Never logged anywhere, including in any future debug output added
-    // to this function — text can be a PASS command carrying the raw
-    // password.
+    // The Commands pane's log gets a masked copy — text can be a PASS
+    // command carrying the raw password, which must never reach a
+    // visible (and copy-pasteable) UI log. Masking is purely for that
+    // log line below; the real, unmasked `text` is still what's actually
+    // written to the wire two lines down.
+    QString logText = text;
+    if (logText.startsWith(QStringLiteral("PASS "), Qt::CaseInsensitive))
+        logText = QStringLiteral("PASS ***");
+    emit commandLogged(QStringLiteral("> %1").arg(logText));
+
     const QByteArray line = (text + QStringLiteral("\r\n")).toUtf8();
     m_controlSocket->write(line);
     if (!m_controlSocket->waitForBytesWritten(15000))

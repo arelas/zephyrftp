@@ -46,6 +46,18 @@ QTreeView::item:hover, QTableWidget::item:hover {
     background-color: rgba(255, 255, 255, 10);   /* --zf-surface-hover */
 }
 
+/* Commands pane's live log — same dark palette as QTreeView/QTableWidget
+   above, since without this a QPlainTextEdit falls back to the platform
+   style's default (light) palette, clashing with the rest of the app. */
+QPlainTextEdit {
+    background-color: #14171c;   /* --zf-bg */
+    color: #dfe4ea;               /* --zf-text-primary */
+    border: none;
+    selection-background-color: rgba(91, 141, 239, 26);   /* --zf-blue-tint */
+    selection-color: #dfe4ea;
+    font-size: 12px;
+}
+
 QHeaderView::section {
     background-color: #1a1d23;   /* --zf-surface */
     color: #8790a0;               /* --zf-text-secondary */

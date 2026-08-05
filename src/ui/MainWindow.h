@@ -9,6 +9,7 @@ class HostKeyVerifier;
 class CertificateVerifier;
 class QDockWidget;
 class AppSettings;
+class CommandsPaneWidget;
 struct ConnectionRequest;
 
 // Top-level window: two FilePaneWidgets side by side (commander style),
@@ -56,6 +57,7 @@ private:
     void buildToolbar();
     void buildMenuBar();
     void buildTransferQueue();
+    void buildCommandsPane();
 
     // Shared by both the plain "Connect..." dialog and the Site Manager's
     // Connect button — picks the backend matching the request's protocol,
@@ -91,6 +93,15 @@ private:
     // WM-drawn close button on its own top-level window, which the app had
     // no way to undo) always has a way back.
     QDockWidget *m_transfersDock = nullptr;
+    // Built in buildCommandsPane(), same reasoning/ordering as
+    // m_transfersDock above (needs to exist before buildMenuBar() builds
+    // the View menu's "Commands" entry from its toggleViewAction()).
+    // Docked above the central widget by default — between the toolbar
+    // and the file panes, a live read-only log of both panes' protocol
+    // traffic (see RemoteBackend::commandLogged's doc comment), modeled
+    // on FileZilla's message log.
+    QDockWidget *m_commandsDock = nullptr;
+    CommandsPaneWidget *m_commandsPane = nullptr;
     // Owned for the app's whole lifetime, constructed before both panes
     // (they take a pointer to it) and before buildMenuBar() (Preferences
     // needs it too). Persists to settings.json on every change — see

@@ -113,6 +113,18 @@ public slots:
 signals:
     void connected();
     void connectionFailed(const QString &reason);
+
+    // One line of human-readable protocol/operation traffic, for the
+    // Commands pane's live log (read-only, modeled on FileZilla's message
+    // log — see MainWindow's doc comment on m_commandsDock). FtpBackend
+    // emits genuine raw command/reply lines straight off the control
+    // connection (with PASS's argument masked — see its own emission site
+    // for why); SftpBackend has no textual wire protocol to show, so it
+    // emits a human-readable description of each high-level operation
+    // instead (matching FileZilla's own "Command: get ..." style for
+    // SFTP). LocalBackend never emits this at all — nothing protocol-like
+    // happens for a purely local pane.
+    void commandLogged(const QString &line);
     void directoryListed(const QString &path, const QList<RemoteEntry> &entries);
     void transferProgress(const QString &fileName, qint64 bytesDone, qint64 bytesTotal);
     void transferFinished(const QString &fileName);

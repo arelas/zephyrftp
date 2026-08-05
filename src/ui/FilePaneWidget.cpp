@@ -104,6 +104,8 @@ void FilePaneWidget::setBackend(RemoteBackend *backend, QThread *thread)
     });
     connect(m_backend, &RemoteBackend::fileOperationFailed,
             this, &FilePaneWidget::onFileOperationFailed);
+    connect(m_backend, &RemoteBackend::commandLogged,
+            this, &FilePaneWidget::commandLogged);
 
     if (m_backendThread)
         m_backendThread->start();
