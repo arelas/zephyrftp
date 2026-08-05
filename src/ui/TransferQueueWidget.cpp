@@ -8,6 +8,7 @@
 #include <QMenu>
 #include <QAction>
 #include <QProgressBar>
+#include <QLabel>
 
 namespace {
 constexpr int ColName = 0;
@@ -159,15 +160,23 @@ void TransferQueueWidget::onItemAdded(const TransferItem &item)
 
     auto *nameItem = new QTableWidgetItem(item.fileName);
     nameItem->setData(IdRole, item.id);
+    nameItem->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     m_table->setItem(row, ColName, nameItem);
 
-    auto *dirItem = new QTableWidgetItem();
-    dirItem->setIcon(statusIcon(item));
-    dirItem->setToolTip(directionText(item.direction));
-    m_table->setItem(row, ColDirection, dirItem);
+    // A QLabel, not a QTableWidgetItem with just an icon set — an item's
+    // Qt::TextAlignmentRole only affects its TEXT, not its decoration, so
+    // an icon-only item is always drawn hugging the left edge no matter
+    // what alignment is requested. A label filling the cell (same
+    // technique as the progress bar below) actually centers it.
+    auto *dirLabel = new QLabel(m_table);
+    dirLabel->setAlignment(Qt::AlignCenter);
+    dirLabel->setPixmap(statusIcon(item).pixmap(20, 20));
+    dirLabel->setToolTip(directionText(item.direction));
+    m_table->setCellWidget(row, ColDirection, dirLabel);
 
     auto *statusItem = new QTableWidgetItem(statusText(item));
     statusItem->setForeground(statusTextColor(item.status));
+    statusItem->setTextAlignment(Qt::AlignCenter);
     m_table->setItem(row, ColStatus, statusItem);
 
     // Inline progress bars (design decision #6 in the package's README:
@@ -179,9 +188,23 @@ void TransferQueueWidget::onItemAdded(const TransferItem &item)
     progressBar->setValue(0);
     progressBar->setTextVisible(false);
     progressBar->setFixedHeight(6);   // matches .zf-progress-track's 6px height
-    m_table->setCellWidget(row, ColProgress, progressBar);
 
-    m_table->setItem(row, ColSpeed, new QTableWidgetItem());
+    // setCellWidget() stretches its widget to fill the entire cell rect,
+    // but a setFixedHeight() widget can't actually grow into that height —
+    // it just sits pinned at the rect's top edge instead. Wrapping it in a
+    // container with stretch above and below centers it vertically in the
+    // (much taller) row instead.
+    auto *progressContainer = new QWidget(m_table);
+    auto *progressLayout = new QVBoxLayout(progressContainer);
+    progressLayout->setContentsMargins(0, 0, 0, 0);
+    progressLayout->addStretch();
+    progressLayout->addWidget(progressBar);
+    progressLayout->addStretch();
+    m_table->setCellWidget(row, ColProgress, progressContainer);
+
+    auto *speedItem = new QTableWidgetItem();
+    speedItem->setTextAlignment(Qt::AlignCenter);
+    m_table->setItem(row, ColSpeed, speedItem);
 }
 
 void TransferQueueWidget::onItemUpdated(const TransferItem &item)
@@ -190,14 +213,17 @@ void TransferQueueWidget::onItemUpdated(const TransferItem &item)
     if (row < 0)
         return;
 
-    m_table->item(row, ColDirection)->setIcon(statusIcon(item));
-    m_table->item(row, ColDirection)->setToolTip(directionText(item.direction));
+    if (auto *dirLabel = qobject_cast<QLabel *>(m_table->cellWidget(row, ColDirection))) {
+        dirLabel->setPixmap(statusIcon(item).pixmap(20, 20));
+        dirLabel->setToolTip(directionText(item.direction));
+    }
 
     auto *statusItem = m_table->item(row, ColStatus);
     statusItem->setText(statusText(item));
     statusItem->setForeground(statusTextColor(item.status));
 
-    auto *progressBar = qobject_cast<QProgressBar *>(m_table->cellWidget(row, ColProgress));
+    auto *progressContainer = m_table->cellWidget(row, ColProgress);
+    auto *progressBar = progressContainer ? progressContainer->findChild<QProgressBar *>() : nullptr;
     if (!progressBar)
         return;
 

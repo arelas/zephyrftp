@@ -157,7 +157,13 @@ void FilePaneWidget::buildUi()
     m_view->setAlternatingRowColors(true);
     m_view->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_view->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    m_view->header()->setSectionResizeMode(ColName, QHeaderView::Stretch);
+    // Interactive like every other column — Stretch here used to make
+    // Name's width purely a side effect of dragging the OTHER columns'
+    // handles, with no handle of its own to drag. QTreeView's own
+    // stretchLastSection default (Permissions, the actual last column)
+    // is what should absorb leftover width instead.
+    m_view->header()->setSectionResizeMode(ColName, QHeaderView::Interactive);
+    m_view->setColumnWidth(ColName, 220);
     connect(m_view, &QTreeView::doubleClicked, this, &FilePaneWidget::onRowDoubleClicked);
     m_view->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_view, &QTreeView::customContextMenuRequested, this, &FilePaneWidget::showContextMenu);
