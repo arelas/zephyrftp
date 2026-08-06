@@ -41,7 +41,7 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
     setWindowTitle(tr("ZephyrFTP v%1").arg(QStringLiteral(APP_VERSION)));
-    resize(1100, 650);   // fallback default — overridden below if a previous session saved real geometry
+    resize(1100, 780);   // fallback default — overridden below if a previous session saved real geometry
 
     m_settings = new AppSettings(this);
     m_transferManager = new TransferManager(this);
@@ -69,6 +69,12 @@ MainWindow::MainWindow(QWidget *parent)
     // isEmpty() guard is needed here.
     restoreGeometry(m_settings->windowGeometry());
     restoreState(m_settings->windowState());
+
+    // Explicit override of whatever dock visibility restoreState() just
+    // restored — see AppSettings::showTransfersOnStart()'s doc comment on
+    // why this needs to win rather than merely seed a first-run default.
+    m_transfersDock->setVisible(m_settings->showTransfersOnStart());
+    m_commandsDock->setVisible(m_settings->showCommandsOnStart());
 
     connect(m_transferManager, &TransferManager::transferSucceeded,
             this, &MainWindow::onTransferSucceeded);
@@ -231,6 +237,13 @@ void MainWindow::buildTransferQueue()
                                  | QDockWidget::DockWidgetClosable);
     m_transfersDock->setWidget(new TransferQueueWidget(m_transferManager, m_transfersDock));
     addDockWidget(Qt::BottomDockWidgetArea, m_transfersDock);
+
+    // Without this, the table's own sizeHint claims more first-run height
+    // than the pane actually needs. ~200px matches buildCommandsPane()'s
+    // own target below (title bar + content), so on a brand new
+    // settings.json both docks start out the same height rather than one
+    // dwarfing the other.
+    resizeDocks({m_transfersDock}, {200}, Qt::Vertical);
 }
 
 void MainWindow::buildCommandsPane()
@@ -251,8 +264,9 @@ void MainWindow::buildCommandsPane()
     // tall first-run height that crowds out the file panes below it —
     // only matters for a brand new settings.json; restoreState() further
     // down overrides this on every later launch with whatever size (if
-    // any) the person actually left it at.
-    resizeDocks({m_commandsDock}, {120}, Qt::Vertical);
+    // any) the person actually left it at. 200px matches buildTransferQueue()'s
+    // own target above, so Commands and Transfers start out the same height.
+    resizeDocks({m_commandsDock}, {200}, Qt::Vertical);
 }
 
 void MainWindow::onLeftFileActivated(const QString &name)

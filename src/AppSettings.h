@@ -39,6 +39,17 @@ public:
     QByteArray windowState() const { return m_windowState; }
     void setWindowState(const QByteArray &state);
 
+    // Whether each dock should be visible on a fresh launch. Applied by
+    // MainWindow after restoreState() so it's an explicit override of
+    // whatever dock-visibility restoreState() itself restored — turning
+    // this off is the only way to make a dock stay closed permanently,
+    // since otherwise reopening it once (even by accident) would make
+    // restoreState() reopen it on every later launch too.
+    bool showTransfersOnStart() const { return m_showTransfersOnStart; }
+    void setShowTransfersOnStart(bool value);
+    bool showCommandsOnStart() const { return m_showCommandsOnStart; }
+    void setShowCommandsOnStart(bool value);
+
 signals:
     void showHiddenFilesChanged(bool value);
 
@@ -51,4 +62,6 @@ private:
     Protocol m_defaultProtocol = Protocol::Sftp;
     QByteArray m_windowGeometry;
     QByteArray m_windowState;
+    bool m_showTransfersOnStart = true;
+    bool m_showCommandsOnStart = true;
 };

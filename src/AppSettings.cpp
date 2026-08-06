@@ -41,6 +41,22 @@ void AppSettings::setWindowState(const QByteArray &state)
     save();
 }
 
+void AppSettings::setShowTransfersOnStart(bool value)
+{
+    if (m_showTransfersOnStart == value)
+        return;
+    m_showTransfersOnStart = value;
+    save();
+}
+
+void AppSettings::setShowCommandsOnStart(bool value)
+{
+    if (m_showCommandsOnStart == value)
+        return;
+    m_showCommandsOnStart = value;
+    save();
+}
+
 QString AppSettings::filePath()
 {
     return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
@@ -64,6 +80,8 @@ void AppSettings::load()
         obj.value(QStringLiteral("windowGeometry")).toString().toLatin1());
     m_windowState = QByteArray::fromBase64(
         obj.value(QStringLiteral("windowState")).toString().toLatin1());
+    m_showTransfersOnStart = obj.value(QStringLiteral("showTransfersOnStart")).toBool(true);
+    m_showCommandsOnStart = obj.value(QStringLiteral("showCommandsOnStart")).toBool(true);
 }
 
 void AppSettings::save() const
@@ -77,6 +95,8 @@ void AppSettings::save() const
     obj[QStringLiteral("defaultProtocol")] = protocolToKey(m_defaultProtocol);
     obj[QStringLiteral("windowGeometry")] = QString::fromLatin1(m_windowGeometry.toBase64());
     obj[QStringLiteral("windowState")] = QString::fromLatin1(m_windowState.toBase64());
+    obj[QStringLiteral("showTransfersOnStart")] = m_showTransfersOnStart;
+    obj[QStringLiteral("showCommandsOnStart")] = m_showCommandsOnStart;
 
     QFile file(filePath());
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))

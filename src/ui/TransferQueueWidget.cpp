@@ -28,6 +28,11 @@ TransferQueueWidget::TransferQueueWidget(TransferManager *manager, QWidget *pare
     m_table->setHorizontalHeaderLabels(
         {tr("File"), tr("Direction"), tr("Status"), tr("Progress"), tr("Speed")});
     m_table->horizontalHeader()->setSectionResizeMode(ColName, QHeaderView::Stretch);
+    // The header row centers section labels by default (Fusion style);
+    // "File" reads oddly centered over a column of left-aligned filenames
+    // — Direction/Status/Progress/Speed stay centered, matching the
+    // centered icon/text/widget each of those columns actually shows.
+    m_table->horizontalHeaderItem(ColName)->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionMode(QAbstractItemView::NoSelection);
     m_table->verticalHeader()->setVisible(false);
