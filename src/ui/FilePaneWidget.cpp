@@ -17,6 +17,7 @@
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QFileInfo>
+#include <algorithm>
 
 namespace {
 constexpr int ColName = 0;
@@ -278,12 +279,31 @@ void FilePaneWidget::rebuildModel()
     // applies the same rule to every backend uniformly.
     const bool showHidden = m_settings && m_settings->showHiddenFiles();
 
+    QList<RemoteEntry> filtered;
+    for (const RemoteEntry &e : m_lastRawEntries) {
+        if (showHidden || !e.name.startsWith(QLatin1Char('.')))
+            filtered.append(e);
+    }
+
+    // Default listing order: folders first, then name descending — applied
+    // uniformly here rather than left to each backend, since only
+    // LocalBackend ever sorted its own results (QDir::DirsFirst |
+    // QDir::Name); SftpBackend/FtpBackend returned whatever order the
+    // server happened to list in. Sorted by the entry's real name, not
+    // nameItem's later "[folder]" display text, for the same reason
+    // entryForRow() looks entries up by real name below. A later header
+    // click overrides this via the ordinary column-sort machinery further
+    // down — this only decides what a FRESH listing looks like before
+    // that's ever happened.
+    std::stable_sort(filtered.begin(), filtered.end(), [](const RemoteEntry &a, const RemoteEntry &b) {
+        if (a.isDir != b.isDir)
+            return a.isDir;
+        return a.name.localeAwareCompare(b.name) > 0;
+    });
+
     m_currentEntries.clear();
     m_model->removeRows(0, m_model->rowCount());
-    for (const RemoteEntry &e : m_lastRawEntries) {
-        if (!showHidden && e.name.startsWith(QLatin1Char('.')))
-            continue;
-
+    for (const RemoteEntry &e : filtered) {
         m_currentEntries.append(e);
         auto *nameItem = new QStandardItem(e.isDir ? QStringLiteral("[%1]").arg(e.name) : e.name);
         nameItem->setIcon(iconForEntry(e));
