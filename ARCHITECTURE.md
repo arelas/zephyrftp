@@ -922,6 +922,13 @@ to drive FileZilla itself for a same-desktop comparison.
   `saveState()` blobs, base64-encoded into the same JSON file, read once
   at startup and written once from `MainWindow::closeEvent()` — no live
   propagation needed for either, unlike `showHiddenFiles`.
+  `showTransfersOnStart`/`showCommandsOnStart` (both default true) are
+  applied as an explicit override right after `restoreState()` runs in
+  `MainWindow`'s constructor — deliberately overriding whatever dock
+  visibility `restoreState()` itself just restored, since otherwise
+  reopening a dock once (even by accident) would make the saved layout
+  reopen it on every later launch too; turning the preference off is the
+  only way to keep a dock closed permanently.
   **A real, verified bug, not a hypothetical one:** the first working
   version filtered `showHiddenFiles` only in `FilePaneWidget`, on the
   theory that every backend returns dotfiles raw and the UI layer
@@ -954,10 +961,12 @@ to drive FileZilla itself for a same-desktop comparison.
   *filtered* set, while a separate `m_lastRawEntries` holds everything
   the last `listDirectory()` actually returned, so a live toggle can
   re-filter and redraw instantly without a pointless backend round-trip.
-- `PreferencesDialog` (`src/ui/PreferencesDialog.h/.cpp`) — small by
-  design: a "Show hidden files" checkbox and a default-protocol combo box
-  are the only two real settings that exist to show, and nothing else
-  was invented just to fill the dialog out. Every field persists to
+- `PreferencesDialog` (`src/ui/PreferencesDialog.h/.cpp`) — a "Show
+  hidden files" checkbox, a default-protocol combo box, and two more
+  checkboxes added later ("Show Transfers pane on start", "Show Commands
+  pane on start", both mirroring `AppSettings`' matching fields above) —
+  the only real settings that exist to show, and nothing invented just to
+  fill the dialog out. Every field persists to
   `AppSettings` the instant it changes (same immediate-persist
   convention `SiteManagerDialog` already uses — "no separate Save step to
   forget"), so the only button is Close. Verified with the same
@@ -1028,6 +1037,22 @@ to drive FileZilla itself for a same-desktop comparison.
   `resetHistory()` clears all of this on every `setBackend()` call — a
   new backend (Connect/Disconnect) is a fresh navigation context, not a
   continuation of the old one's history.
+  Clicking a column header sorts by that column (`setSortingEnabled(true)`
+  on the `QTreeView`; Qt's own header handling gives ascending/descending
+  toggle on a second click for free), with a real `SortDataRole` numeric
+  key on Size specifically — its display text is an unpadded byte count,
+  which sorts wrong lexicographically ("10" before "9"). Before any header
+  is clicked, `rebuildModel()` now applies one consistent default order
+  across all three backends (folders first, then name descending, by the
+  entry's real name rather than the later `"[folder]"`-wrapped display
+  text) — previously only `LocalBackend` sorted its own results at all,
+  making the "default" order silently backend-dependent. Sorting
+  surfaced a real latent bug: every row-lookup method
+  (`onRowDoubleClicked`, `selectedEntryName()`, `selectedFileNames()`,
+  `selectedEntries()`) used to index `m_currentEntries` by row position, an
+  invariant sorting breaks outright once rows move. Fixed by tagging each
+  row's Name item with the entry's real name (`SortDataRole`) and adding
+  `entryForRow()` to look entries up by that instead of position.
 - `FileTreeView` — thin `QTreeView` subclass adding cross-pane
   drag-and-drop. Qt's built-in item-view DnD pulls its `QMimeData` from
   the *model* (`QAbstractItemView::startDrag()` calls
@@ -1175,6 +1200,62 @@ to drive FileZilla itself for a same-desktop comparison.
   `TransferManager`'s sampled rate, formatted B/s -> KB/s -> MB/s. All
   state still lives in the manager — this is a view, not a second source
   of truth.
+  Both Name (file panes) and File (here) started out in `Stretch` resize
+  mode, which meant neither had a working drag handle of its own — its
+  width was purely a side effect of dragging some OTHER column's handle.
+  Both are now `Interactive` with a sensible starting width; here that
+  needed an explicit `setStretchLastSection(true)` alongside it, since
+  unlike `QTreeView` (the file panes), `QTableWidget` doesn't default that
+  to true — without it, Speed stayed its own narrow width and the
+  remaining header space rendered as a raw, unstyled gap, caught by
+  actually screenshotting the running app rather than assumed. Cell
+  alignment needed its own pass too: File is left-aligned, Direction/
+  Status/Speed are centered, and the inline progress bars are vertically
+  centered in their row instead of pinned to the top. Direction needed a
+  different technique than the other columns — `Qt::TextAlignmentRole`
+  only affects an item's text, not its decoration, so an icon-only item
+  ignores it entirely; that column uses a `QLabel` cell widget instead,
+  which actually centers.
+  Clicking a header sorts the queue the same way the file panes do, but
+  by a different mechanism: `QTableWidget::sortItems()` doesn't move cell
+  widgets (`setCellWidget()`) along with a sort, and Direction/Progress
+  are both cell widgets here, so it would silently pair each one with the
+  wrong row. Sorting is instead done manually — a header click sorts a
+  copy of `TransferManager::items()` by the clicked column, then fully
+  rebuilds the table via the existing `onItemAdded()`+`onItemUpdated()`
+  pair, reusing `percentFor()` (extracted from `onItemUpdated()` so the
+  Progress column's sort key and its rendered value can't drift apart).
+- `CommandsPaneWidget` (`src/ui/CommandsPaneWidget.h/.cpp`) — a live,
+  read-only log of protocol traffic, modeled on FileZilla's own message
+  log, docked between the toolbar and the file panes by default (View >
+  Commands to toggle, undockable/floatable exactly like the Transfers
+  dock). Deliberately dumb and shared: it doesn't know which pane or
+  backend a line came from, it just appends whatever text `MainWindow`
+  feeds it via `appendLine()`, wired to both panes' current
+  `RemoteBackend::commandLogged(QString)` — `FilePaneWidget` forwards
+  whichever backend is currently attached under the same signal name, so
+  `MainWindow` only wires each pane up once regardless of later
+  Connect/Disconnect swaps. Deliberately no raw-command input — letting
+  someone inject arbitrary commands into a live control connection risks
+  leaving this app's own state (current directory, an in-flight transfer)
+  out of sync with what the server actually did. `FtpBackend` emits
+  genuine raw command/reply lines straight off the control connection,
+  with `PASS`'s argument masked before logging — verified live against a
+  real vsftpd container that the actual password never reaches the log.
+  `SftpBackend` has no textual wire protocol to show, so it emits
+  human-readable descriptions of each high-level operation instead
+  (`Status: Connecting`, `Command: LIST`/`GET`/`PUT`/`RENAME`/`MKDIR`/...),
+  matching FileZilla's own approach for SFTP. `LocalBackend` never emits
+  this at all — nothing protocol-like happens for a purely local pane. A
+  one-line welcome message fills the log before any real traffic exists,
+  so the pane never opens looking blank/broken.
+  **Not covered by the ten-target test suite or any of the live-server
+  harnesses** — this component (and the column-sort/default-order changes
+  above) were checked by screenshotting the running app and by the
+  vsftpd-password-masking check described above, not by an automated
+  regression test; there's no dedicated `commands-pane-test` or
+  `sort-test` target the way most other UI-facing features in this
+  project have one.
 - `MainWindow` — two `FilePaneWidget`s in a `QSplitter`, plus a
   `QDockWidget` at the bottom holding the transfer queue. Left pane is
   always `LocalBackend`. Right pane starts on `LocalBackend`; the

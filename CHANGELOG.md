@@ -8,6 +8,129 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.3.9] — Default file panes to folders-first/name-descending; a Commands pane welcome line
+
+### Changed
+
+- **File panes now apply one consistent default sort order across all
+  three backends, instead of an order that quietly depended on which one
+  you were looking at.** Previously only `LocalBackend` sorted its own
+  results (folders first, then name); `SftpBackend`/`FtpBackend` returned
+  whatever order the server happened to list in. `rebuildModel()` now
+  sorts every listing itself — folders first, then name descending, by
+  the entry's real name rather than the later `"[folder]"`-wrapped
+  display text — before a column header click (see 0.3.8) overrides it.
+- **The Commands pane no longer starts out blank** — a one-line welcome
+  message appears before any connection has produced real protocol
+  traffic to show.
+
+## [0.3.8] — Click-to-sort on both file panes and the transfer queue
+
+### Added
+
+- **Clicking a column header now sorts that column**, on both file panes
+  (Name, Size, Modified, Permissions) and the transfer queue (File,
+  Direction, Status, Progress, Speed); clicking the same header again
+  reverses it. Size sorts numerically, not as text (its unpadded byte
+  count previously would have put "10" before "9"). The transfer queue's
+  Direction and Progress columns are Qt cell widgets, which
+  `QTableWidget::sortItems()` doesn't move along with a sort — sorting
+  there is done manually instead, rebuilding the table from a
+  freshly-sorted copy of `TransferManager::items()` rather than risking a
+  widget/row mismatch.
+- Sorting the file panes surfaced a real latent bug: row-lookup methods
+  (`onRowDoubleClicked`, `selectedEntryName`, `selectedFileNames`,
+  `selectedEntries`) all indexed a parallel entry list by row position, an
+  invariant that sorting breaks outright once rows move. Fixed by tagging
+  each row with its entry's real name and adding `entryForRow()` to look
+  entries up by that instead of position.
+
+### Fixed
+
+- **The transfer queue's File column had no working drag handle**, the
+  same bug already fixed for the file panes' Name column in 0.3.7 —
+  `Stretch` resize mode meant its width was purely a side effect of
+  dragging the OTHER columns' handles. Switched to `Interactive`; an
+  explicit `setStretchLastSection(true)` turned out to be needed
+  alongside it (unlike the file panes' `QTreeView`, `QTableWidget`
+  doesn't default that to true), caught by actually screenshotting the
+  running app rather than assumed.
+
+## [0.3.7] — Even out dock/window sizing; show-on-start prefs for Transfers/Commands
+
+### Added
+
+- **Two new preferences** (Edit > Preferences): "Show Transfers pane on
+  start" and "Show Commands pane on start," both defaulting to on.
+  Applied as an explicit override right after the window restores its
+  saved dock layout, so turning either off is the only way to keep that
+  dock closed permanently — otherwise reopening it once (even by
+  accident) would make the saved layout reopen it on every later launch
+  too.
+
+### Changed
+
+- Commands' and Transfers' first-run heights now both target ~200px
+  (previously 120px for Commands, whatever `QTableWidget`'s own
+  `sizeHint()` claimed for Transfers), and the fallback startup window
+  size grew from 1100x650 to 1100x780 to give the file panes enough room
+  underneath two 200px docks.
+- The transfer queue's "File" header is now explicitly left-aligned,
+  matching its own left-aligned cells (fixed for the cells themselves in
+  0.3.6) — the header row otherwise rides Fusion's default centered
+  label alignment.
+
+## [0.3.6] — A live Commands pane; transfer queue alignment fixes
+
+### Added
+
+- **A live Commands pane** — a real-time, read-only log of protocol
+  traffic, modeled on FileZilla's own message log, docked between the
+  toolbar and the file panes by default (View > Commands to toggle,
+  undockable/floatable like the Transfers pane). Deliberately no
+  raw-command input: letting someone inject arbitrary commands into a
+  live control connection risks leaving this app's own state (current
+  directory, an in-flight transfer) out of sync with what the server
+  actually did. `RemoteBackend` gains a `commandLogged(QString)` signal:
+  `FtpBackend` emits genuine raw command/reply lines straight off the
+  control connection, with `PASS`'s argument masked — verified live
+  against a real vsftpd container that the actual password never reaches
+  the log; `SftpBackend` has no textual wire protocol to show, so it
+  emits human-readable descriptions of each high-level operation instead
+  (`Status: Connecting`, `Command: LIST`/`GET`/`PUT`/`RENAME`/`MKDIR`/...),
+  matching FileZilla's own approach for SFTP.
+
+### Fixed
+
+- **The file panes' Name column had no working drag handle** — it was
+  left in `Stretch` resize mode while every other column was
+  `Interactive`, so its width was purely a side effect of dragging the
+  OTHER columns' handles. Switched to `Interactive` with a sensible
+  starting width; `QTreeView`'s own `stretchLastSection` default
+  (Permissions, the real last column) now absorbs leftover space instead.
+- **Transfer queue cell alignment**: File is now explicitly left-aligned,
+  Direction/Status/Speed are centered, and inline progress bars are
+  vertically centered in their row instead of pinned to the top. The
+  Direction column needed a different fix than the other two —
+  `Qt::TextAlignmentRole` only affects an item's text, not its
+  decoration, so an icon-only item ignored it entirely; switched that
+  column to a `QLabel` cell widget instead, which actually centers.
+
+### Investigated
+
+- **The FTPS TLS-1.2-cap fix for proftpd's strict session-reuse check was
+  tried and confirmed to be a dead end.** Capping max TLS protocol
+  version to 1.2 on both the control and data `QSslSocket`s was the
+  leading hypothesis for satisfying proftpd's strict TLS-session-reuse
+  check, but Qt's `newSessionTicketReceived()`/session-ticket API turns
+  out to be TLS-1.3-only in the public API — confirmed directly via
+  temporary debug instrumentation, not assumed. With TLS 1.2 forced, that
+  signal never fires at all, so resumption is removed entirely rather
+  than fixed; proftpd's own `TLSLog` still rejects the data connection
+  identically. The code change was fully reverted — this entry just
+  records the finding so the same dead end isn't retried. See
+  ARCHITECTURE.md's Known Gaps for the full writeup.
+
 ## [0.3.5] — Fix the AppImage release upload sweeping up build tools too
 
 ### Fixed
@@ -597,12 +720,26 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.3.9...HEAD
+[0.3.9]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.9
+[0.3.8]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.8
+[0.3.7]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.7
+[0.3.6]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.6
 [0.3.5]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.5
 [0.3.4]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.4
 [0.3.3]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.3
 [0.3.2]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.2
 [0.3.1]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.1
+[0.3.0]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.0
+[0.2.16]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.16
+[0.2.15]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.15
+[0.2.14]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.14
+[0.2.13]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.13
+[0.2.12]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.12
+[0.2.11]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.11
+[0.2.10]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.10
+[0.2.9]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.9
+[0.2.8]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.8
 [0.2.7]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.7
 [0.2.6]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.6
 [0.2.5]: https://github.com/arelas/zephyrftp/releases/tag/v0.2.5
