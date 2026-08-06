@@ -4,7 +4,7 @@ A dual-pane SFTP client for Windows and Linux — browse your local files
 and a remote server side by side, then drag, drop, or double-click to
 move things between them. Think FileZilla or WinSCP, built fresh in Qt6.
 
-**Current version: 0.3.5 — alpha.** Real functionality, but real gaps
+**Current version: 0.3.9 — alpha.** Real functionality, but real gaps
 too — see [Known limitations](#known-limitations) before relying on
 this for anything you can't afford to get wrong. [Releases](https://github.com/arelas/zephyrftp/releases)
 has downloadable Windows and Linux builds; [CHANGELOG.md](CHANGELOG.md)
@@ -68,15 +68,24 @@ tracks what's changed between them.
   transfer to a server and pick it back up later without starting over,
   cancel something outright, or retry something that failed, all from
   one place.
+- **A live Commands pane** — a real-time, read-only log of protocol
+  traffic for both panes, modeled on FileZilla's own message log, docked
+  between the toolbar and the file panes by default.
+- **Click a column header to sort, click it again to reverse** — Name,
+  Size, Modified, or Permissions on the file panes; File, Direction,
+  Status, Progress, or Speed on the transfer queue. File panes default to
+  folders first, then name descending; the transfer queue defaults to the
+  order things were added.
 - **Dark theme**, built around a small set of colors that mean the same
   thing everywhere in the app (green = connect/upload/success, red =
   disconnect/delete/error, blue = navigation/download, amber = caution)
   so you can read the state of things at a glance.
 - **Preferences** (Edit menu) — a "Show hidden files" toggle for both
-  panes, and a default protocol for new connections. Window size and
-  panel layout (including the Transfers dock, if you've moved or
-  detached it) are also remembered across restarts now, with no setting
-  required.
+  panes, a default protocol for new connections, and whether the
+  Transfers and Commands panes should be visible on start (both default
+  to yes). Window size and panel layout (including either dock, if
+  you've moved, resized, or detached it) are also remembered across
+  restarts now, with no setting required.
 
 ## Download
 
