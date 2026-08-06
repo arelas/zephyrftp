@@ -522,18 +522,21 @@ what each test actually proves and why it exists.
 ### An eleventh, separately-tracked target: `sort-and-commands-test`
 
 Added after the "ten" above had already become a fixed, documented count
-in this file, CLAUDE.md, and `.github/workflows/build.yml`'s hardcoded
-per-job target lists — self-contained and `EXCLUDE_FROM_ALL` like the ten
-(no external server, no `podman`), but deliberately kept as an explicit
-eleventh rather than triggering a rename sweep of every "ten-target"
-reference across those files. Covers `CommandsPaneWidget`'s log and
-`FilePaneWidget`'s forwarding of `RemoteBackend::commandLogged` (via a
-minimal fake backend, same technique `transfer-pause-test`'s
+in this file and CLAUDE.md — self-contained and `EXCLUDE_FROM_ALL` like
+the ten (no external server, no `podman`), but deliberately kept as an
+explicit eleventh rather than triggering a rename sweep of every
+"ten-target" reference across those files. Covers `CommandsPaneWidget`'s
+log and `FilePaneWidget`'s forwarding of `RemoteBackend::commandLogged`
+(via a minimal fake backend, same technique `transfer-pause-test`'s
 `FakePausableBackend` uses), and the file panes' default sort order,
 numeric Size sort, and `entryForRow()`'s row-independence after a real
 `QTreeView::sortByColumn()` call — see `src/sort_and_commands_test.cpp`'s
 own header comment and ARCHITECTURE.md's `CommandsPaneWidget` entry for
-the full detail. Not yet wired into `build.yml` — run it locally:
+the full detail. **CI now builds and runs it too** — all four
+`.github/workflows/build.yml` jobs' "Build test suite"/"Run test suite"
+steps include it alongside the ten, even though it isn't folded into
+that "ten" count in the prose here or in CLAUDE.md. Run it locally the
+same way:
 
 ```
 cmake --build build --target sort-and-commands-test

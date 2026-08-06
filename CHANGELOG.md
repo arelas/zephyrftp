@@ -18,9 +18,10 @@ in the README), so anything may still change between 0.x releases.
   folders-first/name-descending sort order, a real numeric Size sort, and
   `entryForRow()`'s row-independence after that sort. Deliberately kept
   as an explicit eleventh target rather than folded into "the ten"
-  CONTRIBUTING.md/CLAUDE.md/CI already treat as a fixed, documented
-  count — see CONTRIBUTING.md's "Running the test suites" section for
-  how to build and run it.
+  CONTRIBUTING.md/CLAUDE.md already treat as a fixed, documented count —
+  see CONTRIBUTING.md's "Running the test suites" section for how to
+  build and run it. **All four `build.yml` jobs now build and run it
+  too**, alongside (not folded into) the ten.
 
 ## [0.3.9] — Default file panes to folders-first/name-descending; a Commands pane welcome line
 

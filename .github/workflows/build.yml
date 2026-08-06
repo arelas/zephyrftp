@@ -67,15 +67,19 @@ jobs:
       - name: Build app
         run: cmake --build build-win --target zephyrftp -- -j$(nproc)
 
-      # All ten EXCLUDE_FROM_ALL test targets — see CONTRIBUTING.md's
-      # "All ten need to actually pass, not just build" rule. Built here
-      # as .exe's; actually run (not just linked) in the next-but-one step.
+      # The ten EXCLUDE_FROM_ALL test targets CONTRIBUTING.md's "All ten
+      # need to actually pass, not just build" rule covers, plus
+      # sort-and-commands-test — an eleventh, separately-tracked target
+      # (see CONTRIBUTING.md's own subsection on it) that CI now also
+      # builds and runs even though it isn't folded into that "ten" count
+      # in the docs. Built here as .exe's; actually run (not just linked)
+      # in the next-but-one step.
       - name: Build test suite
         run: >
           cmake --build build-win --target
           smoke-test transfer-queue-test site-store-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
-          conflict-resolution-test ftp-parsing-test protocol-selection-test
+          conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test
           -- -j$(nproc)
 
       # windeployqt isn't packaged for this cross toolchain at all (and
@@ -159,6 +163,8 @@ jobs:
           rm -rf /tmp/zephyrftp_proto_config
           XDG_CONFIG_HOME=/tmp/zephyrftp_proto_config xvfb-run -a wine ./protocol-selection-test.exe
 
+          xvfb-run -a wine ./sort-and-commands-test.exe
+
       # Single-config generator (mingw64-cmake defaults to Unix
       # Makefiles) — unlike the old MSVC/Ninja multi-config setup, the
       # exe's path is deterministic, no need to search for it.
@@ -217,7 +223,7 @@ jobs:
           cmake --build build --target
           smoke-test transfer-queue-test site-store-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
-          conflict-resolution-test ftp-parsing-test protocol-selection-test
+          conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test
           -- -j$(nproc)
 
       # Runs directly, no wine/xvfb — these are native Linux binaries, and
@@ -263,6 +269,8 @@ jobs:
 
           rm -rf /tmp/zephyrftp_proto_config
           XDG_CONFIG_HOME=/tmp/zephyrftp_proto_config ./protocol-selection-test
+
+          ./sort-and-commands-test
 
       # Just the binary — this is the "plain tarball" approach, not a
       # bundled/portable build: it dynamically links against system
@@ -342,7 +350,7 @@ jobs:
           cmake --build build --target
           smoke-test transfer-queue-test site-store-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
-          conflict-resolution-test ftp-parsing-test protocol-selection-test
+          conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test
           -- -j$(nproc)
 
       # Same reasoning as build-linux's own test-suite step: a genuinely
@@ -389,6 +397,8 @@ jobs:
 
           rm -rf /tmp/zephyrftp_proto_config
           XDG_CONFIG_HOME=/tmp/zephyrftp_proto_config ./protocol-selection-test
+
+          ./sort-and-commands-test
 
       - name: Build .rpm package
         run: |
@@ -447,7 +457,7 @@ jobs:
           cmake --build build --target
           smoke-test transfer-queue-test site-store-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
-          conflict-resolution-test ftp-parsing-test protocol-selection-test
+          conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test
           -- -j$(nproc)
 
       # Same reasoning as build-linux-rpm's own test-suite step: a
@@ -490,6 +500,8 @@ jobs:
 
           rm -rf /tmp/zephyrftp_proto_config
           XDG_CONFIG_HOME=/tmp/zephyrftp_proto_config ./protocol-selection-test
+
+          ./sort-and-commands-test
 
       - name: Build AppImage
         run: |
