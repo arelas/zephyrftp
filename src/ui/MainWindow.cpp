@@ -199,8 +199,10 @@ void MainWindow::buildLayout()
     auto *splitter = new QSplitter(Qt::Horizontal, this);
 
     // Both panes start out on LocalBackend so the app is immediately
-    // usable as a two-pane local file manager. The right pane's backend
-    // gets swapped for an SftpBackend by onConnectTriggered() below.
+    // usable as a two-pane local file manager. Either pane's backend can
+    // later be swapped for a remote one — via its own path-bar icon menu
+    // (onPaneConnectRequested and friends below), or, for the right pane
+    // specifically, the global toolbar's Connect/Sites (onConnectTriggered).
     // m_settings passed to both so a live "show hidden files" toggle in
     // Preferences updates whichever pane(s) are showing at the time.
     m_leftPane = new FilePaneWidget(new LocalBackend(), splitter, m_settings);
@@ -218,6 +220,16 @@ void MainWindow::buildLayout()
     connect(m_rightPane, &FilePaneWidget::filesActivated, this, &MainWindow::onRightFilesActivated);
     connect(m_leftPane, &FilePaneWidget::filesDropped, this, &MainWindow::onFilesDropped);
     connect(m_rightPane, &FilePaneWidget::filesDropped, this, &MainWindow::onFilesDropped);
+
+    // Either pane's own path-bar icon menu can request a connect/site-
+    // manager/disconnect on ITSELF — both panes wired to the same three
+    // slots, which take the requesting pane directly from the signal.
+    connect(m_leftPane, &FilePaneWidget::connectRequested, this, &MainWindow::onPaneConnectRequested);
+    connect(m_rightPane, &FilePaneWidget::connectRequested, this, &MainWindow::onPaneConnectRequested);
+    connect(m_leftPane, &FilePaneWidget::siteManagerRequested, this, &MainWindow::onPaneSiteManagerRequested);
+    connect(m_rightPane, &FilePaneWidget::siteManagerRequested, this, &MainWindow::onPaneSiteManagerRequested);
+    connect(m_leftPane, &FilePaneWidget::disconnectRequested, this, &MainWindow::onPaneDisconnectRequested);
+    connect(m_rightPane, &FilePaneWidget::disconnectRequested, this, &MainWindow::onPaneDisconnectRequested);
 }
 
 void MainWindow::buildTransferQueue()
@@ -351,6 +363,34 @@ void MainWindow::onPreferencesTriggered()
 
 void MainWindow::onConnectTriggered()
 {
+    // Toolbar/Connection-menu path — always the right pane, preserving
+    // existing behavior (see startConnection()'s own comment on why this
+    // stays a fixed shortcut rather than gaining a "which pane" concept).
+    connectViaDialog(m_rightPane);
+}
+
+void MainWindow::onSiteManagerTriggered()
+{
+    siteManagerViaDialog(m_rightPane);
+}
+
+void MainWindow::onPaneConnectRequested(FilePaneWidget *pane)
+{
+    connectViaDialog(pane);
+}
+
+void MainWindow::onPaneSiteManagerRequested(FilePaneWidget *pane)
+{
+    siteManagerViaDialog(pane);
+}
+
+void MainWindow::onPaneDisconnectRequested(FilePaneWidget *pane)
+{
+    disconnectPane(pane);
+}
+
+void MainWindow::connectViaDialog(FilePaneWidget *targetPane)
+{
     ConnectionDialog dialog(this);
     // setProtocol() already exists specifically for protocol-selection-test
     // to drive the dialog through all three states — reused here to apply
@@ -374,10 +414,10 @@ void MainWindow::onConnectTriggered()
         return;
     }
 
-    startConnection(request);
+    startConnection(request, targetPane);
 }
 
-void MainWindow::onSiteManagerTriggered()
+void MainWindow::siteManagerViaDialog(FilePaneWidget *targetPane)
 {
     SiteManagerDialog dialog(this);
     if (dialog.exec() != QDialog::Accepted)
@@ -385,11 +425,11 @@ void MainWindow::onSiteManagerTriggered()
 
     // SiteManagerDialog has already validated the host and prompted for
     // any password/passphrase by the time it accepts — nothing left to
-    // check here, unlike onConnectTriggered above.
-    startConnection(dialog.connectionRequestToConnect());
+    // check here, unlike connectViaDialog() above.
+    startConnection(dialog.connectionRequestToConnect(), targetPane);
 }
 
-void MainWindow::startConnection(const ConnectionRequest &request)
+void MainWindow::startConnection(const ConnectionRequest &request, FilePaneWidget *targetPane)
 {
     // No parent on the backend: it's about to be moved to a worker thread,
     // and Qt refuses to reparent an object across thread boundaries.
@@ -455,15 +495,22 @@ void MainWindow::startConnection(const ConnectionRequest &request)
     });
 
     statusBar()->showMessage(tr("Connecting to %1...").arg(request.host()));
-    m_rightPane->setBackend(backend, thread);
+    targetPane->setBackend(backend, thread);
 }
 
 void MainWindow::onDisconnectTriggered()
 {
+    // Toolbar/Connection-menu path — always the right pane, same fixed-
+    // shortcut reasoning as onConnectTriggered() above.
+    disconnectPane(m_rightPane);
+}
+
+void MainWindow::disconnectPane(FilePaneWidget *targetPane)
+{
     // Swap back to a plain LocalBackend. setBackend() handles tearing down
     // whatever was there before — including, if it was an SftpBackend, the
     // thread quit()/wait()/delete sequence.
-    m_rightPane->setBackend(new LocalBackend(), nullptr);
+    targetPane->setBackend(new LocalBackend(), nullptr);
     statusBar()->showMessage(tr("Disconnected"), 3000);
 }
 
@@ -476,12 +523,15 @@ void MainWindow::closeEvent(QCloseEvent *event)
     m_settings->setWindowGeometry(saveGeometry());
     m_settings->setWindowState(saveState());
 
-    // Same teardown as Disconnect (see MainWindow.h's doc comment on
-    // why this needs to happen at all): if the right pane is still on a
-    // thread-owning backend, this blocks briefly while that thread's
-    // quit()/wait() completes — same tradeoff Disconnect already has
-    // mid-transfer, not a new one introduced here.
-    m_rightPane->setBackend(new LocalBackend(), nullptr);
+    // Same teardown as Disconnect (see MainWindow.h's doc comment on why
+    // this needs to happen at all) — for BOTH panes now, since either can
+    // hold a thread-owning backend, not just the right one. Each call
+    // blocks briefly if that pane's thread needs to quit()/wait(); same
+    // tradeoff Disconnect already has mid-transfer, not a new one
+    // introduced here. The transient "Disconnected" status-bar message
+    // this also produces is harmless and ignorable during shutdown.
+    disconnectPane(m_leftPane);
+    disconnectPane(m_rightPane);
     QMainWindow::closeEvent(event);
 }
 

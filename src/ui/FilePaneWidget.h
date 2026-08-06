@@ -113,11 +113,30 @@ signals:
     // every time a pane's backend changes.
     void commandLogged(const QString &line);
 
+    // "Connect...", "Sites...", "Disconnect" chosen from this pane's own
+    // path-bar icon menu (see onPathBarIconClicked()) — this pane's own
+    // UI-intent signals, mirroring how fileActivated/filesActivated etc.
+    // already work: FilePaneWidget prompts/menus locally but never
+    // constructs a concrete backend itself, MainWindow does that. Carries
+    // `this` explicitly (rather than relying on sender()) so MainWindow's
+    // slots can take the target pane directly as a parameter.
+    void connectRequested(FilePaneWidget *pane);
+    void siteManagerRequested(FilePaneWidget *pane);
+    void disconnectRequested(FilePaneWidget *pane);
+
 private slots:
     void onDirectoryListed(const QString &path, const QList<RemoteEntry> &entries);
     void onRowDoubleClicked(const QModelIndex &index);
     void onPathBarReturnPressed();
     void showContextMenu(const QPoint &pos);
+
+    // Opens a small menu (Connect.../Sites.../Disconnect) anchored under
+    // the path bar's leading icon — the per-pane equivalent of the global
+    // toolbar's Connect/Sites/Disconnect, letting EITHER pane connect, not
+    // just whichever one the toolbar happens to target. Deliberately reuses
+    // this already-present icon rather than adding a new button/menu —
+    // see updatePathBarIcon()'s own comment for why it's a natural fit.
+    void onPathBarIconClicked();
 
     // Connected to the backend's fileOperationFailed signal in
     // setBackend() — surfaces delete/rename/create-file/create-folder

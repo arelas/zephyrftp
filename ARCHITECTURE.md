@@ -1053,6 +1053,26 @@ to drive FileZilla itself for a same-desktop comparison.
   invariant sorting breaks outright once rows move. Fixed by tagging each
   row's Name item with the entry's real name (`SortDataRole`) and adding
   `entryForRow()` to look entries up by that instead of position.
+  **Either pane can now connect independently**, not just the right one —
+  `updatePathBarIcon()`'s existing leading icon on the path bar (already
+  there, previously just a static local/remote indicator) is now
+  clickable: `onPathBarIconClicked()` opens a small menu (Connect.../
+  Sites.../Disconnect, Disconnect disabled while already local) and emits
+  one of three new signals (`connectRequested`/`siteManagerRequested`/
+  `disconnectRequested`, each carrying `this`) rather than doing anything
+  backend-related itself — same shape as the file-management prompts
+  above (prompt/menu locally, dispatch structurally), preserving the rule
+  that `MainWindow::startConnection()` is the only place in the UI layer
+  that names a concrete backend type. Deliberately reuses this
+  already-present icon instead of adding a new toolbar button or menu
+  item — the global toolbar's own Connect/Sites/Disconnect remain a
+  fixed shortcut to the right pane (see `MainWindow`'s entry below for
+  why), so the path-bar icon is the only way to connect the *left* pane,
+  or to reconnect/disconnect either pane individually without reaching
+  for the toolbar. No explicit signal disconnect is needed when the
+  backend changes — `updatePathBarIcon()` already deletes and recreates
+  the leading `QAction` on every backend swap, which tears down its
+  connections along with it.
 - `FileTreeView` — thin `QTreeView` subclass adding cross-pane
   drag-and-drop. Qt's built-in item-view DnD pulls its `QMimeData` from
   the *model* (`QAbstractItemView::startDrag()` calls
@@ -1070,14 +1090,57 @@ to drive FileZilla itself for a same-desktop comparison.
   (one item at a time — SftpBackend holds a single libssh2 session, and
   concurrent transfers on the same session aren't safe without more
   synchronization than this app has yet). `enqueue()` figures out
-  direction (local->remote / remote->local / local-copy / unsupported
-  remote-to-remote) from each pane's `isLocalFilesystem()`, then dispatches
-  to whichever backend actually owns the "remote" side of the operation.
+  direction (local->remote / remote->local / local-copy / remote-to-remote)
+  from each pane's `isLocalFilesystem()`, then dispatches to whichever
+  backend actually owns the "remote" side of the operation.
   Reconnects its progress/finished/failed signal listeners to whichever
   backend is executing the current item — `RemoteBackend` objects persist
   across multiple transfers, so `connectToBackend()` explicitly disconnects
   the previous backend before wiring up the next to avoid stacking
-  duplicate connections. `cancelItem()`/`retryItem()` (right-click in
+  duplicate connections.
+  **`RemoteToRemote` (server-to-server) is staged through a local temp
+  file** — neither backend has a direct way to move a file straight to
+  another server, so `dispatchActiveItem()` runs it in two phases:
+  `TransferPhase::Downloading` (source -> a temp file under
+  `<TempLocation>/zephyrftp-staging/`, named by the item's own unique id
+  so concurrent items can't collide) then `TransferPhase::Uploading` (that
+  same temp file -> destination). The phase transition is the interesting
+  part: `onBackendFinished()` checks for `RemoteToRemote` + `Downloading`
+  *before* its normal "mark Done" logic, and if that's what just finished,
+  resets `bytesDone`/`bytesTotal` to 0 (a fresh 0-100% for the upload half,
+  not a continuation of the download half's numbers — `TransferQueueWidget`
+  reflects this with "Downloading (1/2)"/"Uploading (2/2)" status text so
+  the reset doesn't read as a bug), calls `connectToBackend()` a **second
+  time** for the same active item to re-point `m_currentBackend` at the
+  destination, and re-enters `dispatchActiveItem()` directly rather than
+  going through `startNext()`/a fresh conflict check (already done once
+  for this item). This second `connectToBackend()` call is also *why*
+  `cancelItem()` needs no special-casing for this direction — it already
+  only ever acts through whatever `m_currentBackend` currently is, and
+  that's kept correctly re-pointed across the phase boundary.
+  `cleanupTempFile()` deletes the staging file (a no-op for every other
+  direction) from three call sites: `onBackendFinished()`'s success path
+  (only after the *upload* half completes), and `onBackendFailed()`
+  (covers a phase-1 failure, a phase-2 failure — including the
+  already-downloaded temp file — and cancellation during either phase,
+  since cancellation surfaces through this same path). `retryItem()`
+  additionally resets `phase` back to `Downloading` and clears
+  `tempFilePath` for this direction specifically — without that, retrying
+  an item that failed during the upload half would stay at
+  `phase == Uploading` and try to re-upload a temp file `cleanupTempFile()`
+  already deleted, instead of correctly restarting from the download half.
+  **Cancel-only for v1** — `TransferQueueWidget`'s `pauseCapableDirection`
+  deliberately excludes `RemoteToRemote`; supporting pause would mean
+  preserving which phase was active, the resume offset within it, and the
+  temp file itself across the pause, which this pass doesn't attempt (see
+  Known gaps). Verified by `remote-to-remote-test`
+  (`src/remote_to_remote_test.cpp`) against two independent fake backends —
+  direction/phase assignment, the phase transition and `m_currentBackend`
+  re-pointing, temp-file cleanup on success and on cancellation during
+  either phase, and the `retryItem()` phase-reset all covered — plus a
+  manual run against two real local SFTP servers (see Known gaps for
+  exactly what that did and didn't confirm).
+  `cancelItem()`/`retryItem()` (right-click in
   `TransferQueueWidget`) round out the queue: cancelling a not-yet-started
   item just marks it `Cancelled` directly; cancelling the active one calls
   `RemoteBackend::requestCancel()` — a plain thread-safe method (not a
@@ -1274,19 +1337,34 @@ to drive FileZilla itself for a same-desktop comparison.
   across every place that number appears; see CONTRIBUTING.md's "Running
   the test suites" section for how to build and run it.
 - `MainWindow` — two `FilePaneWidget`s in a `QSplitter`, plus a
-  `QDockWidget` at the bottom holding the transfer queue. Left pane is
-  always `LocalBackend`. Right pane starts on `LocalBackend`; the
-  toolbar's "Connect..." action (via `ConnectionDialog`) and "Sites..."
-  action (via `SiteManagerDialog`) both funnel into a single
-  `startConnection(const ConnectionRequest &)` — the only place in the UI
-  layer that switches on `Protocol` to pick a concrete backend type
-  (`SftpBackend` for `Protocol::Sftp`, `FtpBackend` for `Protocol::Ftp`/
-  `Protocol::Ftps`), moves it to a worker `QThread`, and hands it to the
-  right pane — rather than duplicating that setup in two places or in two
-  protocol-specific paths. "Disconnect" swaps back to `LocalBackend`. The menu bar's "Connection" menu (`buildMenuBar()`,
-  next to Help) mirrors these same three toolbar actions — same
-  `QAction`-triggered slots, no separate logic — for keyboard/menu
-  access alongside the toolbar buttons rather than instead of them.
+  `QDockWidget` at the bottom holding the transfer queue. Both panes start
+  on `LocalBackend`; **either can now become remote independently**, not
+  just the right one. The toolbar's "Connect..." action (via
+  `ConnectionDialog`) and "Sites..." action (via `SiteManagerDialog`) both
+  funnel into a single `startConnection(const ConnectionRequest &request,
+  FilePaneWidget *targetPane)` — the only place in the UI layer that
+  switches on `Protocol` to pick a concrete backend type (`SftpBackend`
+  for `Protocol::Sftp`, `FtpBackend` for `Protocol::Ftp`/`Protocol::Ftps`),
+  moves it to a worker `QThread`, and hands it to `targetPane` — rather
+  than duplicating that setup in two places or in two protocol-specific
+  paths. The toolbar/menu-bar path always passes `m_rightPane` (thin
+  wrappers, `connectViaDialog()`/`siteManagerViaDialog()`, own the actual
+  dialog construction so both the toolbar and the per-pane path below can
+  share it) — kept as a fixed shortcut to the common case rather than
+  needing a "which pane is active" concept, which doesn't exist anywhere
+  else in this codebase and would be more machinery than the benefit (a
+  slightly more consistent toolbar) is worth. Each pane's OWN path-bar
+  icon (see `FilePaneWidget`'s entry above) is the general, symmetric way
+  to target either pane specifically — `onPaneConnectRequested`/
+  `onPaneSiteManagerRequested`/`onPaneDisconnectRequested` take the
+  requesting pane straight from the signal and call the same
+  `connectViaDialog()`/`siteManagerViaDialog()`/`disconnectPane()` helpers
+  with it. "Disconnect" (toolbar, or a pane's own menu) swaps that pane
+  back to `LocalBackend` via `disconnectPane()`. The menu bar's
+  "Connection" menu (`buildMenuBar()`, next to Help) mirrors the toolbar's
+  three (right-pane) actions — same `QAction`-triggered slots, no separate
+  logic — for keyboard/menu access alongside the toolbar buttons rather
+  than instead of them.
   Double-clicking a file in either pane calls
   `TransferManager::enqueue()` with that pane as source and the other as
   destination; `TransferManager::transferSucceeded` triggers a refresh of
@@ -1329,6 +1407,14 @@ to drive FileZilla itself for a same-desktop comparison.
   the worker thread is stuck in a non-interruptible call) now also
   applies at close time — not a new risk, just the same one closing a
   gap where it hadn't been applied yet.
+  **Since either pane can now hold a thread-owning backend, `closeEvent()`
+  calls `disconnectPane()` on BOTH `m_leftPane` and `m_rightPane`** — the
+  original fix above only ever covered the right pane, since that was the
+  only one that could be connected at the time. Manually re-confirmed
+  against two real local SFTP servers (both panes genuinely connected,
+  real worker threads, real sockets): closing the window doesn't crash —
+  see the `TransferManager`/Known gaps entries for the rest of what that
+  same manual pass did and didn't cover.
 
 ## Design system
 
@@ -1830,10 +1916,63 @@ along the way — worth knowing about if it ever needs touching again.
   test key has none), and a key where the conventional `.pub` sibling is
   missing (the documented fallback path for that case remains
   unverified).
-- **Remote-to-remote transfers are unsupported**, not silently dropped —
-  `TransferManager::enqueue()` marks them `Failed` immediately with an
-  explanatory message. Would need a stage-through-a-local-temp-file
-  fallback (download then upload) to support.
+- **Remote-to-remote transfers are now supported, staged through a local
+  temp file — fully verified by a deterministic fake-backend test, and
+  partially verified against real servers, with the remaining gap named
+  explicitly rather than assumed closed.** `remote-to-remote-test`
+  (`src/remote_to_remote_test.cpp`, two independent fake `RemoteBackend`s)
+  covers the orchestration completely and deterministically: direction/
+  phase assignment on `enqueue()`, the download-phase -> upload-phase
+  transition (including confirming `m_currentBackend` is genuinely
+  re-pointed at the destination backend, not left stale), a real temp file
+  actually existing on disk mid-transfer and actually being deleted after
+  success, cleanup after cancellation during *either* phase (including the
+  case where phase 1's download already completed and phase 2's partial
+  upload needs cleaning up too), and `retryItem()` correctly resetting
+  back to the download phase with a fresh temp path rather than trying to
+  re-upload a file `cleanupTempFile()` already deleted. All 21 assertions
+  pass reliably (confirmed across repeated runs, including catching and
+  fixing a real, if narrow, test-fixture race first: `QTimer::stop()`
+  doesn't retract an already-queued timeout event, so a simulated failure
+  followed immediately by a state check could occasionally see one more
+  stray progress tick land after the "failure" — fixed with an explicit
+  `m_finished` guard in the fake backend, not a production-code issue).
+  **Manually run against two real, independent local SFTP servers**
+  (`tools/local-test-servers/start-sftp-pubkey.sh`, twice, on different
+  ports) via a throwaway harness (not committed — this project's
+  established pattern for one-off verification passes): confirmed a real
+  20MB file's download half completing correctly over a real SSH
+  connection with real chunked progress reporting, the phase transition to
+  the upload half firing correctly against real I/O (`bytesDone` reset,
+  `phase` flipped, matching the fake-backend test's own findings), and —
+  in one run — a real mid-transfer cancel against a live server producing
+  the correct `Cancelled` result. **Not cleanly, repeatably confirmed**: a
+  full small-file transfer completing to `Done` end-to-end against two
+  real servers in one clean run — the throwaway harness had its own
+  sequencing bugs (not waiting for both panes' initial connections before
+  enqueueing, a destination-conflict collision from both test servers
+  sharing an identical fixture file) that were being iterated on when this
+  note was written, rather than a suspected defect in `TransferManager`
+  itself — the fake-backend test's clean, deterministic pass on the exact
+  same dispatch/phase-transition code, plus the real evidence above of
+  that same code executing correctly against genuine backend I/O, is why
+  this is recorded as "not yet cleanly confirmed" rather than "found
+  broken." A proper, committed, automated live-two-server harness
+  (mirroring `verify-sftp-pause-cancel`'s pattern — two real servers
+  already running, a `verify-*` `EXCLUDE_FROM_ALL` target driving a real
+  end-to-end transfer between them) would close this gap for good; not
+  attempted in this pass.
+  **Known, accepted gap, not attempted here:** if the app closes while a
+  `RemoteToRemote` item is still mid-flight, its temp file leaks for that
+  run — `closeEvent()` tears down both panes' backends without
+  `TransferManager` ever getting a completion/failure signal for whatever
+  was still active. Partially mitigated: `TransferManager`'s constructor
+  sweeps `zephyrftp-staging/` clean of anything left over from a
+  *previous* run on startup, so this can't accumulate indefinitely, but a
+  leak within the *same* run until the next launch is real and undefended
+  against — correctly distinguishing "genuinely orphaned" from "a
+  still-running transfer needs this a moment longer" would need more
+  machinery than this pass attempts.
 - **`SftpBackend`'s `listDirectoryForEnumeration()` and the full
   `FolderEnumerator` recursive walk are now confirmed against a real
   server, including the trickiest cases.** Same harness as the

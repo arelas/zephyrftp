@@ -75,10 +75,11 @@ int TransferQueueWidget::rowForId(int id) const
 QString TransferQueueWidget::directionText(TransferDirection direction)
 {
     switch (direction) {
-    case TransferDirection::LocalToRemote: return tr("local -> remote");
-    case TransferDirection::RemoteToLocal: return tr("remote -> local");
-    case TransferDirection::LocalToLocal:  return tr("local copy");
-    case TransferDirection::Unsupported:   return tr("unsupported");
+    case TransferDirection::LocalToRemote:  return tr("local -> remote");
+    case TransferDirection::RemoteToLocal:  return tr("remote -> local");
+    case TransferDirection::LocalToLocal:   return tr("local copy");
+    case TransferDirection::RemoteToRemote: return tr("server -> server");
+    case TransferDirection::Unsupported:    return tr("unsupported");
     }
     return {};
 }
@@ -87,7 +88,17 @@ QString TransferQueueWidget::statusText(const TransferItem &item)
 {
     switch (item.status) {
     case TransferStatus::Queued:      return tr("Queued");
-    case TransferStatus::InProgress:  return tr("Transferring");
+    case TransferStatus::InProgress:
+        // A RemoteToRemote item's progress bar/percentage resets to 0 at
+        // the phase-1->phase-2 transition (see TransferManager::
+        // onBackendFinished()) — the "(1/2)"/"(2/2)" suffix is what stops
+        // that reset from reading as a bug rather than the two distinct
+        // stages it actually is.
+        if (item.direction == TransferDirection::RemoteToRemote) {
+            return item.phase == TransferPhase::Uploading
+                ? tr("Uploading (2/2)") : tr("Downloading (1/2)");
+        }
+        return tr("Transferring");
     case TransferStatus::Paused:      return tr("Paused");
     case TransferStatus::Done:        return tr("Done");
     case TransferStatus::Failed:      return item.errorMessage.isEmpty()
@@ -123,15 +134,18 @@ QIcon TransferQueueWidget::statusIcon(const TransferItem &item)
         return IconTheme::tintedIcon(":/icons/player-pause.svg", IconTheme::Amber);
 
     // Queued or InProgress: a direction-shaped icon (the mockup doesn't
-    // cover local-to-local or unsupported directions, since it assumes
-    // only upload/download exist — arrows-left-right and alert-triangle
-    // are this app's own extensions of the same visual language).
+    // cover local-to-local, remote-to-remote, or unsupported directions,
+    // since it assumes only upload/download exist — arrows-left-right and
+    // alert-triangle are this app's own extensions of the same visual
+    // language; RemoteToRemote reuses arrows-left-right too, same "both
+    // directions" reasoning LocalToLocal already uses it for).
     QString path;
     switch (item.direction) {
-    case TransferDirection::LocalToRemote: path = ":/icons/arrow-up.svg"; break;
-    case TransferDirection::RemoteToLocal: path = ":/icons/arrow-down.svg"; break;
-    case TransferDirection::LocalToLocal:  path = ":/icons/arrows-left-right.svg"; break;
-    case TransferDirection::Unsupported:   path = ":/icons/alert-triangle.svg"; break;
+    case TransferDirection::LocalToRemote:  path = ":/icons/arrow-up.svg"; break;
+    case TransferDirection::RemoteToLocal:  path = ":/icons/arrow-down.svg"; break;
+    case TransferDirection::LocalToLocal:   path = ":/icons/arrows-left-right.svg"; break;
+    case TransferDirection::RemoteToRemote: path = ":/icons/arrows-left-right.svg"; break;
+    case TransferDirection::Unsupported:    path = ":/icons/alert-triangle.svg"; break;
     }
 
     QColor color = IconTheme::Gray;   // Queued default
@@ -139,6 +153,15 @@ QIcon TransferQueueWidget::statusIcon(const TransferItem &item)
         switch (item.direction) {
         case TransferDirection::LocalToRemote: color = IconTheme::Green; break;   // active upload
         case TransferDirection::RemoteToLocal: color = IconTheme::Blue; break;    // active download
+        case TransferDirection::RemoteToRemote:
+            // Matches statusText()'s "(1/2)"/"(2/2)" phase labels: Blue
+            // while downloading (same color RemoteToLocal uses), Green
+            // while uploading (same color LocalToRemote uses) — the icon
+            // color reinforces which half of the staging is active
+            // instead of introducing a color the two-phase text doesn't
+            // already imply.
+            color = item.phase == TransferPhase::Uploading ? IconTheme::Green : IconTheme::Blue;
+            break;
         default: color = IconTheme::Gray; break;
         }
     }
@@ -321,7 +344,13 @@ void TransferQueueWidget::showContextMenu(const QPoint &pos)
     // no-op (QFile::copy() is atomic, there's no partial progress to
     // preserve), so offering Pause for a local-to-local transfer would
     // show an action that silently does nothing. Rather than that, it's
-    // just not offered.
+    // just not offered. RemoteToRemote is deliberately excluded here too,
+    // for a different reason: cancel-only for v1 — resuming a staged
+    // two-phase transfer would need to preserve which phase was active,
+    // the resume offset within it, AND the temp file itself across the
+    // pause, meaningfully more than this pass attempts. Not an oversight;
+    // don't "fix" this into pause-capable without adding that support
+    // first (see ARCHITECTURE.md's TransferManager entry).
     const bool pauseCapableDirection =
         direction == TransferDirection::LocalToRemote || direction == TransferDirection::RemoteToLocal;
 

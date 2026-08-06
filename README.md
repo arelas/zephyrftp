@@ -16,9 +16,12 @@ tracks what's changed between them.
 
 ## Features
 
-- **Dual-pane browsing** — your computer on one side, the server on the
-  other, both visible at once. Back, forward, and up buttons beside each
-  pane's location bar, same as any file manager.
+- **Dual-pane browsing** — your computer, a server, or two servers at
+  once, side by side. Either pane can connect independently (click its
+  own path-bar icon), so you're not limited to "your computer on one
+  side, a server on the other" — connect both panes to different servers
+  and transfer between them directly. Back, forward, and up buttons
+  beside each pane's location bar, same as any file manager.
 - **File management from the right-click menu** — create a new file or
   folder, rename, or delete, on either side (your computer or the
   server). Delete works on multiple selected items at once, with a
@@ -130,7 +133,11 @@ before being attached — see ARCHITECTURE.md's "Windows and Linux builds
    your username, and either a password or a private key file. If it's a
    server you'll come back to, use **Sites** instead: same information,
    but saved for next time (a "New Site" button, and a tree on the left
-   to organize them).
+   to organize them). The toolbar always connects the right pane; click
+   either pane's own icon at the left edge of its path bar for the same
+   Connect/Sites/Disconnect choices targeting that specific pane instead
+   — this is how you connect the *left* pane, or get two servers
+   connected at once for a server-to-server transfer.
 3. **First connection to a new server?** You'll be asked to confirm its
    identity fingerprint. This is expected and normal — it's the same
    prompt any SSH client shows the first time. Confirming it once means
@@ -169,14 +176,36 @@ rather than being half-implemented:
   but a data connection to that kind of server may fail where a more
   established client would succeed. See ARCHITECTURE.md's Known gaps for
   the full technical picture.
-- **Server-to-server transfers aren't supported** — ZephyrFTP always
-  transfers between your computer and one server, not between two
-  remote servers directly.
-- **Pause only works for transfers involving a server** — you can pause
-  an upload or download to/from a server and pick it back up later, but
-  a purely local copy (between two folders on your own computer) can
-  only be cancelled and retried, not paused, since there's nothing
-  meaningful to interrupt mid-copy on a local transfer.
+- **Server-to-server transfers are now supported, but staged through a
+  local temporary file rather than moving directly between the two
+  servers.** Both panes can now connect independently — click either
+  pane's own path-bar icon for a per-pane Connect/Sites/Disconnect menu,
+  not just the toolbar's (which still targets the right pane, as a
+  shortcut). Dragging or transferring a file between two connected
+  servers downloads it to a temporary local file first, then uploads it
+  to the destination — no protocol lets one server send a file straight
+  to another, so this is the only mechanism possible. In practice this
+  means roughly twice the transfer time of a direct copy, and briefly
+  uses local disk space equal to the file's size. Verified against a
+  real fake-backend orchestration test (direction/phase handling,
+  temp-file cleanup on success and on cancellation during either half);
+  also manually confirmed against two real local SFTP servers — a real
+  multi-megabyte file's download half completed correctly with real
+  chunked progress, the transition to the upload half fired correctly,
+  and a real mid-transfer cancel against a live server produced the
+  correct result. A fully automated, repeatable live-two-server test
+  (mirroring `verify-sftp-pause-cancel`'s pattern) hasn't been built yet
+  — see ARCHITECTURE.md's Known gaps.
+- **Pause only works for transfers involving a server, and not for
+  server-to-server transfers either.** You can pause an upload or
+  download directly to/from a server and pick it back up later, but a
+  purely local copy (between two folders on your own computer) can only
+  be cancelled and retried, not paused, since there's nothing meaningful
+  to interrupt mid-copy on a local transfer — and a server-to-server
+  transfer is cancel-only for a different reason: resuming it correctly
+  would mean preserving which half (download or upload) was active, the
+  resume offset within it, and the temporary file itself across the
+  pause, which isn't implemented yet.
 
 ## For developers and tinkerers
 

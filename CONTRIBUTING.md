@@ -548,6 +548,31 @@ builds and wipes its own scratch directory (`/tmp/sort_test`) at the top
 of `main()`, same convention `transfer-queue-test`/`folder-transfer-test`
 use.
 
+### A twelfth target: `remote-to-remote-test`
+
+Same "additional, not folded into the fixed count" treatment as
+`sort-and-commands-test` above — self-contained, `EXCLUDE_FROM_ALL`, added
+to all four `build.yml` jobs. Covers `TransferManager`'s remote-to-remote
+staged-transfer orchestration (direction/phase assignment, the
+download-to-temp → upload-from-temp phase transition and
+`m_currentBackend` re-pointing, temp-file cleanup on success and on
+cancellation during either phase, and `retryItem()`'s phase reset) against
+two independent fake `RemoteBackend`s representing two different "remote"
+servers — see `src/remote_to_remote_test.cpp`'s own header comment and
+ARCHITECTURE.md's `TransferManager` entry for the full detail. Run it
+locally the same way:
+
+```
+cmake --build build --target remote-to-remote-test
+QT_QPA_PLATFORM=offscreen ./build/remote-to-remote-test
+```
+
+Needs no fixtures or environment overrides — its temp files live under
+`QStandardPaths::TempLocation`'s own `zephyrftp-staging/` subdirectory,
+same one the real app uses, cleaned up by the test itself (and by
+`TransferManager`'s own constructor, which sweeps any leftovers from a
+previous run on startup).
+
 ## Live-server verification (SFTP public-key auth, FTP/FTPS, cancel/pause/resume)
 
 The ten targets above are deliberately self-contained — no external

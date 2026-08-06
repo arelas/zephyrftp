@@ -34,8 +34,9 @@ public:
     // concerned; it's just enqueue() called many times with relative
     // paths instead of bare filenames (which already works correctly
     // unchanged, since joinPath(dir, "sub/dir/file") produces exactly
-    // the right nested path). Remote-to-remote has the same "not
-    // supported yet" limitation as single-file transfers.
+    // the right nested path). Remote-to-remote works the same way — each
+    // discovered file stages through its own local temp file via
+    // enqueue()'s RemoteToRemote handling, same as a standalone file.
     void enqueueFolder(FilePaneWidget *sourcePane, FilePaneWidget *destPane, const QString &folderName);
 
     // Cancels by id. If the item is Queued (hasn't started), just marks it
@@ -143,7 +144,30 @@ private:
     // to start uploading/downloading. Split out specifically so the file-
     // conflict check (checkExists(), async) can sit in between "an item
     // was picked to run" and "the backend was actually told to run it".
+    // Also re-entered directly (not through startNext()) by
+    // onBackendFinished() when a RemoteToRemote item transitions from its
+    // Downloading phase to its Uploading phase — see that method's own
+    // comment.
     void dispatchActiveItem();
+
+    // Local-disk staging for RemoteToRemote items — RemoteBackend has no
+    // direct server-to-server primitive, so a temp file is genuinely the
+    // only way to move a file between two remote backends.
+    //
+    // allocateTempFilePath() is called once per item, on its first
+    // dispatch (not at enqueue() time — a cancelled-while-still-Queued
+    // item should never claim a filename it won't use). Lives under
+    // QStandardPaths::TempLocation in a dedicated subdirectory, named with
+    // the item's own unique id to prevent collisions.
+    QString allocateTempFilePath(const TransferItem &item) const;
+
+    // No-op for every direction except RemoteToRemote (checked internally
+    // via item.direction/tempFilePath). Called from onBackendFinished()
+    // (phase-2 success) and onBackendFailed() (phase-1 or phase-2
+    // failure/cancellation — both surface through the same path). Safe to
+    // call even if the file was never created: QFile::remove() on a
+    // nonexistent path is a no-op.
+    void cleanupTempFile(TransferItem &item);
 
     // Connects a backend's existsChecked signal to
     // onDestinationExistsChecked() — safe to call every time a check is

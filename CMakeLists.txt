@@ -440,6 +440,33 @@ target_include_directories(sort-and-commands-test PRIVATE src)
 target_compile_definitions(sort-and-commands-test PRIVATE APP_VERSION="${PROJECT_VERSION}")
 target_link_libraries(sort-and-commands-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
 
+# --- Remote-to-remote (server-to-server) staged-transfer orchestration
+# test: direction/phase assignment, the phase-1 (download-to-temp) ->
+# phase-2 (upload-from-temp) transition and m_currentBackend re-pointing,
+# temp-file cleanup on success/cancel-mid-either-phase, and retryItem()'s
+# phase reset. Two independent fake RemoteBackends (see
+# src/remote_to_remote_test.cpp's own header comment) — no real server
+# needed. Self-contained and EXCLUDE_FROM_ALL like the ten and
+# sort-and-commands-test above, and — same reasoning as that one — kept as
+# an explicit twelfth target rather than folded into "the ten" count
+# CLAUDE.md/CONTRIBUTING.md document. RemoteBackend.h listed explicitly for
+# the same AUTOMOC/Q_OBJECT reason CONTRIBUTING.md's build gotcha describes.
+qt_add_executable(remote-to-remote-test EXCLUDE_FROM_ALL
+    src/remote_to_remote_test.cpp
+    src/AppSettings.cpp
+    src/ui/FilePaneWidget.cpp
+    src/ui/FileTreeView.cpp
+    src/ui/IconTheme.cpp
+    src/backends/LocalBackend.cpp
+    src/backends/RemoteBackend.h
+    src/transfer/TransferManager.cpp
+    src/transfer/FolderEnumerator.cpp
+    resources/icons.qrc
+    resources/theme.qrc
+)
+target_include_directories(remote-to-remote-test PRIVATE src)
+target_link_libraries(remote-to-remote-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
+
 # --- Live-server verification harnesses (NOT part of the ten-target
 # self-contained test suite above — these need an external server
 # already running, started via tools/local-test-servers/*.sh; see each

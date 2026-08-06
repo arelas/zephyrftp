@@ -8,8 +8,46 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Added
+
+- **Either pane can now connect to a remote server, not just the right
+  one** — click a pane's own path-bar icon (the same one that already
+  showed a laptop/server indicator) for a Connect/Sites/Disconnect menu
+  targeting that specific pane. The toolbar's Connect/Sites/Disconnect
+  still work exactly as before, as a shortcut to the right pane.
+- **Server-to-server transfers**, staged through a local temporary file
+  (download from the source server, then upload to the destination —
+  no protocol lets one server send a file straight to another, so this
+  is the only mechanism possible). Cancel works; pause doesn't yet, for
+  the same reason local-to-local copies can't be paused either, plus one
+  more specific to this case — see [Known limitations](README.md#known-limitations)
+  for the full explanation. Verified by a new, deterministic fake-backend
+  regression test (direction/phase handling, temp-file cleanup on success
+  and on cancellation during either half, retry correctly restarting from
+  the download half rather than the deleted upload); also manually
+  confirmed against two real local SFTP servers — see ARCHITECTURE.md's
+  `TransferManager` and Known gaps entries for exactly what that did and
+  didn't establish, including one gap (a fully clean, repeatable,
+  automated live-two-server test) intentionally left for a follow-up
+  rather than glossed over.
+
+### Fixed
+
+- **Closing the app while the LEFT pane was connected to a server would
+  have reproduced the exact crash 0.2.5 already fixed for the right
+  pane** — `closeEvent()` only ever tore down `m_rightPane`, since that
+  was the only pane that could hold a thread-owning backend before this
+  release. Now tears down both. Manually re-confirmed against two real
+  SFTP connections (one per pane): closing the window doesn't crash.
+
 ### Added (developer-facing only, no shipped behavior)
 
+- **`remote-to-remote-test`**, a new self-contained `EXCLUDE_FROM_ALL`
+  regression test for the staged remote-to-remote transfer logic above —
+  see its own entry in the user-facing Added section for what it covers.
+  Same "additional, not folded into the fixed count" treatment as
+  `sort-and-commands-test`; all four `build.yml` jobs build and run it
+  too.
 - **`sort-and-commands-test`**, a new self-contained `EXCLUDE_FROM_ALL`
   regression test covering two things that had only ever been checked by
   screenshotting the running app: `CommandsPaneWidget`'s log and

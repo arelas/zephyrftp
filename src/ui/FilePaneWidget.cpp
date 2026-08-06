@@ -223,6 +223,10 @@ void FilePaneWidget::updatePathBarIcon()
         ? IconTheme::tintedIcon(":/icons/device-laptop.svg", IconTheme::Blue)
         : IconTheme::tintedIcon(":/icons/server.svg", IconTheme::Green);
     m_pathBarLeadingIcon = m_pathBar->addAction(icon, QLineEdit::LeadingPosition);
+    // No explicit disconnect needed for the OLD icon's connection below —
+    // it's deleted a few lines up along with the QAction itself every time
+    // this method runs (backend swap), which tears down its connections too.
+    connect(m_pathBarLeadingIcon, &QAction::triggered, this, &FilePaneWidget::onPathBarIconClicked);
 }
 
 QIcon FilePaneWidget::iconForEntry(const RemoteEntry &e)
@@ -458,6 +462,38 @@ void FilePaneWidget::showContextMenu(const QPoint &pos)
         confirmAndDelete(selected);
     else if (chosen == refreshAction)
         navigateTo(currentDirectory());
+}
+
+void FilePaneWidget::onPathBarIconClicked()
+{
+    // Same icons/colors as the global toolbar's Connect/Sites/Disconnect
+    // (see MainWindow::buildToolbar()) — this is the per-pane equivalent,
+    // not a different action, so it should look like one.
+    QMenu menu(this);
+    QAction *sitesAction = menu.addAction(
+        IconTheme::tintedIcon(":/icons/server-cog.svg", IconTheme::Blue), tr("Sites..."));
+    QAction *connectAction = menu.addAction(
+        IconTheme::tintedIcon(":/icons/plug.svg", IconTheme::Green), tr("Connect..."));
+    QAction *disconnectAction = menu.addAction(
+        IconTheme::tintedIcon(":/icons/plug-connected-x.svg", IconTheme::Red), tr("Disconnect"));
+    // Present but disabled when already local, same convention
+    // showContextMenu() already uses for renameAction/deleteAction's
+    // conditional enablement — rather than hiding it outright.
+    disconnectAction->setEnabled(!m_backend->isLocalFilesystem());
+
+    QAction *chosen = menu.exec(m_pathBar->mapToGlobal(QPoint(0, m_pathBar->height())));
+
+    // No dialog construction, no backend knowledge here — purely an
+    // intent signal, same shape as promptAndCreateFile() etc. prompting
+    // locally but never constructing a concrete backend itself.
+    // MainWindow owns startConnection()/setBackend() and is the only
+    // place in the UI layer that names a concrete backend type.
+    if (chosen == sitesAction)
+        emit siteManagerRequested(this);
+    else if (chosen == connectAction)
+        emit connectRequested(this);
+    else if (chosen == disconnectAction)
+        emit disconnectRequested(this);
 }
 
 void FilePaneWidget::promptAndCreateFile()

@@ -79,7 +79,7 @@ jobs:
           cmake --build build-win --target
           smoke-test transfer-queue-test site-store-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
-          conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test
+          conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
           -- -j$(nproc)
 
       # windeployqt isn't packaged for this cross toolchain at all (and
@@ -164,6 +164,7 @@ jobs:
           XDG_CONFIG_HOME=/tmp/zephyrftp_proto_config xvfb-run -a wine ./protocol-selection-test.exe
 
           xvfb-run -a wine ./sort-and-commands-test.exe
+          xvfb-run -a wine ./remote-to-remote-test.exe
 
       # Single-config generator (mingw64-cmake defaults to Unix
       # Makefiles) — unlike the old MSVC/Ninja multi-config setup, the
@@ -223,7 +224,7 @@ jobs:
           cmake --build build --target
           smoke-test transfer-queue-test site-store-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
-          conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test
+          conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
           -- -j$(nproc)
 
       # Runs directly, no wine/xvfb — these are native Linux binaries, and
@@ -271,6 +272,7 @@ jobs:
           XDG_CONFIG_HOME=/tmp/zephyrftp_proto_config ./protocol-selection-test
 
           ./sort-and-commands-test
+          ./remote-to-remote-test
 
       # Just the binary — this is the "plain tarball" approach, not a
       # bundled/portable build: it dynamically links against system
@@ -350,7 +352,7 @@ jobs:
           cmake --build build --target
           smoke-test transfer-queue-test site-store-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
-          conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test
+          conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
           -- -j$(nproc)
 
       # Same reasoning as build-linux's own test-suite step: a genuinely
@@ -399,6 +401,7 @@ jobs:
           XDG_CONFIG_HOME=/tmp/zephyrftp_proto_config ./protocol-selection-test
 
           ./sort-and-commands-test
+          ./remote-to-remote-test
 
       - name: Build .rpm package
         run: |
@@ -457,7 +460,7 @@ jobs:
           cmake --build build --target
           smoke-test transfer-queue-test site-store-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
-          conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test
+          conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
           -- -j$(nproc)
 
       # Same reasoning as build-linux-rpm's own test-suite step: a
@@ -502,6 +505,7 @@ jobs:
           XDG_CONFIG_HOME=/tmp/zephyrftp_proto_config ./protocol-selection-test
 
           ./sort-and-commands-test
+          ./remote-to-remote-test
 
       - name: Build AppImage
         run: |

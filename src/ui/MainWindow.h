@@ -32,7 +32,8 @@ protected:
     // Destroyed while thread is still running"). Confirmed via a real
     // coredump, not theorized: the crash's stack trace is
     // `~QWidget -> QObjectPrivate::deleteChildren -> ~QThread` end to
-    // end. Swapping the right pane back to a plain LocalBackend reuses
+    // end. Swapping EITHER pane back to a plain LocalBackend (either can
+    // now hold a thread-owning backend, not just the right one) reuses
     // FilePaneWidget::setBackend()'s already-correct teardown
     // (deleteLater() + thread->quit() + thread->wait()) rather than
     // duplicating that logic here.
@@ -47,6 +48,16 @@ private slots:
     void onConnectTriggered();
     void onSiteManagerTriggered();
     void onDisconnectTriggered();
+
+    // Fired from a pane's OWN path-bar icon menu (see
+    // FilePaneWidget::onPathBarIconClicked()) — the per-pane equivalent of
+    // the three slots above, letting either pane connect, not just
+    // whichever one the global toolbar targets. Each takes the requesting
+    // pane directly, carried by the signal itself.
+    void onPaneConnectRequested(FilePaneWidget *pane);
+    void onPaneSiteManagerRequested(FilePaneWidget *pane);
+    void onPaneDisconnectRequested(FilePaneWidget *pane);
+
     void onRefreshTriggered();
     void onTransferSucceeded();
     void onAboutTriggered();
@@ -59,12 +70,26 @@ private:
     void buildTransferQueue();
     void buildCommandsPane();
 
-    // Shared by both the plain "Connect..." dialog and the Site Manager's
-    // Connect button — picks the backend matching the request's protocol,
-    // spins it up on a worker QThread, and hands it to the right pane.
-    // One tested path for "actually establish a connection" rather than
-    // one per protocol per entry point.
-    void startConnection(const ConnectionRequest &request);
+    // Shared by the plain "Connect..." dialog, the Site Manager's Connect
+    // button, AND now either pane's own path-bar icon menu — picks the
+    // backend matching the request's protocol, spins it up on a worker
+    // QThread, and hands it to targetPane. One tested path for "actually
+    // establish a connection" rather than one per protocol per entry point.
+    void startConnection(const ConnectionRequest &request, FilePaneWidget *targetPane);
+
+    // Thin wrappers around startConnection() that own the dialog
+    // construction/validation — parameterized by target pane so the global
+    // toolbar (always m_rightPane, preserving existing behavior) and a
+    // pane's own path-bar menu (that pane specifically) can share the same
+    // dialog logic instead of duplicating it.
+    void connectViaDialog(FilePaneWidget *targetPane);
+    void siteManagerViaDialog(FilePaneWidget *targetPane);
+
+    // Swaps targetPane back to a plain LocalBackend + a status-bar message
+    // — shared by the toolbar's Disconnect, a pane's own path-bar menu, and
+    // closeEvent() (which now needs to tear down BOTH panes, not just the
+    // one the toolbar happens to target).
+    void disconnectPane(FilePaneWidget *targetPane);
 
     // Shared by onLeftFilesActivated/onRightFilesActivated/onFilesDropped
     // — all three end up with the same "here's a selection of files and/or
@@ -75,8 +100,14 @@ private:
     void enqueueEntries(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
                          const QList<RemoteEntry> &entries);
 
-    FilePaneWidget *m_leftPane = nullptr;   // local, by default
-    FilePaneWidget *m_rightPane = nullptr;  // remote, once connected
+    // Both start on LocalBackend; either can become remote via its own
+    // path-bar icon menu (FilePaneWidget::connectRequested and friends) or,
+    // for m_rightPane specifically, the global toolbar's Connect/Sites —
+    // kept as a fixed right-pane shortcut for the common case rather than
+    // needing a "which pane" concept of its own (see startConnection()'s
+    // comment).
+    FilePaneWidget *m_leftPane = nullptr;
+    FilePaneWidget *m_rightPane = nullptr;
     TransferManager *m_transferManager = nullptr;
     // Lives on the GUI thread for the app's whole lifetime; SftpBackend
     // instances (on their own worker threads) call into this one via a

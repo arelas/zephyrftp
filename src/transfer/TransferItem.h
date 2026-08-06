@@ -8,7 +8,29 @@ enum class TransferDirection {
     LocalToRemote,
     RemoteToLocal,
     LocalToLocal,
-    Unsupported   // remote-to-remote — not implemented, see TransferManager
+    // Staged through a local temp file (download from source, then upload
+    // to destination) — RemoteBackend has no direct server-to-server
+    // primitive, so this is the only mechanism possible. See
+    // TransferManager::dispatchActiveItem()/onBackendFinished() for the
+    // two-phase dispatch, and TransferPhase below for which half of the
+    // staging an in-progress item is currently in. Cancel-only for now —
+    // pause/resume isn't offered for this direction (see
+    // TransferQueueWidget's pauseCapableDirection).
+    RemoteToRemote,
+    Unsupported   // reserved for a genuine future dispatch failure — no
+                  // longer reachable for remote-to-remote specifically
+};
+
+// Which half of a RemoteToRemote item's local-temp-file staging is
+// currently active. Meaningless (None) for every other direction — kept as
+// a separate axis from TransferStatus rather than overloading it, since
+// status (Queued/InProgress/...) and phase are genuinely orthogonal: a
+// RemoteToRemote item mid-download and mid-upload are both simply
+// InProgress at the status level.
+enum class TransferPhase {
+    None,
+    Downloading,   // phase 1: source -> tempFilePath
+    Uploading      // phase 2: tempFilePath -> destination
 };
 
 enum class TransferStatus {
@@ -53,6 +75,13 @@ struct TransferItem {
     // an active transfer; not meaningful/updated for Paused or Done.
     qint64 speedBytesPerSec = 0;
     QString errorMessage;
+
+    // Only meaningful for direction == RemoteToRemote — see TransferPhase's
+    // own doc comment and TransferManager::allocateTempFilePath()/
+    // cleanupTempFile(). Both stay at their defaults for every other
+    // direction.
+    TransferPhase phase = TransferPhase::None;
+    QString tempFilePath;
 
     FilePaneWidget *sourcePane = nullptr;
     FilePaneWidget *destPane = nullptr;

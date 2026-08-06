@@ -8,6 +8,9 @@
 #include <QPushButton>
 #include <QFileInfo>
 #include <QWidget>
+#include <QStandardPaths>
+#include <QDir>
+#include <QFile>
 
 namespace {
 QString joinPath(const QString &dir, const QString &name)
@@ -19,6 +22,21 @@ QString joinPath(const QString &dir, const QString &name)
 TransferManager::TransferManager(QObject *parent)
     : QObject(parent)
 {
+    // Best-effort cleanup of a PREVIOUS run's leftover staging files — if
+    // the app was closed (or crashed) while a RemoteToRemote item was
+    // mid-flight, that item's temp file has no other chance to be deleted
+    // (closeEvent() tears down both panes' backends without
+    // TransferManager ever getting a completion/failure signal for
+    // whatever was still running). The whole zephyrftp-staging/ directory
+    // is disposable and per-app, so clearing it wholesale on startup is
+    // safe — nothing in it is ever meant to survive a restart, and this
+    // instance hasn't allocated anything into it yet. Does NOT address a
+    // leak within the SAME run (closing mid-transfer still loses that run's
+    // temp file until the next launch) — a documented, accepted gap, not
+    // attempted here; see ARCHITECTURE.md's Known Gaps.
+    const QString stagingDir =
+        QStandardPaths::writableLocation(QStandardPaths::TempLocation) + QStringLiteral("/zephyrftp-staging");
+    QDir(stagingDir).removeRecursively();
 }
 
 void TransferManager::enqueue(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
@@ -42,13 +60,17 @@ void TransferManager::enqueue(FilePaneWidget *sourcePane, FilePaneWidget *destPa
     } else if (!srcLocal && dstLocal) {
         item.direction = TransferDirection::RemoteToLocal;
     } else {
-        // Remote-to-remote: neither backend can currently do a direct
-        // server-to-server transfer, and there's no stage-through-a-temp-
-        // file fallback yet either. Reported as a failed item immediately
-        // rather than silently dropped, so it's visible in the queue.
-        item.direction = TransferDirection::Unsupported;
-        item.status = TransferStatus::Failed;
-        item.errorMessage = tr("Remote-to-remote transfers aren't supported yet");
+        // Remote-to-remote: neither backend can do a direct server-to-
+        // server transfer, so this stages through a local temp file
+        // instead — download from the source first, then upload to the
+        // destination (see dispatchActiveItem()/onBackendFinished()).
+        // item.status stays the default Queued, same as every other
+        // direction, so it flows into the ordinary startNext() call below.
+        // tempFilePath is deliberately left unset here — allocated on
+        // first dispatch instead, so an item cancelled while still Queued
+        // never claims a filename it won't use.
+        item.direction = TransferDirection::RemoteToRemote;
+        item.phase = TransferPhase::Downloading;
     }
 
     m_items.append(item);
@@ -61,15 +83,15 @@ void TransferManager::enqueue(FilePaneWidget *sourcePane, FilePaneWidget *destPa
 void TransferManager::enqueueFolder(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
                                      const QString &folderName)
 {
-    RemoteBackend *srcBackend = sourcePane->backend();
     RemoteBackend *dstBackend = destPane->backend();
 
-    // Same limitation as single-file transfers — no stage-through-a-temp
-    // fallback exists for either backend yet.
-    if (!srcBackend->isLocalFilesystem() && !dstBackend->isLocalFilesystem()) {
-        emit folderTransferFailed(folderName, tr("Remote-to-remote transfers aren't supported yet"));
-        return;
-    }
+    // No remote-to-remote guard here (unlike before) — FolderEnumerator
+    // only ever talks to the source backend through
+    // listDirectoryForEnumeration(), with zero knowledge of
+    // isLocalFilesystem(), so a remote source enumerates exactly the same
+    // way a local one does; every discovered file then stages through its
+    // own local temp file via the ordinary enqueue() call in
+    // startFolderFileTransfers() below.
 
     // Check for a destination conflict on the folder's own root BEFORE
     // paying for a full recursive enumeration of the source — if this is
@@ -239,9 +261,31 @@ void TransferManager::dispatchActiveItem()
         argA = item.sourcePath;
         argB = item.destPath;
         break;
+    case TransferDirection::RemoteToRemote:
+        // Staged through a local temp file — allocated once, on first
+        // dispatch (empty check below), reused unchanged across the
+        // phase transition. Downloading: source -> temp. Uploading:
+        // temp -> destination (dispatched again from onBackendFinished()
+        // once phase 1 completes, not from here a second time).
+        if (item.tempFilePath.isEmpty())
+            item.tempFilePath = allocateTempFilePath(item);
+        if (item.phase == TransferPhase::Downloading) {
+            executor = srcBackend;
+            methodName = "downloadFile";
+            argA = item.sourcePath;
+            argB = item.tempFilePath;
+        } else {   // Uploading
+            executor = dstBackend;
+            methodName = "uploadFile";
+            argA = item.tempFilePath;
+            argB = item.destPath;
+        }
+        break;
     case TransferDirection::Unsupported:
-        // Shouldn't reach here — enqueue() marks these Failed up front
-        // so they never get queued as Queued in the first place.
+        // Shouldn't reach here — no direction is ever set to Unsupported
+        // anymore (enqueue() now handles remote-to-remote via
+        // RemoteToRemote above); reserved for a genuine future dispatch
+        // failure.
         break;
     }
 
@@ -262,6 +306,35 @@ void TransferManager::dispatchActiveItem()
     QMetaObject::invokeMethod(executor, methodName, Qt::QueuedConnection,
                                Q_ARG(QString, argA), Q_ARG(QString, argB),
                                Q_ARG(qint64, item.bytesDone));
+}
+
+QString TransferManager::allocateTempFilePath(const TransferItem &item) const
+{
+    // A dedicated subdirectory rather than writing loose files straight
+    // into the OS temp dir — keeps this app's own staging files visually
+    // grouped (useful for debugging a stuck/crashed transfer) and easy to
+    // sweep as a unit. Disposable: nothing here needs to survive a restart.
+    const QString stagingDir =
+        QStandardPaths::writableLocation(QStandardPaths::TempLocation) + QStringLiteral("/zephyrftp-staging");
+    QDir().mkpath(stagingDir);
+
+    // The item's own unique id prevents any collision between concurrently-
+    // queued RemoteToRemote items (even though only one ever actually
+    // executes at a time, per this class's serial-processing design); the
+    // original filename stays visible alongside it for anyone inspecting
+    // the staging directory mid-transfer or after a crash.
+    return stagingDir + QStringLiteral("/%1_%2")
+        .arg(item.id)
+        .arg(QFileInfo(item.fileName).fileName());
+}
+
+void TransferManager::cleanupTempFile(TransferItem &item)
+{
+    if (item.direction != TransferDirection::RemoteToRemote || item.tempFilePath.isEmpty())
+        return;
+
+    QFile::remove(item.tempFilePath);   // safe no-op if it was never actually created
+    item.tempFilePath.clear();
 }
 
 void TransferManager::cancelItem(int id)
@@ -309,6 +382,17 @@ void TransferManager::retryItem(int id)
     item.bytesDone = 0;
     item.bytesTotal = 0;
     item.errorMessage.clear();
+    // A RemoteToRemote item must restart from phase 1, not resume wherever
+    // it failed — its temp file was already deleted by onBackendFailed()'s
+    // cleanupTempFile() call, so re-entering at phase == Uploading would
+    // try to upload a file that no longer exists. Resetting phase back to
+    // Downloading and clearing tempFilePath makes dispatchActiveItem()
+    // allocate a fresh temp file and start over, consistent with how every
+    // other direction's retry also restarts fully from byte 0.
+    if (item.direction == TransferDirection::RemoteToRemote) {
+        item.phase = TransferPhase::Downloading;
+        item.tempFilePath.clear();
+    }
     emit itemUpdated(item);
 
     startNext();
@@ -525,10 +609,34 @@ void TransferManager::onBackendFinished(const QString &fileName)
         return;
 
     TransferItem &item = m_items[m_activeIndex];
+
+    // A RemoteToRemote item's phase-1 (download-to-temp) completion isn't
+    // the item finishing — it's the cue to start phase 2 (upload-from-
+    // temp). Re-enters dispatchActiveItem() directly (not through
+    // startNext()/checkExists() — the destination conflict check already
+    // happened once for this item, no reason to ask again) after
+    // re-pointing m_currentBackend at the destination backend via a
+    // second connectToBackend() call. bytesDone/bytesTotal are zeroed
+    // here (not inside dispatchActiveItem() itself) since that's the
+    // signal dispatchActiveItem()'s own speed-sample reset reads from.
+    if (item.direction == TransferDirection::RemoteToRemote
+        && item.phase == TransferPhase::Downloading) {
+        item.phase = TransferPhase::Uploading;
+        item.bytesDone = 0;
+        item.bytesTotal = 0;
+        item.speedBytesPerSec = 0;
+        emit itemUpdated(item);   // lets the UI show "Uploading" before phase 2's first progress tick
+
+        connectToBackend(item.destPane->backend());
+        dispatchActiveItem();
+        return;
+    }
+
     item.status = TransferStatus::Done;
     item.bytesDone = item.bytesTotal > 0 ? item.bytesTotal : item.bytesDone;
     item.speedBytesPerSec = 0;   // not meaningful once finished — avoid showing a stale number
     m_activeItemCancelled = false;   // in case cancelItem() was called just as this finished anyway
+    cleanupTempFile(item);   // no-op for every direction except a just-finished RemoteToRemote upload
     emit itemUpdated(item);
     emit transferSucceeded();
 
@@ -547,6 +655,11 @@ void TransferManager::onBackendFailed(const QString &fileName, const QString &re
     item.errorMessage = m_activeItemCancelled ? QString() : reason;
     item.speedBytesPerSec = 0;
     m_activeItemCancelled = false;
+    // Covers a RemoteToRemote item's phase-1 failure, phase-2 failure
+    // (deleting the already-downloaded temp file too), and cancellation
+    // (which surfaces through this same path) — one call handles all
+    // three, no separate handling needed. No-op for every other direction.
+    cleanupTempFile(item);
     emit itemUpdated(item);
 
     m_activeIndex = -1;
