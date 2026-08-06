@@ -412,6 +412,34 @@ qt_add_executable(protocol-selection-test EXCLUDE_FROM_ALL
 target_include_directories(protocol-selection-test PRIVATE src)
 target_link_libraries(protocol-selection-test PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
 
+# --- Sort/Commands-pane regression test: default folders-first/name-
+# descending order, a real numeric header-column sort, entryForRow()'s
+# row-independence after that sort, and CommandsPaneWidget/FilePaneWidget's
+# commandLogged forwarding (including across a setBackend() swap). Added
+# after the ten-target suite above was already an established, documented
+# count elsewhere (CLAUDE.md, CONTRIBUTING.md) — self-contained and
+# EXCLUDE_FROM_ALL like the ten, but deliberately NOT folded into that
+# specific number here; see src/sort_and_commands_test.cpp's own header
+# comment for what it covers. Needs CommandsPaneWidget.cpp explicitly
+# (the ten above don't, since none of them exercise it directly) and
+# RemoteBackend.h explicitly for the same AUTOMOC/Q_OBJECT reason
+# CONTRIBUTING.md's build gotcha describes.
+qt_add_executable(sort-and-commands-test EXCLUDE_FROM_ALL
+    src/sort_and_commands_test.cpp
+    src/AppSettings.cpp
+    src/ui/FilePaneWidget.cpp
+    src/ui/FileTreeView.cpp
+    src/ui/CommandsPaneWidget.cpp
+    src/ui/IconTheme.cpp
+    src/backends/LocalBackend.cpp
+    src/backends/RemoteBackend.h
+    resources/icons.qrc
+    resources/theme.qrc
+)
+target_include_directories(sort-and-commands-test PRIVATE src)
+target_compile_definitions(sort-and-commands-test PRIVATE APP_VERSION="${PROJECT_VERSION}")
+target_link_libraries(sort-and-commands-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
+
 # --- Live-server verification harnesses (NOT part of the ten-target
 # self-contained test suite above — these need an external server
 # already running, started via tools/local-test-servers/*.sh; see each

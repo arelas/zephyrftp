@@ -1249,13 +1249,30 @@ to drive FileZilla itself for a same-desktop comparison.
   this at all — nothing protocol-like happens for a purely local pane. A
   one-line welcome message fills the log before any real traffic exists,
   so the pane never opens looking blank/broken.
-  **Not covered by the ten-target test suite or any of the live-server
-  harnesses** — this component (and the column-sort/default-order changes
-  above) were checked by screenshotting the running app and by the
-  vsftpd-password-masking check described above, not by an automated
-  regression test; there's no dedicated `commands-pane-test` or
-  `sort-test` target the way most other UI-facing features in this
-  project have one.
+  **Now covered by an automated regression test**, `sort-and-commands-test`
+  (`src/sort_and_commands_test.cpp`) — a headless, self-contained
+  `EXCLUDE_FROM_ALL` target added after this component and the
+  column-sort/default-order changes above had only ever been checked by
+  screenshotting the running app and the vsftpd-password-masking check
+  described above. Confirms: `appendLine()`'s welcome line and append
+  order; a real `FilePaneWidget` forwards the CURRENTLY attached
+  backend's `commandLogged` and re-targets (not adds to) that forwarding
+  across a `setBackend()` swap, via a minimal fake `RemoteBackend` (same
+  legitimate test-double technique `transfer-pause-test`'s
+  `FakePausableBackend` uses); and, against a real `LocalBackend` and
+  real temp directory, the default folders-first/name-descending order,
+  a real numeric Size sort triggered via `QTreeView::sortByColumn()`
+  (the exact call Qt's own header-click handling invokes, not a
+  shortcut around it), and — the specific regression this pins down —
+  that `entryForRow()` still maps a view row to the correct entry once a
+  sort has physically moved rows, rather than the pre-fix row-position
+  indexing that broke the instant rows moved. **Deliberately not folded
+  into "the ten-target suite"** CLAUDE.md/CONTRIBUTING.md already
+  establish as a fixed, documented count — self-contained and
+  `EXCLUDE_FROM_ALL` like the ten, but kept as an explicit eleventh,
+  separately-documented target rather than triggering a rename sweep
+  across every place that number appears; see CONTRIBUTING.md's "Running
+  the test suites" section for how to build and run it.
 - `MainWindow` — two `FilePaneWidget`s in a `QSplitter`, plus a
   `QDockWidget` at the bottom holding the transfer queue. Left pane is
   always `LocalBackend`. Right pane starts on `LocalBackend`; the

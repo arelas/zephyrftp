@@ -8,6 +8,20 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Added (developer-facing only, no shipped behavior)
+
+- **`sort-and-commands-test`**, a new self-contained `EXCLUDE_FROM_ALL`
+  regression test covering two things that had only ever been checked by
+  screenshotting the running app: `CommandsPaneWidget`'s log and
+  `FilePaneWidget`'s forwarding of `RemoteBackend::commandLogged`
+  (including across a `setBackend()` swap), and the file panes' default
+  folders-first/name-descending sort order, a real numeric Size sort, and
+  `entryForRow()`'s row-independence after that sort. Deliberately kept
+  as an explicit eleventh target rather than folded into "the ten"
+  CONTRIBUTING.md/CLAUDE.md/CI already treat as a fixed, documented
+  count — see CONTRIBUTING.md's "Running the test suites" section for
+  how to build and run it.
+
 ## [0.3.9] — Default file panes to folders-first/name-descending; a Commands pane welcome line
 
 ### Changed

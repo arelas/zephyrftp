@@ -519,6 +519,32 @@ All ten need to actually pass — not just build — before a change is
 considered done. See ARCHITECTURE.md's "Verification status" section for
 what each test actually proves and why it exists.
 
+### An eleventh, separately-tracked target: `sort-and-commands-test`
+
+Added after the "ten" above had already become a fixed, documented count
+in this file, CLAUDE.md, and `.github/workflows/build.yml`'s hardcoded
+per-job target lists — self-contained and `EXCLUDE_FROM_ALL` like the ten
+(no external server, no `podman`), but deliberately kept as an explicit
+eleventh rather than triggering a rename sweep of every "ten-target"
+reference across those files. Covers `CommandsPaneWidget`'s log and
+`FilePaneWidget`'s forwarding of `RemoteBackend::commandLogged` (via a
+minimal fake backend, same technique `transfer-pause-test`'s
+`FakePausableBackend` uses), and the file panes' default sort order,
+numeric Size sort, and `entryForRow()`'s row-independence after a real
+`QTreeView::sortByColumn()` call — see `src/sort_and_commands_test.cpp`'s
+own header comment and ARCHITECTURE.md's `CommandsPaneWidget` entry for
+the full detail. Not yet wired into `build.yml` — run it locally:
+
+```
+cmake --build build --target sort-and-commands-test
+QT_QPA_PLATFORM=offscreen ./build/sort-and-commands-test
+```
+
+Needs no fixtures or environment overrides beyond `QT_QPA_PLATFORM` — it
+builds and wipes its own scratch directory (`/tmp/sort_test`) at the top
+of `main()`, same convention `transfer-queue-test`/`folder-transfer-test`
+use.
+
 ## Live-server verification (SFTP public-key auth, FTP/FTPS, cancel/pause/resume)
 
 The ten targets above are deliberately self-contained — no external
