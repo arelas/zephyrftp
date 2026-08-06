@@ -9,6 +9,7 @@
 #include <QAction>
 #include <QProgressBar>
 #include <QLabel>
+#include <algorithm>
 
 namespace {
 constexpr int ColName = 0;
@@ -27,7 +28,17 @@ TransferQueueWidget::TransferQueueWidget(TransferManager *manager, QWidget *pare
     m_table->setColumnCount(5);
     m_table->setHorizontalHeaderLabels(
         {tr("File"), tr("Direction"), tr("Status"), tr("Progress"), tr("Speed")});
-    m_table->horizontalHeader()->setSectionResizeMode(ColName, QHeaderView::Stretch);
+    // Interactive like every other column — Stretch here used to make
+    // File's width purely a side effect of dragging the OTHER columns'
+    // handles, with no handle of its own to drag (same fix already
+    // applied to the file panes' Name column).
+    m_table->horizontalHeader()->setSectionResizeMode(ColName, QHeaderView::Interactive);
+    m_table->setColumnWidth(ColName, 220);
+    // Unlike QTreeView (the file panes), QTableView/QTableWidget does NOT
+    // default this to true — without it, Speed (the actual last column)
+    // stays its own narrow natural width and the remaining header space
+    // renders as a raw, unstyled gap instead of absorbing it.
+    m_table->horizontalHeader()->setStretchLastSection(true);
     // The header row centers section labels by default (Fusion style);
     // "File" reads oddly centered over a column of left-aligned filenames
     // — Direction/Status/Progress/Speed stay centered, matching the
@@ -39,6 +50,9 @@ TransferQueueWidget::TransferQueueWidget(TransferManager *manager, QWidget *pare
     m_table->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_table, &QTableWidget::customContextMenuRequested,
             this, &TransferQueueWidget::showContextMenu);
+    m_table->horizontalHeader()->setSortIndicatorShown(true);
+    connect(m_table->horizontalHeader(), &QHeaderView::sectionClicked,
+            this, &TransferQueueWidget::onHeaderSectionClicked);
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -145,6 +159,18 @@ QColor TransferQueueWidget::statusTextColor(TransferStatus status)
     return IconTheme::Gray;
 }
 
+int TransferQueueWidget::percentFor(const TransferItem &item)
+{
+    if (item.status == TransferStatus::Done)
+        return 100;
+    // Paused is frozen at whatever bytesDone reached before the pause —
+    // same formula as InProgress, just not advancing anymore.
+    if ((item.status == TransferStatus::InProgress || item.status == TransferStatus::Paused)
+        && item.bytesTotal > 0)
+        return static_cast<int>((item.bytesDone * 100) / item.bytesTotal);
+    return 0;
+}
+
 QString TransferQueueWidget::speedText(const TransferItem &item)
 {
     if (item.status != TransferStatus::InProgress || item.speedBytesPerSec <= 0)
@@ -232,14 +258,7 @@ void TransferQueueWidget::onItemUpdated(const TransferItem &item)
     if (!progressBar)
         return;
 
-    int percent = 0;
-    if (item.status == TransferStatus::InProgress && item.bytesTotal > 0)
-        percent = static_cast<int>((item.bytesDone * 100) / item.bytesTotal);
-    else if (item.status == TransferStatus::Done)
-        percent = 100;
-    else if (item.status == TransferStatus::Paused && item.bytesTotal > 0)
-        percent = static_cast<int>((item.bytesDone * 100) / item.bytesTotal);   // frozen at the pause point
-    progressBar->setValue(percent);
+    progressBar->setValue(percentFor(item));
 
     if (auto *speedItem = m_table->item(row, ColSpeed))
         speedItem->setText(speedText(item));
@@ -330,4 +349,66 @@ void TransferQueueWidget::showContextMenu(const QPoint &pos)
         m_manager->resumeItem(id);
     else if (chosen == retryAction)
         m_manager->retryItem(id);
+}
+
+void TransferQueueWidget::onHeaderSectionClicked(int column)
+{
+    if (column == m_sortColumn)
+        m_sortOrder = (m_sortOrder == Qt::AscendingOrder) ? Qt::DescendingOrder : Qt::AscendingOrder;
+    else {
+        m_sortColumn = column;
+        m_sortOrder = Qt::AscendingOrder;
+    }
+    m_table->horizontalHeader()->setSortIndicator(m_sortColumn, m_sortOrder);
+    resortAndRebuild();
+}
+
+void TransferQueueWidget::resortAndRebuild()
+{
+    QList<TransferItem> items = m_manager->items();
+    const bool ascending = (m_sortOrder == Qt::AscendingOrder);
+
+    switch (m_sortColumn) {
+    case ColName:
+        std::stable_sort(items.begin(), items.end(), [ascending](const TransferItem &a, const TransferItem &b) {
+            const int cmp = a.fileName.localeAwareCompare(b.fileName);
+            return ascending ? cmp < 0 : cmp > 0;
+        });
+        break;
+    case ColDirection:
+        std::stable_sort(items.begin(), items.end(), [ascending](const TransferItem &a, const TransferItem &b) {
+            return ascending ? a.direction < b.direction : a.direction > b.direction;
+        });
+        break;
+    case ColStatus:
+        std::stable_sort(items.begin(), items.end(), [ascending](const TransferItem &a, const TransferItem &b) {
+            const int cmp = statusText(a).localeAwareCompare(statusText(b));
+            return ascending ? cmp < 0 : cmp > 0;
+        });
+        break;
+    case ColProgress:
+        std::stable_sort(items.begin(), items.end(), [ascending](const TransferItem &a, const TransferItem &b) {
+            const int pa = percentFor(a);
+            const int pb = percentFor(b);
+            return ascending ? pa < pb : pa > pb;
+        });
+        break;
+    case ColSpeed:
+        std::stable_sort(items.begin(), items.end(), [ascending](const TransferItem &a, const TransferItem &b) {
+            return ascending ? a.speedBytesPerSec < b.speedBytesPerSec : a.speedBytesPerSec > b.speedBytesPerSec;
+        });
+        break;
+    default:
+        return;   // m_sortColumn == -1 (no header clicked yet) — insertion order, nothing to rebuild
+    }
+
+    // onItemAdded() alone would leave every row at its just-added defaults
+    // (0% progress, no speed) — following each with onItemUpdated() on the
+    // same real item brings every row back to its actual current state,
+    // just in the new order.
+    m_table->setRowCount(0);
+    for (const TransferItem &item : items) {
+        onItemAdded(item);
+        onItemUpdated(item);
+    }
 }

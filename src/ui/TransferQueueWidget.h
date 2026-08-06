@@ -23,10 +23,36 @@ private slots:
     void onItemUpdated(const TransferItem &item);
     void showContextMenu(const QPoint &pos);
 
+    // Clicking a header sorts by that column; clicking the same one again
+    // reverses it — QTableWidget's own sortItems() isn't used for this
+    // (see resortAndRebuild()'s doc comment on why), so this has to be
+    // driven manually off QHeaderView::sectionClicked instead of the
+    // usual setSortingEnabled(true).
+    void onHeaderSectionClicked(int column);
+
 private:
     int rowForId(int id) const;
     static QString directionText(TransferDirection direction);
     static QString statusText(const TransferItem &item);
+
+    // 0-100, from bytesDone/bytesTotal — shared by onItemUpdated() (drives
+    // the real progress bar) and resortAndRebuild()'s Progress-column sort
+    // key, so the two can't drift apart.
+    static int percentFor(const TransferItem &item);
+
+    // Re-sorts m_manager->items() by (m_sortColumn, m_sortOrder) and
+    // rebuilds every row from scratch via onItemAdded()+onItemUpdated().
+    // A full rebuild rather than QTableWidget::sortItems() specifically
+    // because ColDirection and ColProgress are QWidget cell widgets
+    // (setCellWidget()), not QTableWidgetItems — sortItems() only
+    // reorders items, so a cell widget stays pinned to its original row
+    // number while the item text around it moves, silently pairing each
+    // widget with the wrong row. Rebuilding from the same TransferManager
+    // data onItemAdded() already trusts sidesteps that entirely.
+    void resortAndRebuild();
+
+    int m_sortColumn = -1;   // -1: unsorted, insertion order (the pre-sort default)
+    Qt::SortOrder m_sortOrder = Qt::AscendingOrder;
 
     // Direction arrow (up/down/left-right) recolored per the item's
     // current status, or check/x for the two terminal states — per

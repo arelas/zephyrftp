@@ -24,6 +24,29 @@ constexpr int ColSize = 1;
 constexpr int ColModified = 2;
 constexpr int ColPermissions = 3;
 
+// Reused across two unrelated purposes on two different columns' items —
+// harmless, since QStandardItem role data is per-item, not global: on
+// ColName it holds the entry's real (unbracketed) name, so a sorted row
+// can still be matched back to its RemoteEntry; on ColSize it holds the
+// byte count as a real qint64 for numeric sorting (see SizeItem below).
+constexpr int SortDataRole = Qt::UserRole + 1;
+
+// Size is displayed as a plain, unpadded byte count (QString::number()),
+// which sorts wrong lexicographically ("10" < "9"). Modified's ISO-8601
+// text sorts correctly as a plain string (fixed-width, so lexicographic
+// order already matches chronological order) and Name/Permissions are
+// meant to sort as the text shown, so only Size needs a real numeric key
+// — stashed in SortDataRole since QStandardItem's default operator<
+// compares DisplayRole text.
+class SizeItem : public QStandardItem {
+public:
+    using QStandardItem::QStandardItem;
+    bool operator<(const QStandardItem &other) const override
+    {
+        return data(SortDataRole).toLongLong() < other.data(SortDataRole).toLongLong();
+    }
+};
+
 // Same logic as TransferManager.cpp's identical (file-local, not shared)
 // helper — small enough that duplicating it here beats introducing a
 // shared-utility header for one three-line function.
@@ -166,6 +189,13 @@ void FilePaneWidget::buildUi()
     // is what should absorb leftover width instead.
     m_view->header()->setSectionResizeMode(ColName, QHeaderView::Interactive);
     m_view->setColumnWidth(ColName, 220);
+    // Clicking a header sorts by that column; QHeaderView/QTreeView's own
+    // built-in click handling toggles ascending/descending on a second
+    // click of the same section — no extra wiring needed for that part.
+    // Row lookups elsewhere (onRowDoubleClicked, selectedEntries(), ...)
+    // go through entryForRow() rather than indexing m_currentEntries by
+    // row position, since sorting is exactly what breaks that assumption.
+    m_view->setSortingEnabled(true);
     connect(m_view, &QTreeView::doubleClicked, this, &FilePaneWidget::onRowDoubleClicked);
     m_view->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_view, &QTreeView::customContextMenuRequested, this, &FilePaneWidget::showContextMenu);
@@ -257,7 +287,12 @@ void FilePaneWidget::rebuildModel()
         m_currentEntries.append(e);
         auto *nameItem = new QStandardItem(e.isDir ? QStringLiteral("[%1]").arg(e.name) : e.name);
         nameItem->setIcon(iconForEntry(e));
-        auto *sizeItem = new QStandardItem(e.isDir ? QString() : QString::number(e.size));
+        // entryForRow() looks entries up by this rather than row position —
+        // sorting physically reorders m_model's rows, so row index alone
+        // no longer identifies which RemoteEntry a row belongs to.
+        nameItem->setData(e.name, SortDataRole);
+        auto *sizeItem = new SizeItem(e.isDir ? QString() : QString::number(e.size));
+        sizeItem->setData(e.isDir ? qint64(-1) : e.size, SortDataRole);
         auto *modItem = new QStandardItem(e.modified.toString(Qt::ISODate));
         auto *permItem = new QStandardItem(e.permissions);
         m_model->appendRow({nameItem, sizeItem, modItem, permItem});
@@ -296,18 +331,33 @@ void FilePaneWidget::onDirectoryListed(const QString &path, const QList<RemoteEn
     updateNavigationButtonsEnabled();
 }
 
+const RemoteEntry *FilePaneWidget::entryForRow(int row) const
+{
+    if (row < 0 || row >= m_model->rowCount())
+        return nullptr;
+    const QStandardItem *nameItem = m_model->item(row, ColName);
+    if (!nameItem)
+        return nullptr;
+    const QString name = nameItem->data(SortDataRole).toString();
+    for (const RemoteEntry &e : m_currentEntries) {
+        if (e.name == name)
+            return &e;
+    }
+    return nullptr;
+}
+
 void FilePaneWidget::onRowDoubleClicked(const QModelIndex &index)
 {
-    if (!index.isValid() || index.row() >= m_currentEntries.size())
+    const RemoteEntry *entry = index.isValid() ? entryForRow(index.row()) : nullptr;
+    if (!entry)
         return;
 
-    const RemoteEntry &entry = m_currentEntries.at(index.row());
-    if (entry.isDir) {
+    if (entry->isDir) {
         const QString base = currentDirectory();
-        const QString next = base.endsWith('/') ? base + entry.name : base + '/' + entry.name;
+        const QString next = base.endsWith('/') ? base + entry->name : base + '/' + entry->name;
         navigateTo(next);
     } else {
-        emit fileActivated(entry.name);
+        emit fileActivated(entry->name);
     }
 }
 
@@ -316,10 +366,8 @@ QString FilePaneWidget::selectedEntryName() const
     const auto selected = m_view->selectionModel()->selectedRows(ColName);
     if (selected.isEmpty())
         return {};
-    const int row = selected.first().row();
-    if (row < 0 || row >= m_currentEntries.size())
-        return {};
-    return m_currentEntries.at(row).name;
+    const RemoteEntry *entry = entryForRow(selected.first().row());
+    return entry ? entry->name : QString();
 }
 
 QStringList FilePaneWidget::selectedFileNames() const
@@ -327,12 +375,9 @@ QStringList FilePaneWidget::selectedFileNames() const
     QStringList names;
     const auto selected = m_view->selectionModel()->selectedRows(ColName);
     for (const QModelIndex &index : selected) {
-        const int row = index.row();
-        if (row < 0 || row >= m_currentEntries.size())
-            continue;
-        const RemoteEntry &entry = m_currentEntries.at(row);
-        if (!entry.isDir)   // directories skipped — see filesActivated's doc comment
-            names.append(entry.name);
+        const RemoteEntry *entry = entryForRow(index.row());
+        if (entry && !entry->isDir)   // directories skipped — see filesActivated's doc comment
+            names.append(entry->name);
     }
     return names;
 }
@@ -342,10 +387,8 @@ QList<RemoteEntry> FilePaneWidget::selectedEntries() const
     QList<RemoteEntry> entries;
     const auto selected = m_view->selectionModel()->selectedRows(ColName);
     for (const QModelIndex &index : selected) {
-        const int row = index.row();
-        if (row < 0 || row >= m_currentEntries.size())
-            continue;
-        entries.append(m_currentEntries.at(row));
+        if (const RemoteEntry *entry = entryForRow(index.row()))
+            entries.append(*entry);
     }
     return entries;
 }

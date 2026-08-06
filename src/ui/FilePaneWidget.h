@@ -148,6 +148,16 @@ private:
     void updateNavigationButtonsEnabled();
     void resetHistory();   // called from setBackend() — a new backend means a fresh navigation context
 
+    // Looks up the RemoteEntry a view row currently displays by matching
+    // the name stashed on that row's Name item, rather than indexing
+    // m_currentEntries by row position — sorting (see buildUi()'s
+    // setSortingEnabled(true)) physically reorders the model's rows, so
+    // row position alone no longer identifies which entry is which.
+    // Returns nullptr for an out-of-range row or one whose stashed name
+    // has no match (shouldn't happen; m_currentEntries and the model are
+    // always rebuilt together in rebuildModel()).
+    const RemoteEntry *entryForRow(int row) const;
+
     // Each prompts (or confirms, for delete) then dispatches to the
     // backend via QMetaObject::invokeMethod(..., Qt::QueuedConnection) —
     // same pattern as every other cross-thread-safe backend call in this
@@ -168,11 +178,11 @@ private:
     QAction *m_pathBarLeadingIcon = nullptr;   // owned by m_pathBar once added; tracked so it can be replaced
     QLabel *m_statusLabel;
     QStandardItemModel *m_model;
-    // Exactly what's rendered in m_model, row for row — every other
-    // method indexing by view row (onRowDoubleClicked,
-    // selectedFileNames(), selectedEntries(), the context menu) relies on
-    // this 1:1 correspondence, so this must stay the FILTERED set, not
-    // everything the backend returned.
+    // The filtered set currently rendered in m_model — NOT necessarily in
+    // the same row order the view is displaying once a column has been
+    // sorted (see setSortingEnabled(true) in buildUi()), so lookups by
+    // view row go through entryForRow() rather than indexing this
+    // directly by row position.
     QList<RemoteEntry> m_currentEntries;
     // Everything the last listDirectory() call actually returned, before
     // the showHiddenFiles filter — kept separately so a live preference
