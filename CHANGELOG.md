@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.5.1] — Real-server verification for Move and remote-to-remote transfers
+
 ### Changed (developer-facing only, no shipped behavior)
 
 - **Three new automated live-server verification harnesses**
@@ -828,7 +830,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/arelas/zephyrftp/releases/tag/v0.5.1
 [0.5.0]: https://github.com/arelas/zephyrftp/releases/tag/v0.5.0
 [0.4.0]: https://github.com/arelas/zephyrftp/releases/tag/v0.4.0
 [0.3.9]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.9
