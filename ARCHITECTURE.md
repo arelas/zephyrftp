@@ -2095,9 +2095,10 @@ along the way — worth knowing about if it ever needs touching again.
   machinery than this pass attempts.
 - **Server-side Move (a single-round-trip rename between two panes on the
   same connection) is now supported, covered by a deterministic
-  fake-backend test, a direct real-`LocalBackend` check, AND a real
-  two-connection SFTP server, including the specific directory-rename
-  claim that used to be unconfirmed.** `move-entry-test`
+  fake-backend test, a direct real-`LocalBackend` check, AND real
+  two-connection SFTP and FTP servers, including the specific
+  directory-rename claim that used to be unconfirmed for both
+  protocols.** `move-entry-test`
   (`src/move_entry_test.cpp`) covers `TransferManager::moveEligible()`'s
   `connectionIdentity()`-equality guard both ways (two backends reporting
   the same identity dispatch through `moveEntry()`; two reporting
@@ -2129,16 +2130,30 @@ along the way — worth knowing about if it ever needs touching again.
   the headless harness had no way to dismiss (see the file's own header
   comment) — the same category of finding, not a coincidence, as the
   next entry's bug #3.
-  **Not covered by either**: the "Write Into an existing folder fails"
-  path (`TransferManager::onDestinationExistsChecked()`'s Move-conflict
-  branch when a folder conflict is resolved as Write Into) — exercising
-  it would mean driving a live `askConflict()` `QMessageBox`, the same
-  category of manual-only gap `conflict-resolution-test` already accepts
-  for the ordinary transfer path, and that dialog wiring is pure Qt/UI
-  code with zero backend dependency already exercised there with fakes;
-  and FTP's `RNFR`/`RNTO` directory-rename equivalent — `verify-sftp-move`
-  only exercises SFTP, and this project's FTP live-server harnesses don't
-  yet drive `TransferManager`/`moveEntry()` the way this one does.
+  `verify-ftp-move` (`src/verify_ftp_move.cpp`, `EXCLUDE_FROM_ALL`, needs
+  `tools/local-test-servers/start-ftp.sh` already running) is the FTP
+  counterpart, same shape and same result: two independent `FtpBackend`
+  connections to the same server, confirming `RNFR`/`RNTO` genuinely
+  relocates a directory over FTP specifically, not just SFTP. No
+  `QThread` needed here — unlike `SftpBackend`'s blocking libssh2 calls,
+  `FtpBackend` is fully async/event-driven (`QTcpSocket`), the same
+  choice `verify-ftp-live` already made. The server's own
+  `start-ftp.sh` fixture has no folder to move (just `sample.txt` +
+  `uploads/`), so this harness creates its own nested "movetest" folder
+  directly on the server's real filesystem, restored idempotently the
+  same way as `verify-sftp-move`'s fixtures.
+  **Not covered by any of these**: the "Write Into an existing folder
+  fails" path (`TransferManager::onDestinationExistsChecked()`'s
+  Move-conflict branch when a folder conflict is resolved as Write Into)
+  — exercising it would mean driving a live `askConflict()` `QMessageBox`,
+  the same category of manual-only gap `conflict-resolution-test` already
+  accepts for the ordinary transfer path, and that dialog wiring is pure
+  Qt/UI code with zero backend dependency already exercised there with
+  fakes; and FTPS specifically (`FtpsMode::Explicit`) — `verify-ftp-move`
+  only exercises plain FTP, though `connectionIdentity()` deliberately
+  doesn't distinguish FTP from FTPS (see `FtpBackend::connectionIdentity()`'s
+  own doc comment), so there's no reason to expect the rename call itself
+  behaves differently once encrypted.
 - **`SftpBackend`'s `listDirectoryForEnumeration()` and the full
   `FolderEnumerator` recursive walk are now confirmed against a real
   server, including the trickiest cases.** Same harness as the

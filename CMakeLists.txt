@@ -576,6 +576,34 @@ target_link_libraries(verify-remote-to-remote-live PRIVATE
     Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET}
 )
 
+# --- Move (server-side rename between two panes on the same connection)
+# against a REAL FTP server — the FTP counterpart to verify-sftp-move
+# above, confirming RNFR/RNTO genuinely relocates a DIRECTORY, not just
+# a file, over FTP specifically. See src/verify_ftp_move.cpp's own
+# header comment. No SftpBackend/libssh2/HostKeyVerifier needed —
+# FtpBackend uses CertificateVerifier instead (only actually exercised
+# for FTPS, but still needs linking since FtpBackend.h references the
+# type). Needs tools/local-test-servers/start-ftp.sh already running.
+qt_add_executable(verify-ftp-move EXCLUDE_FROM_ALL
+    src/verify_ftp_move.cpp
+    src/AppSettings.cpp
+    src/ui/FilePaneWidget.cpp
+    src/ui/FileTreeView.cpp
+    src/ui/IconTheme.cpp
+    src/ui/CertificateVerifier.cpp
+    src/backends/LocalBackend.cpp
+    src/backends/FtpBackend.cpp
+    src/backends/RemoteBackend.h
+    src/transfer/TransferManager.cpp
+    src/transfer/FolderEnumerator.cpp
+    resources/icons.qrc
+    resources/theme.qrc
+)
+target_include_directories(verify-ftp-move PRIVATE src)
+target_link_libraries(verify-ftp-move PRIVATE
+    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg
+)
+
 # --- SSH-daemon diversity: real Dropbear (password auth), not just
 # OpenSSH — see src/verify_sftp_vendors.cpp's own header comment for the
 # honest accounting of what this does and doesn't prove. Needs

@@ -608,8 +608,8 @@ mid-transfer cancel/pause/resume, and all of `FtpBackend` used to be
 genuinely unverified as a result (see ARCHITECTURE.md's Known gaps):
 nothing in this environment could reach a real server that way.
 `tools/local-test-servers/` closes that — throwaway local `sshd`/FTP/FTPS
-servers (no root, no system config touched) plus eight harnesses that
-drive the real backend classes (and, for the two Move/remote-to-remote
+servers (no root, no system config touched) plus nine harnesses that
+drive the real backend classes (and, for the three Move/remote-to-remote
 ones, real `TransferManager`/`FilePaneWidget` orchestration on top of
 them, not just the backend directly) against them:
 
@@ -630,13 +630,13 @@ QT_QPA_PLATFORM=offscreen ./build/verify-ftps-trust
 tools/local-test-servers/stop-all.sh
 ```
 
-Two more, specifically for `TransferManager`'s server-side Move and
+Three more, specifically for `TransferManager`'s server-side Move and
 remote-to-remote features — see each `.cpp`'s own header comment for the
 exact real-server gap each one closes, and ARCHITECTURE.md's
-Verification status entries for both features. `verify-sftp-move` needs
-one `start-sftp-pubkey.sh` instance (two independent connections *to*
-it — real cross-pane Move eligibility, not simulated);
-`verify-remote-to-remote-live` needs two independent instances on
+Verification status entries for both features. `verify-sftp-move`/
+`verify-ftp-move` each need one server instance (two independent
+connections *to* it — real cross-pane Move eligibility, not simulated);
+`verify-remote-to-remote-live` needs two independent SFTP instances on
 different ports (two genuinely different servers, matching
 `TransferManager`'s remote-to-remote staging path):
 
@@ -645,6 +645,12 @@ tools/local-test-servers/start-sftp-pubkey.sh
 cmake --build build --target verify-sftp-move
 QT_QPA_PLATFORM=offscreen SFTP_TEST_SCRATCH=/tmp/zephyrftp-local-test-servers/sftp \
     ./build/verify-sftp-move
+tools/local-test-servers/stop-all.sh
+
+tools/local-test-servers/start-ftp.sh
+cmake --build build --target verify-ftp-move
+QT_QPA_PLATFORM=offscreen FTP_TEST_SCRATCH=/tmp/zephyrftp-local-test-servers/ftp \
+    ./build/verify-ftp-move
 tools/local-test-servers/stop-all.sh
 
 SFTP_TEST_SCRATCH=/tmp/zephyrftp-local-test-servers/sftp-a SFTP_TEST_PORT=2222 \
@@ -659,11 +665,18 @@ QT_QPA_PLATFORM=offscreen \
 tools/local-test-servers/stop-all.sh
 ```
 
-Both are safe to re-run against the same already-running server(s)
+All three are safe to re-run against the same already-running server(s)
 without a restart — each resets its own fixtures/leftover destination
 files up front for exactly that reason (see each `.cpp`'s own header
 comment for the real conflict-collision bug that not doing so produced
-during development).
+during development). `verify-ftp-move` needs `python3-pyftpdlib` on
+`PATH` for `start-ftp.sh` the same as every other FTP local-test-server
+target — see this file's own Fedora dependency list above; on a
+distro without a packaged `pyftpdlib` (confirmed needed in this
+project's own dev environment), a throwaway venv
+(`python3 -m venv .venv && .venv/bin/pip install pyftpdlib pyOpenSSL`,
+then run `start-ftp.sh` with that venv's `bin/` prepended to `PATH`)
+works just as well — `ftp_server.py` has no other dependency.
 
 `tools/local-test-servers/containers/` goes one step further: real
 vsftpd/proftpd/Dropbear, not pyftpdlib — each built from its own
@@ -706,8 +719,9 @@ ARCHITECTURE.md's Known gaps entries for FTP/FTPS, certificate
 trust-on-first-use, public-key authentication, cancel/pause/resume, and
 vendor diversity for exactly what's confirmed and what still isn't,
 even after this, plus Move/remote-to-remote's own entries there for what
-`verify-sftp-move`/`verify-remote-to-remote-live` specifically confirm.
-These eight targets are `EXCLUDE_FROM_ALL` like the main
+`verify-sftp-move`/`verify-ftp-move`/`verify-remote-to-remote-live`
+specifically confirm.
+These nine targets are `EXCLUDE_FROM_ALL` like the main
 ten but intentionally **not** part of that suite or CI — an
 external-server precondition is a different category from "always runs
 the same way," which is the whole point of the other ten.
