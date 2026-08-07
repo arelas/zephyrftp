@@ -584,12 +584,17 @@ cases), `moveEntry()`/`moveFolder()`'s request-id-correlated dispatch to a
 backend's `moveEntry()` — confirming a folder move issues exactly one
 backend call against the folder's root path with
 `listDirectoryForEnumeration()` never called, i.e. `FolderEnumerator` is
-genuinely skipped, not just unobserved — and a real `LocalBackend`
+genuinely skipped, not just unobserved — a real `LocalBackend`
 exercised against real temp files/directories (a plain file move, a move
 onto an existing destination file to confirm it overwrites, and a folder
-move including its nested contents). See `src/move_entry_test.cpp`'s own
-header comment and ARCHITECTURE.md's `RemoteBackend`/`TransferManager`
-entries for the full detail. Run it locally the same way:
+move including its nested contents), and a folder move onto an existing
+destination resolved as "Write Into" failing cleanly with a merge-limitation
+error rather than dispatching a doomed rename, driven via a REAL
+`QMessageBox` using `conflict-resolution-test`'s own live-dialog technique
+(a continuous poller here, not a single fixed-delay shot). See
+`src/move_entry_test.cpp`'s own header comment and ARCHITECTURE.md's
+`RemoteBackend`/`TransferManager` entries for the full detail. Run it
+locally the same way:
 
 ```
 cmake --build build --target move-entry-test

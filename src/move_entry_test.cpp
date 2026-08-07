@@ -2,10 +2,14 @@
 // level: TransferManager::moveEligible()'s identity-equality guard,
 // moveEntry()/moveFolder()'s request-id-correlated dispatch to a backend's
 // moveEntry() (NOT downloadFile()/uploadFile() — the whole point of Move is
-// skipping the data-transfer path entirely), and that a whole-folder move
+// skipping the data-transfer path entirely), that a whole-folder move
 // issues exactly one backend call rather than walking the tree via
-// FolderEnumerator. Also confirms LocalBackend::moveEntry() performs a real
-// QDir::rename() against real temp files/directories, including the
+// FolderEnumerator, and — the one path ARCHITECTURE.md used to flag as
+// manual-only — that a folder move onto an EXISTING destination folder
+// resolved as "Write Into" fails cleanly (a single rename can't merge)
+// rather than attempting a doomed rename or silently dispatching nothing.
+// Also confirms LocalBackend::moveEntry() performs a real QDir::rename()
+// against real temp files/directories, including the
 // pre-existing-file-destination overwrite case — mirrors
 // file_operations_test.cpp's "test the backend directly against a real
 // temp directory" approach for that part.
@@ -14,15 +18,24 @@
 // own header comment for why a fixed wall-clock delay isn't safe against
 // arbitrary system load. Every backend call here resolves in at most one
 // queued-connection hop (no multi-tick timers), so each stage simply reacts
-// to the specific signal that proves that hop actually happened.
+// to the specific signal that proves that hop actually happened. The one
+// exception is the real conflict QMessageBox the "Write Into fails"
+// scenario drives — conflict-resolution-test.cpp's technique (a timer
+// scheduled to fire during the dialog's still-blocking exec() call, which
+// pumps the event loop internally) applied here as a continuous poller
+// rather than a single fixed-delay shot, since this test doesn't know in
+// advance exactly when the dialog will appear.
 #include <QApplication>
+#include <QAbstractButton>
 #include <QDebug>
 #include <QDir>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
+#include <QMessageBox>
 #include <QMetaObject>
 #include <QTimer>
+#include <functional>
 #include <utility>
 #include "ui/FilePaneWidget.h"
 #include "backends/LocalBackend.h"
@@ -99,6 +112,13 @@ private:
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
+    // Without this, closing the real conflict QMessageBox the
+    // WaitFolderConflictAdded scenario drives below (the only actually-
+    // visible window anywhere in this test) triggers Qt's default
+    // "quit when the last window closes" behavior, ending the event
+    // loop before that scenario's own checks get a chance to run — same
+    // reasoning conflict_resolution_test.cpp's own setup has.
+    app.setQuitOnLastWindowClosed(false);
 
     bool allPass = true;
     auto check = [&](const QString &label, bool condition) {
@@ -244,9 +264,33 @@ int main(int argc, char *argv[])
         ++transferSucceededCount;
     });
 
-    enum class Stage { WaitFileAdded, WaitFileDone, WaitFolderAdded, WaitFolderDone, AllDone };
+    enum class Stage {
+        WaitFileAdded, WaitFileDone, WaitFolderAdded, WaitFolderDone,
+        WaitFolderConflictAdded, AllDone
+    };
     Stage stage = Stage::WaitFileAdded;
     int currentItemId = -1;
+
+    // Continuous poller (not a single fixed-delay shot — see this file's
+    // header comment) for the real QMessageBox the WaitFolderConflictAdded
+    // scenario below drives. Gated on the stage so it's a harmless no-op
+    // during every earlier scenario, none of which ever open a dialog
+    // (destFake->existsAtCheck stays false until that scenario sets it).
+    std::function<void()> pollForConflictDialog;
+    pollForConflictDialog = [&]() {
+        if (stage == Stage::WaitFolderConflictAdded) {
+            if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+                for (QAbstractButton *button : box->buttons()) {
+                    if (button->text().contains(QStringLiteral("Write Into"), Qt::CaseInsensitive)) {
+                        button->click();
+                        break;
+                    }
+                }
+            }
+        }
+        QTimer::singleShot(20, &app, pollForConflictDialog);
+    };
+    pollForConflictDialog();
 
     QObject::connect(manager, &TransferManager::itemAdded, &app, [&](const TransferItem &item) {
         currentItemId = item.id;
@@ -259,6 +303,38 @@ int main(int argc, char *argv[])
             check("folder move: TransferItem direction is Move", item.direction == TransferDirection::Move);
             check("folder move: fileName is the folder's own name", item.fileName == QStringLiteral("myfolder"));
             stage = Stage::WaitFolderDone;
+        } else if (stage == Stage::WaitFolderConflictAdded) {
+            // Unlike every scenario above, this one has no itemUpdated
+            // step at all: TransferManager::onDestinationExistsChecked()'s
+            // "Write Into fails" branch sets status = Failed BEFORE
+            // appending the item, so itemAdded itself already carries the
+            // terminal state — there's nothing further to dispatch or
+            // wait for.
+            check("folder move onto an existing destination + Write Into: "
+                  "TransferItem direction is Move", item.direction == TransferDirection::Move);
+            check("folder move onto an existing destination + Write Into: "
+                  "fileName is the folder's own name", item.fileName == QStringLiteral("conflictfolder"));
+            check("folder move onto an existing destination + Write Into: "
+                  "status is Failed, not left dispatched/InProgress", item.status == TransferStatus::Failed);
+            check("folder move onto an existing destination + Write Into: "
+                  "error message explains the merge limitation, not a generic failure",
+                  item.errorMessage.contains(QStringLiteral("merge"), Qt::CaseInsensitive));
+            check("folder move onto an existing destination + Write Into: "
+                  "no backend moveEntry() call was ever made (still 2, unchanged since the prior scenario)",
+                  destFake->moveEntryCallCount == 2);
+
+            stage = Stage::AllDone;
+            // Deferred the same way the earlier scenarios' final checks
+            // are — harmless here (nothing else is pending for this
+            // item), but keeps the "verify after control returns to the
+            // event loop" convention consistent throughout this file.
+            QTimer::singleShot(0, &app, [&]() {
+                check("folder move onto an existing destination + Write Into: "
+                      "transferSucceeded did NOT fire again (still 2 — this was a failure, not a success)",
+                      transferSucceededCount == 2);
+                qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
+                app.exit(allPass ? 0 : 1);
+            });
         }
     });
 
@@ -303,16 +379,21 @@ int main(int argc, char *argv[])
                       "(FolderEnumerator genuinely skipped, not just unobserved)",
                       sourceFake->listDirectoryForEnumerationCallCount == 0
                           && destFake->listDirectoryForEnumerationCallCount == 0);
-
-                stage = Stage::AllDone;
                 // Same deferred-check reasoning as the single-file stage
                 // above — transferSucceeded() for THIS move hasn't been
                 // emitted yet at the point itemUpdated is handled.
                 QTimer::singleShot(0, &app, [&]() {
                     check("folder move: transferSucceeded fired a second time", transferSucceededCount == 2);
-                    qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
-                    app.exit(allPass ? 0 : 1);
                 });
+
+                // Next: a folder move onto a destination that ALREADY
+                // EXISTS, resolved as "Write Into" — the one path
+                // ARCHITECTURE.md used to flag as manual-only. Driven via
+                // a real QMessageBox (pollForConflictDialog(), already
+                // running) rather than simulated.
+                destFake->existsAtCheck = true;
+                stage = Stage::WaitFolderConflictAdded;
+                manager->moveFolder(sourcePane, destPane, QStringLiteral("conflictfolder"));
             }
             break;
         default:

@@ -2113,7 +2113,20 @@ along the way — worth knowing about if it ever needs touching again.
   the same test drives a real `LocalBackend` against real temp files: a
   plain file move, a move onto an *existing* destination file (confirming
   it overwrites, unlike `renameEntry()`), and a folder move including its
-  nested contents.
+  nested contents. **Also covers the one path this entry used to list as
+  manual-only**: a folder move onto a destination that already exists,
+  resolved as "Write Into," fails cleanly with an error mentioning the
+  merge limitation rather than dispatching a doomed rename or silently
+  doing nothing — driven via a REAL `QMessageBox`
+  (`conflict-resolution-test`'s own technique: a timer scheduled during
+  the dialog's still-blocking `exec()` call, which pumps the event loop
+  internally, applied here as a continuous poller rather than a single
+  fixed-delay shot, since this test doesn't know in advance exactly when
+  the dialog will appear), not simulated or skipped. Confirmed stable
+  under the same deliberate CPU-contention stress test (14 busy-loop
+  processes) that broke an earlier fixed-delay design elsewhere in this
+  project (see `remote-to-remote-test`'s own entry below) — 8+ clean
+  runs plus 4 more under contention, all passing.
   `verify-sftp-move` (`src/verify_sftp_move.cpp`, `EXCLUDE_FROM_ALL`, needs
   `tools/local-test-servers/start-sftp-pubkey.sh` already running) closes
   the real-server gap: two independent `SftpBackend` connections to the
@@ -2142,18 +2155,12 @@ along the way — worth knowing about if it ever needs touching again.
   `uploads/`), so this harness creates its own nested "movetest" folder
   directly on the server's real filesystem, restored idempotently the
   same way as `verify-sftp-move`'s fixtures.
-  **Not covered by any of these**: the "Write Into an existing folder
-  fails" path (`TransferManager::onDestinationExistsChecked()`'s
-  Move-conflict branch when a folder conflict is resolved as Write Into)
-  — exercising it would mean driving a live `askConflict()` `QMessageBox`,
-  the same category of manual-only gap `conflict-resolution-test` already
-  accepts for the ordinary transfer path, and that dialog wiring is pure
-  Qt/UI code with zero backend dependency already exercised there with
-  fakes; and FTPS specifically (`FtpsMode::Explicit`) — `verify-ftp-move`
-  only exercises plain FTP, though `connectionIdentity()` deliberately
-  doesn't distinguish FTP from FTPS (see `FtpBackend::connectionIdentity()`'s
-  own doc comment), so there's no reason to expect the rename call itself
-  behaves differently once encrypted.
+  **Not covered by any of these**: FTPS specifically (`FtpsMode::Explicit`)
+  — `verify-ftp-move` only exercises plain FTP, though `connectionIdentity()`
+  deliberately doesn't distinguish FTP from FTPS (see
+  `FtpBackend::connectionIdentity()`'s own doc comment), so there's no
+  reason to expect the rename call itself behaves differently once
+  encrypted.
 - **`SftpBackend`'s `listDirectoryForEnumeration()` and the full
   `FolderEnumerator` recursive walk are now confirmed against a real
   server, including the trickiest cases.** Same harness as the

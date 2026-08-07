@@ -23,6 +23,13 @@ in the README), so anything may still change between 0.x releases.
   ARCHITECTURE.md's `RemoteBackend`/`TransferManager` Verification status
   entries, and CONTRIBUTING.md's live-server verification section for the
   full detail.
+- **`move-entry-test` now also covers the "Write Into an existing folder
+  fails" Move-conflict path**, previously the one manual-only gap in its
+  own coverage — driven via a real `QMessageBox`
+  (`conflict-resolution-test`'s established live-dialog technique, applied
+  here as a continuous poller rather than a single fixed-delay shot),
+  confirmed stable under the same deliberate CPU-contention stress test
+  that caught a real flake elsewhere in this project earlier.
 
 ## [0.5.0] — Server-side Move between panes on the same connection
 
