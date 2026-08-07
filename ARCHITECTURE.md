@@ -1930,13 +1930,42 @@ along the way — worth knowing about if it ever needs touching again.
   case where phase 1's download already completed and phase 2's partial
   upload needs cleaning up too), and `retryItem()` correctly resetting
   back to the download phase with a fresh temp path rather than trying to
-  re-upload a file `cleanupTempFile()` already deleted. All 21 assertions
-  pass reliably (confirmed across repeated runs, including catching and
-  fixing a real, if narrow, test-fixture race first: `QTimer::stop()`
-  doesn't retract an already-queued timeout event, so a simulated failure
-  followed immediately by a state check could occasionally see one more
-  stray progress tick land after the "failure" — fixed with an explicit
-  `m_finished` guard in the fake backend, not a production-code issue).
+  re-upload a file `cleanupTempFile()` already deleted. All 11 assertions
+  pass reliably — genuinely reliably, not just "passed enough times
+  locally," after two real problems surfaced and were fixed along the
+  way, both in the test itself, not in `TransferManager`:
+  1. A narrow test-fixture race: `QTimer::stop()` doesn't retract an
+     already-queued timeout event, so a simulated failure followed
+     immediately by a state check could occasionally see one more stray
+     progress tick land after the "failure" — fixed with an explicit
+     `m_finished` guard in the fake backend.
+  2. **A structurally fragile design, not just a tuning problem.** An
+     earlier version drove each scenario from fixed, generous
+     (double-nominal) `QTimer` delays — 20+ repeated local runs all
+     passed, but it still failed on a real GitHub Actions runner sharing
+     the job with concurrent `linuxdeploy` work, and reproducing that
+     locally under deliberate heavy CPU contention (14 busy-loop
+     processes pinning a 16-core machine) made the fixed-delay version
+     fail 15/15. There is no fixed delay that's safe against arbitrary
+     system load. Rewritten as an explicit event-driven state machine
+     that reacts to the real `itemUpdated` signal each step is actually
+     waiting for (gated on a genuine progress tick — `bytesDone > 0` —
+     specifically because `dispatchActiveItem()`'s own status update
+     fires before the queued backend call has even run, so acting
+     earlier than that risks racing `beginTransfer()`'s own state reset),
+     with a single generous absolute-deadline `QTimer` as a safety net
+     (not the primary mechanism) so a genuine bug breaking an expected
+     transition fails fast and clearly instead of hanging the test (and
+     the CI job) forever. Confirmed against the same deliberate
+     CPU-contention setup that broke the old version: 40+ consecutive
+     clean runs, runtime staying close to nominal rather than degrading.
+     One more real subtlety caught while rewriting: `simulateFailure()`/
+     `retryItem()` both synchronously (same-thread, direct connection)
+     emit `itemUpdated` before returning, re-entering the state-machine
+     lambda before the outer call completes — the state has to be
+     advanced *before* triggering either, or the reentrant call sees the
+     stale stage and the real transition it was waiting for never gets
+     matched.
   **Manually run against two real, independent local SFTP servers**
   (`tools/local-test-servers/start-sftp-pubkey.sh`, twice, on different
   ports) via a throwaway harness (not committed — this project's

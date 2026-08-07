@@ -187,161 +187,204 @@ int main(int argc, char *argv[])
         if (!condition) allPass = false;
     };
 
+    // Event-driven, not time-driven — reacts to the ACTUAL itemUpdated
+    // signal each step is waiting for, rather than guessing a wall-clock
+    // delay by which it should have happened. This matters for real
+    // robustness, not just tidiness: an earlier, fixed-delay version of
+    // this test (generous margins, double nominal, passed 20+ repeated
+    // local runs) still flaked on a real CI runner doing other heavy work
+    // concurrently (a linuxdeploy AppImage build sharing the same job),
+    // and reproducing that locally under deliberate CPU contention (14
+    // busy-loop processes on a 16-core machine) made EVERY run fail —
+    // there is no fixed delay that's safe against arbitrary system load.
+    // Reacting to the real signal has no such ceiling.
+    enum class Stage {
+        A_WaitDownloadStarted, A_WaitUploadStarted, A_WaitDone,
+        B_WaitDownloadStarted, B_WaitCancelled,
+        C_WaitUploadStarted, C_WaitCancelled,
+        D_WaitUploadStarted, D_WaitFailed, D_WaitRetryDownloadStarted, D_WaitDone,
+        AllDone
+    };
+    Stage stage = Stage::A_WaitDownloadStarted;
+
     int currentItemId = -1;
     QString capturedTempPath;   // last known non-empty tempFilePath for the current item
-    TransferPhase lastKnownPhase = TransferPhase::None;
-    TransferStatus lastKnownStatus = TransferStatus::Queued;
+    QString oldTempPathD;       // scenario D's temp path, captured just before the simulated failure
 
     QObject::connect(manager, &TransferManager::itemAdded, &app, [&](const TransferItem &item) {
         currentItemId = item.id;
         capturedTempPath.clear();
-        lastKnownPhase = item.phase;
-        lastKnownStatus = item.status;
+        if (stage == Stage::A_WaitDownloadStarted) {
+            check("scenario A: enqueue() with both panes remote produces RemoteToRemote",
+                  item.direction == TransferDirection::RemoteToRemote);
+        }
     });
+
     QObject::connect(manager, &TransferManager::itemUpdated, &app, [&](const TransferItem &item) {
         if (item.id != currentItemId)
             return;
         if (!item.tempFilePath.isEmpty())
             capturedTempPath = item.tempFilePath;
-        lastKnownPhase = item.phase;
-        lastKnownStatus = item.status;
-    });
 
-    // Looks the current scenario's item up by id in the manager's own list
-    // — "not just a local variable" confirmation, same reasoning
-    // transfer_pause_test.cpp's own Paused check uses.
-    auto findCurrentItem = [&]() -> const TransferItem * {
-        for (const TransferItem &it : manager->items()) {
-            if (it.id == currentItemId)
-                return &it;
+        // Only a REAL tick (bytesDone > 0) proves downloadFile()/
+        // uploadFile() has actually started — dispatchActiveItem()'s own
+        // status=InProgress update fires (with bytesDone still 0) before
+        // the queued call to the backend has even been processed, so
+        // acting on that earlier update specifically (e.g. cancelling)
+        // could race with beginTransfer() resetting the fake's own
+        // m_cancelRequested flag right after. Waiting for a genuine tick
+        // sidesteps that race entirely.
+        const bool realProgressTick = item.status == TransferStatus::InProgress && item.bytesDone > 0;
+
+        switch (stage) {
+        case Stage::A_WaitDownloadStarted:
+            if (realProgressTick && item.phase == TransferPhase::Downloading) {
+                check("scenario A: phase 1 dispatched against the SOURCE fake with a real temp path",
+                      !sourceFake->lastDownloadLocalPath.isEmpty()
+                          && sourceFake->lastDownloadLocalPath == capturedTempPath);
+                check("scenario A: temp file genuinely exists on disk during phase 1",
+                      QFile::exists(capturedTempPath));
+                stage = Stage::A_WaitUploadStarted;
+            }
+            break;
+        case Stage::A_WaitUploadStarted:
+            if (realProgressTick && item.phase == TransferPhase::Uploading) {
+                check("scenario A: phase 2 dispatched against the DESTINATION fake with the SAME temp path",
+                      destFake->lastUploadLocalPath == capturedTempPath);
+                check("scenario A: the temp file existed when phase 2 started (real content from phase 1)",
+                      destFake->lastUploadLocalPathExisted);
+                stage = Stage::A_WaitDone;
+            }
+            break;
+        case Stage::A_WaitDone:
+            if (item.status == TransferStatus::Done) {
+                check("scenario A: temp file deleted after phase 2 completes", !QFile::exists(capturedTempPath));
+                stage = Stage::B_WaitDownloadStarted;
+                manager->enqueue(sourcePane, destPane, "fakefile.bin");
+            }
+            break;
+
+        // ---------- Scenario B: cancel mid-phase-1 ----------
+        case Stage::B_WaitDownloadStarted:
+            if (realProgressTick && item.phase == TransferPhase::Downloading) {
+                stage = Stage::B_WaitCancelled;   // set BEFORE cancelItem() — see reentrancy note below
+                manager->cancelItem(currentItemId);
+            }
+            break;
+        case Stage::B_WaitCancelled:
+            if (item.status == TransferStatus::Cancelled) {
+                check("scenario B: the (partially-written) temp file is cleaned up", !QFile::exists(capturedTempPath));
+                stage = Stage::C_WaitUploadStarted;
+                manager->enqueue(sourcePane, destPane, "fakefile.bin");
+            }
+            break;
+
+        // ---------- Scenario C: cancel mid-phase-2 (a real download
+        // already completed — this specifically exercises cleaning up an
+        // already-downloaded temp file, distinct from B's phase-1 case,
+        // and confirms m_currentBackend was actually re-pointed at the
+        // destination fake, since cancelItem() only ever targets
+        // m_currentBackend — if it weren't re-pointed, this cancel would
+        // silently hit the wrong (already-finished) backend and this
+        // stage would simply never see Cancelled, tripping the safety
+        // timeout below instead of a clean, immediate failure) ----------
+        case Stage::C_WaitUploadStarted:
+            if (realProgressTick && item.phase == TransferPhase::Uploading) {
+                stage = Stage::C_WaitCancelled;
+                manager->cancelItem(currentItemId);
+            }
+            break;
+        case Stage::C_WaitCancelled:
+            if (item.status == TransferStatus::Cancelled) {
+                check("scenario C: the already-downloaded temp file is cleaned up too",
+                      !QFile::exists(capturedTempPath));
+                stage = Stage::D_WaitUploadStarted;
+                manager->enqueue(sourcePane, destPane, "fakefile.bin");
+            }
+            break;
+
+        // ---------- Scenario D: a genuine (non-cancelled) phase-2
+        // failure, then retry — confirms retryItem() resets phase back to
+        // Downloading and allocates a valid temp path rather than trying
+        // to reuse the one cleanupTempFile() already deleted ----------
+        case Stage::D_WaitUploadStarted:
+            if (realProgressTick && item.phase == TransferPhase::Uploading) {
+                oldTempPathD = capturedTempPath;
+                // simulateFailure() emits transferFailed() SYNCHRONOUSLY
+                // (a direct, same-thread connection to onBackendFailed()),
+                // which re-enters this very lambda before this call
+                // returns — stage MUST already read D_WaitFailed by then,
+                // or that reentrant call would (harmlessly, but
+                // pointlessly) re-match THIS case instead, and the real
+                // Failed transition would have nothing left to trigger
+                // D_WaitFailed's handling, hanging until the safety
+                // timeout. Same reasoning applies to retryItem() below,
+                // which also synchronously emits itemUpdated (Queued)
+                // before its own async re-dispatch.
+                stage = Stage::D_WaitFailed;
+                destFake->simulateFailure();
+            }
+            break;
+        case Stage::D_WaitFailed:
+            if (item.status == TransferStatus::Failed) {
+                check("scenario D: the failed phase's temp file was cleaned up",
+                      !oldTempPathD.isEmpty() && !QFile::exists(oldTempPathD));
+                stage = Stage::D_WaitRetryDownloadStarted;
+                manager->retryItem(currentItemId);
+            }
+            break;
+        case Stage::D_WaitRetryDownloadStarted:
+            if (realProgressTick && item.phase == TransferPhase::Downloading) {
+                // allocateTempFilePath() is deterministic on item.id +
+                // fileName, so retrying the SAME item legitimately
+                // regenerates the SAME path — the old file was already
+                // deleted by onBackendFailed()'s cleanup, so reusing that
+                // filename is harmless, not evidence of a stale
+                // reference. What actually matters (and what the
+                // retryItem() fix this scenario targets is about) is
+                // proven by the two checks below instead: a real,
+                // non-empty path was allocated, AND dispatch went back to
+                // downloadFile() against the SOURCE fake — not straight
+                // to uploadFile() against a tempFilePath that was still
+                // pointing at the now-deleted file, which is what would
+                // happen without the fix (phase would still read
+                // Uploading).
+                check("scenario D: retry allocates a valid (re-creatable) temp path",
+                      !capturedTempPath.isEmpty());
+                check("scenario D: retry re-dispatches against the SOURCE fake (not stuck trying to re-upload)",
+                      sourceFake->lastDownloadLocalPath == capturedTempPath);
+                stage = Stage::D_WaitDone;
+            }
+            break;
+        case Stage::D_WaitDone:
+            if (item.status == TransferStatus::Done) {
+                stage = Stage::AllDone;
+                qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
+                app.exit(allPass ? 0 : 1);
+            }
+            break;
+        case Stage::AllDone:
+            break;
         }
-        return nullptr;
-    };
-
-    // Nominal per-phase duration is 10 ticks x 30ms = 300ms, but each tick
-    // does real synchronous QFile I/O (open/append/close), and by the time
-    // later scenarios run, several prior phases' worth of that I/O plus
-    // ordinary event-loop/OS scheduling jitter has accumulated — margins
-    // below are deliberately generous (not the tightest that happened to
-    // pass once) so this doesn't flake as more scenarios run later in the
-    // same process, the same reasoning transfer_pause_test.cpp's own
-    // margins already follow.
-
-    // ---------- Scenario A: full happy path, both phases complete ----------
-    QTimer::singleShot(100, &app, [&]() {
-        manager->enqueue(sourcePane, destPane, "fakefile.bin");
     });
 
-    QTimer::singleShot(300, &app, [&]() {
-        const TransferItem *item = findCurrentItem();
-        check("scenario A: enqueue() with both panes remote produces RemoteToRemote",
-              currentItemId > 0 && item && item->direction == TransferDirection::RemoteToRemote);
-        check("scenario A: phase 1 dispatched against the SOURCE fake with a real temp path",
-              !sourceFake->lastDownloadLocalPath.isEmpty()
-                  && sourceFake->lastDownloadLocalPath == capturedTempPath);
-        check("scenario A: temp file genuinely exists on disk during phase 1",
-              QFile::exists(capturedTempPath));
-    });
+    manager->enqueue(sourcePane, destPane, "fakefile.bin");
 
-    QTimer::singleShot(600, &app, [&]() {
-        check("scenario A: phase 1 completion transitions to Uploading",
-              lastKnownPhase == TransferPhase::Uploading);
-        check("scenario A: phase 2 dispatched against the DESTINATION fake with the SAME temp path",
-              destFake->lastUploadLocalPath == capturedTempPath);
-        check("scenario A: the temp file existed when phase 2 started (real content from phase 1)",
-              destFake->lastUploadLocalPathExisted);
-    });
-
-    QTimer::singleShot(1000, &app, [&]() {
-        check("scenario A: item reaches Done", lastKnownStatus == TransferStatus::Done);
-        check("scenario A: temp file deleted after phase 2 completes", !QFile::exists(capturedTempPath));
-    });
-
-    // ---------- Scenario B: cancel mid-phase-1 ----------
-    QTimer::singleShot(1300, &app, [&]() {
-        manager->enqueue(sourcePane, destPane, "fakefile.bin");
-    });
-
-    QTimer::singleShot(1450, &app, [&]() {
-        check("scenario B: still in phase 1 when cancelled", lastKnownPhase == TransferPhase::Downloading);
-        manager->cancelItem(currentItemId);
-    });
-
-    QTimer::singleShot(1700, &app, [&]() {
-        check("scenario B: cancel mid-phase-1 produces Cancelled", lastKnownStatus == TransferStatus::Cancelled);
-        check("scenario B: the (partially-written) temp file is cleaned up", !QFile::exists(capturedTempPath));
-    });
-
-    // ---------- Scenario C: cancel mid-phase-2 (a real download already
-    // completed — this specifically exercises cleaning up an
-    // already-downloaded temp file, distinct from B's phase-1 case, and
-    // confirms m_currentBackend was actually re-pointed at the destination
-    // fake, since cancelItem() only ever targets m_currentBackend) ----------
-    QTimer::singleShot(2000, &app, [&]() {
-        manager->enqueue(sourcePane, destPane, "fakefile.bin");
-    });
-
-    QTimer::singleShot(2500, &app, [&]() {
-        check("scenario C: phase 1 completed, now in phase 2 when cancelled",
-              lastKnownPhase == TransferPhase::Uploading);
-        manager->cancelItem(currentItemId);
-    });
-
-    QTimer::singleShot(2750, &app, [&]() {
-        check("scenario C: cancel mid-phase-2 produces Cancelled", lastKnownStatus == TransferStatus::Cancelled);
-        check("scenario C: the already-downloaded temp file is cleaned up too",
-              !QFile::exists(capturedTempPath));
-    });
-
-    // ---------- Scenario D: a genuine (non-cancelled) phase-2 failure,
-    // then retry — confirms retryItem() resets phase back to Downloading
-    // and allocates a FRESH temp path rather than re-using the one
-    // cleanupTempFile() already deleted ----------
-    QTimer::singleShot(3050, &app, [&]() {
-        manager->enqueue(sourcePane, destPane, "fakefile.bin");
-    });
-
-    QString oldTempPath;
-    QTimer::singleShot(3550, &app, [&]() {
-        check("scenario D: phase 1 completed, now in phase 2 before the simulated failure",
-              lastKnownPhase == TransferPhase::Uploading);
-        oldTempPath = capturedTempPath;
-        destFake->simulateFailure();
-    });
-
-    QTimer::singleShot(3800, &app, [&]() {
-        check("scenario D: a genuine phase-2 failure produces Failed, not Cancelled",
-              lastKnownStatus == TransferStatus::Failed);
-        check("scenario D: the failed phase's temp file was cleaned up",
-              !oldTempPath.isEmpty() && !QFile::exists(oldTempPath));
-        manager->retryItem(currentItemId);
-    });
-
-    QTimer::singleShot(4050, &app, [&]() {
-        check("scenario D: retry resets phase back to Downloading", lastKnownPhase == TransferPhase::Downloading);
-        // allocateTempFilePath() is deterministic on item.id + fileName, so
-        // retrying the SAME item legitimately regenerates the SAME path —
-        // the old file was already deleted by onBackendFailed()'s cleanup,
-        // so reusing that filename is harmless, not evidence of a stale
-        // reference. What actually matters (and what the retryItem() fix
-        // this scenario targets is about) is proven by the two checks
-        // below instead: a real, non-empty path was allocated, AND
-        // dispatch went back to downloadFile() against the SOURCE fake —
-        // not straight to uploadFile() against a tempFilePath that was
-        // still pointing at the now-deleted file, which is what would
-        // happen without the fix (phase would still read Uploading).
-        check("scenario D: retry allocates a valid (re-creatable) temp path",
-              !capturedTempPath.isEmpty());
-        check("scenario D: retry re-dispatches against the SOURCE fake (not stuck trying to re-upload)",
-              sourceFake->lastDownloadLocalPath == capturedTempPath);
-    });
-
-    QTimer::singleShot(4750, &app, [&]() {
-        check("scenario D: after retry, the item still completes normally end to end",
-              lastKnownStatus == TransferStatus::Done);
-
-        qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
-        app.exit(allPass ? 0 : 1);
+    // Safety net, not the primary mechanism: if a real bug ever breaks an
+    // expected state transition (e.g. m_currentBackend NOT actually
+    // re-pointed, so a cancel silently hits the wrong backend), the state
+    // machine above would otherwise wait forever for a signal that will
+    // never come. A generous absolute deadline turns that into a clear,
+    // fast, informative failure instead of an indefinite hang tying up a
+    // CI job.
+    QTimer::singleShot(20000, &app, [&]() {
+        if (stage == Stage::AllDone)
+            return;
+        check(QStringLiteral("test timed out waiting for a state transition (stuck at stage %1)")
+                  .arg(static_cast<int>(stage)),
+              false);
+        qDebug() << "[test] AT LEAST ONE FAILURE";
+        app.exit(1);
     });
 
     return app.exec();
