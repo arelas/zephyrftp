@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.5.0] — Server-side Move between panes on the same connection
+
 ### Added
 
 - **Move, not just copy, between two panes on the same server (or both on
@@ -803,7 +805,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/arelas/zephyrftp/releases/tag/v0.5.0
 [0.4.0]: https://github.com/arelas/zephyrftp/releases/tag/v0.4.0
 [0.3.9]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.9
 [0.3.8]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.8
