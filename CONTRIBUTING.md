@@ -608,8 +608,10 @@ mid-transfer cancel/pause/resume, and all of `FtpBackend` used to be
 genuinely unverified as a result (see ARCHITECTURE.md's Known gaps):
 nothing in this environment could reach a real server that way.
 `tools/local-test-servers/` closes that — throwaway local `sshd`/FTP/FTPS
-servers (no root, no system config touched) plus six harnesses that
-drive the real backend classes against them:
+servers (no root, no system config touched) plus eight harnesses that
+drive the real backend classes (and, for the two Move/remote-to-remote
+ones, real `TransferManager`/`FilePaneWidget` orchestration on top of
+them, not just the backend directly) against them:
 
 ```
 tools/local-test-servers/start-sftp-pubkey.sh
@@ -627,6 +629,41 @@ QT_QPA_PLATFORM=offscreen ./build/verify-ftps-trust
 
 tools/local-test-servers/stop-all.sh
 ```
+
+Two more, specifically for `TransferManager`'s server-side Move and
+remote-to-remote features — see each `.cpp`'s own header comment for the
+exact real-server gap each one closes, and ARCHITECTURE.md's
+Verification status entries for both features. `verify-sftp-move` needs
+one `start-sftp-pubkey.sh` instance (two independent connections *to*
+it — real cross-pane Move eligibility, not simulated);
+`verify-remote-to-remote-live` needs two independent instances on
+different ports (two genuinely different servers, matching
+`TransferManager`'s remote-to-remote staging path):
+
+```
+tools/local-test-servers/start-sftp-pubkey.sh
+cmake --build build --target verify-sftp-move
+QT_QPA_PLATFORM=offscreen SFTP_TEST_SCRATCH=/tmp/zephyrftp-local-test-servers/sftp \
+    ./build/verify-sftp-move
+tools/local-test-servers/stop-all.sh
+
+SFTP_TEST_SCRATCH=/tmp/zephyrftp-local-test-servers/sftp-a SFTP_TEST_PORT=2222 \
+    tools/local-test-servers/start-sftp-pubkey.sh
+SFTP_TEST_SCRATCH=/tmp/zephyrftp-local-test-servers/sftp-b SFTP_TEST_PORT=2224 \
+    tools/local-test-servers/start-sftp-pubkey.sh
+cmake --build build --target verify-remote-to-remote-live
+QT_QPA_PLATFORM=offscreen \
+    SFTP_TEST_SCRATCH_A=/tmp/zephyrftp-local-test-servers/sftp-a SFTP_TEST_PORT_A=2222 \
+    SFTP_TEST_SCRATCH_B=/tmp/zephyrftp-local-test-servers/sftp-b SFTP_TEST_PORT_B=2224 \
+    ./build/verify-remote-to-remote-live
+tools/local-test-servers/stop-all.sh
+```
+
+Both are safe to re-run against the same already-running server(s)
+without a restart — each resets its own fixtures/leftover destination
+files up front for exactly that reason (see each `.cpp`'s own header
+comment for the real conflict-collision bug that not doing so produced
+during development).
 
 `tools/local-test-servers/containers/` goes one step further: real
 vsftpd/proftpd/Dropbear, not pyftpdlib — each built from its own
@@ -668,7 +705,9 @@ hit and fixed while building the vsftpd/proftpd/Dropbear containers) and
 ARCHITECTURE.md's Known gaps entries for FTP/FTPS, certificate
 trust-on-first-use, public-key authentication, cancel/pause/resume, and
 vendor diversity for exactly what's confirmed and what still isn't,
-even after this. These six targets are `EXCLUDE_FROM_ALL` like the main
+even after this, plus Move/remote-to-remote's own entries there for what
+`verify-sftp-move`/`verify-remote-to-remote-live` specifically confirm.
+These eight targets are `EXCLUDE_FROM_ALL` like the main
 ten but intentionally **not** part of that suite or CI — an
 external-server precondition is a different category from "always runs
 the same way," which is the whole point of the other ten.

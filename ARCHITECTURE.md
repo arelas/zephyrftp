@@ -2048,29 +2048,40 @@ along the way — worth knowing about if it ever needs touching again.
      matched.
   **Manually run against two real, independent local SFTP servers**
   (`tools/local-test-servers/start-sftp-pubkey.sh`, twice, on different
-  ports) via a throwaway harness (not committed — this project's
+  ports) via an earlier throwaway harness (not committed — this project's
   established pattern for one-off verification passes): confirmed a real
   20MB file's download half completing correctly over a real SSH
   connection with real chunked progress reporting, the phase transition to
   the upload half firing correctly against real I/O (`bytesDone` reset,
   `phase` flipped, matching the fake-backend test's own findings), and —
   in one run — a real mid-transfer cancel against a live server producing
-  the correct `Cancelled` result. **Not cleanly, repeatably confirmed**: a
-  full small-file transfer completing to `Done` end-to-end against two
-  real servers in one clean run — the throwaway harness had its own
-  sequencing bugs (not waiting for both panes' initial connections before
-  enqueueing, a destination-conflict collision from both test servers
-  sharing an identical fixture file) that were being iterated on when this
-  note was written, rather than a suspected defect in `TransferManager`
-  itself — the fake-backend test's clean, deterministic pass on the exact
-  same dispatch/phase-transition code, plus the real evidence above of
-  that same code executing correctly against genuine backend I/O, is why
-  this is recorded as "not yet cleanly confirmed" rather than "found
-  broken." A proper, committed, automated live-two-server harness
-  (mirroring `verify-sftp-pause-cancel`'s pattern — two real servers
-  already running, a `verify-*` `EXCLUDE_FROM_ALL` target driving a real
-  end-to-end transfer between them) would close this gap for good; not
-  attempted in this pass.
+  the correct `Cancelled` result. At the time, a full small-file transfer
+  completing to `Done` end-to-end against two real servers in one clean
+  run was **not** cleanly, repeatably confirmed — that throwaway harness
+  had its own sequencing bugs, not a suspected defect in `TransferManager`.
+  **Now closed** by a proper, committed, automated live-two-server
+  harness: `verify-remote-to-remote-live`
+  (`src/verify_remote_to_remote_live.cpp`, `EXCLUDE_FROM_ALL`, needs two
+  `start-sftp-pubkey.sh` instances on different ports already running),
+  mirroring `verify-sftp-pause-cancel`'s pattern — two real servers, a
+  real end-to-end transfer between them, real content verified
+  byte-for-byte on the destination server's own disk afterward. Fixed
+  three real bugs along the way, all in the harness, not
+  `TransferManager` (the file's own header comment has the full account):
+  the two the throwaway version's notes already named (not waiting for
+  BOTH panes' `connected` signal before calling `enqueue()`; a real
+  destination conflict from both independent servers happening to have
+  their own identically-named `sample.txt` fixture, which a uniquely-named
+  fixture this harness creates itself avoids), plus a third found only
+  once this version actually ran repeatedly: re-running the harness
+  against the same already-running servers (a completely reasonable
+  thing to do) left the *previous* run's completed transfer sitting at
+  the destination, producing a real conflict prompt this headless `main()`
+  had no way to dismiss — fixed by deleting any stale destination copy up
+  front, making the harness safely idempotent across repeated runs
+  instead of requiring a fresh server restart each time. Confirmed stable
+  across multiple consecutive clean runs against the same live server
+  pair after that fix.
   **Known, accepted gap, not attempted here:** if the app closes while a
   `RemoteToRemote` item is still mid-flight, its temp file leaks for that
   run — `closeEvent()` tears down both panes' backends without
@@ -2084,8 +2095,9 @@ along the way — worth knowing about if it ever needs touching again.
   machinery than this pass attempts.
 - **Server-side Move (a single-round-trip rename between two panes on the
   same connection) is now supported, covered by a deterministic
-  fake-backend test plus a direct real-`LocalBackend` check — not yet
-  exercised against two live remote servers.** `move-entry-test`
+  fake-backend test, a direct real-`LocalBackend` check, AND a real
+  two-connection SFTP server, including the specific directory-rename
+  claim that used to be unconfirmed.** `move-entry-test`
   (`src/move_entry_test.cpp`) covers `TransferManager::moveEligible()`'s
   `connectionIdentity()`-equality guard both ways (two backends reporting
   the same identity dispatch through `moveEntry()`; two reporting
@@ -2100,20 +2112,33 @@ along the way — worth knowing about if it ever needs touching again.
   the same test drives a real `LocalBackend` against real temp files: a
   plain file move, a move onto an *existing* destination file (confirming
   it overwrites, unlike `renameEntry()`), and a folder move including its
-  nested contents. **Not covered**: the "Write Into an existing folder
-  fails" path (`TransferManager::onDestinationExistsChecked()`'s
-  Move-conflict branch when a folder conflict is resolved as Write
-  Into) — exercising it would mean driving a live `askConflict()`
-  `QMessageBox`, the same category of manual-only gap
-  `conflict-resolution-test` already accepts for the ordinary transfer
-  path; a real cross-pane move against two live SFTP/FTP servers on the
-  same connection (this project's live-server harnesses target one
-  server per test, not two independent servers exposing the SAME
-  `connectionIdentity()`); and whether `libssh2_sftp_rename()`/`RNFR`+
-  `RNTO` genuinely relocate a *directory* (not just a file) server-side —
-  expected, standard `rename(2)`-equivalent semantics, but unconfirmed
-  against a real server the way the fake-backend test's directory case
-  necessarily can't be.
+  nested contents.
+  `verify-sftp-move` (`src/verify_sftp_move.cpp`, `EXCLUDE_FROM_ALL`, needs
+  `tools/local-test-servers/start-sftp-pubkey.sh` already running) closes
+  the real-server gap: two independent `SftpBackend` connections to the
+  SAME server — a real `connectionIdentity()` match discovered at
+  runtime, not two fakes hardcoded to report a matching string — moving a
+  real file and a real whole folder from the server's root into its
+  `uploads/` subdirectory. Confirms, against a real server, exactly the
+  claim that used to be unconfirmed: `libssh2_sftp_rename()` genuinely
+  relocates a **directory**, not just a file (verified via the nested
+  fixture — `a.txt`, two subdirectories including one genuinely empty one
+  — all surviving intact at the new path). Made idempotent across
+  repeated runs against the same already-running server after an early
+  attempt found a real "stale destination from a previous run" conflict
+  the headless harness had no way to dismiss (see the file's own header
+  comment) — the same category of finding, not a coincidence, as the
+  next entry's bug #3.
+  **Not covered by either**: the "Write Into an existing folder fails"
+  path (`TransferManager::onDestinationExistsChecked()`'s Move-conflict
+  branch when a folder conflict is resolved as Write Into) — exercising
+  it would mean driving a live `askConflict()` `QMessageBox`, the same
+  category of manual-only gap `conflict-resolution-test` already accepts
+  for the ordinary transfer path, and that dialog wiring is pure Qt/UI
+  code with zero backend dependency already exercised there with fakes;
+  and FTP's `RNFR`/`RNTO` directory-rename equivalent — `verify-sftp-move`
+  only exercises SFTP, and this project's FTP live-server harnesses don't
+  yet drive `TransferManager`/`moveEntry()` the way this one does.
 - **`SftpBackend`'s `listDirectoryForEnumeration()` and the full
   `FolderEnumerator` recursive walk are now confirmed against a real
   server, including the trickiest cases.** Same harness as the

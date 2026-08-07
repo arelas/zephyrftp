@@ -521,6 +521,61 @@ target_link_libraries(verify-sftp-pause-cancel PRIVATE
     Qt6::Widgets Qt6::Network Qt6::Concurrent ${LIBSSH2_TARGET}
 )
 
+# --- Move (server-side rename between two panes on the same connection)
+# against a REAL server — see src/verify_sftp_move.cpp's own header
+# comment. Unlike every other verify-* target above, this drives
+# TransferManager/FilePaneWidget against real SftpBackend connections
+# (not just a raw backend), so it needs the same source set
+# move-entry-test does, plus SftpBackend/HostKeyVerifier for the real
+# connection. Needs tools/local-test-servers/start-sftp-pubkey.sh
+# already running.
+qt_add_executable(verify-sftp-move EXCLUDE_FROM_ALL
+    src/verify_sftp_move.cpp
+    src/AppSettings.cpp
+    src/ui/FilePaneWidget.cpp
+    src/ui/FileTreeView.cpp
+    src/ui/IconTheme.cpp
+    src/ui/HostKeyVerifier.cpp
+    src/backends/LocalBackend.cpp
+    src/backends/SftpBackend.cpp
+    src/backends/RemoteBackend.h
+    src/transfer/TransferManager.cpp
+    src/transfer/FolderEnumerator.cpp
+    resources/icons.qrc
+    resources/theme.qrc
+)
+target_include_directories(verify-sftp-move PRIVATE src)
+target_link_libraries(verify-sftp-move PRIVATE
+    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET}
+)
+
+# --- Remote-to-remote staged transfer against TWO REAL, independent
+# SFTP servers — see src/verify_remote_to_remote_live.cpp's own header
+# comment for the specific "not cleanly, repeatably confirmed" gap this
+# closes. Same source set as verify-sftp-move above (drives
+# TransferManager/FilePaneWidget against real connections). Needs TWO
+# tools/local-test-servers/start-sftp-pubkey.sh instances already
+# running on different ports.
+qt_add_executable(verify-remote-to-remote-live EXCLUDE_FROM_ALL
+    src/verify_remote_to_remote_live.cpp
+    src/AppSettings.cpp
+    src/ui/FilePaneWidget.cpp
+    src/ui/FileTreeView.cpp
+    src/ui/IconTheme.cpp
+    src/ui/HostKeyVerifier.cpp
+    src/backends/LocalBackend.cpp
+    src/backends/SftpBackend.cpp
+    src/backends/RemoteBackend.h
+    src/transfer/TransferManager.cpp
+    src/transfer/FolderEnumerator.cpp
+    resources/icons.qrc
+    resources/theme.qrc
+)
+target_include_directories(verify-remote-to-remote-live PRIVATE src)
+target_link_libraries(verify-remote-to-remote-live PRIVATE
+    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET}
+)
+
 # --- SSH-daemon diversity: real Dropbear (password auth), not just
 # OpenSSH — see src/verify_sftp_vendors.cpp's own header comment for the
 # honest accounting of what this does and doesn't prove. Needs

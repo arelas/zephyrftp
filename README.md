@@ -195,14 +195,13 @@ rather than being half-implemented:
   means roughly twice the transfer time of a direct copy, and briefly
   uses local disk space equal to the file's size. Verified against a
   real fake-backend orchestration test (direction/phase handling,
-  temp-file cleanup on success and on cancellation during either half);
-  also manually confirmed against two real local SFTP servers — a real
-  multi-megabyte file's download half completed correctly with real
-  chunked progress, the transition to the upload half fired correctly,
-  and a real mid-transfer cancel against a live server produced the
-  correct result. A fully automated, repeatable live-two-server test
-  (mirroring `verify-sftp-pause-cancel`'s pattern) hasn't been built yet
-  — see ARCHITECTURE.md's Known gaps.
+  temp-file cleanup on success and on cancellation during either half)
+  and a real, automated, repeatable live-two-server test (`verify-remote-to-remote-live`,
+  mirroring `verify-sftp-pause-cancel`'s pattern) confirming a real file
+  transfers end to end between two genuinely independent local SFTP
+  servers with the destination's content matching the source
+  byte-for-byte — see ARCHITECTURE.md's `TransferManager` entry for the
+  full detail.
 - **Move can't merge into a folder that already exists at the
   destination.** A server-side rename can relocate a whole folder in one
   step, but it can't combine it with an existing folder of the same name

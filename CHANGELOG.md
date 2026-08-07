@@ -8,6 +8,21 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Changed (developer-facing only, no shipped behavior)
+
+- **Two new automated live-server verification harnesses**
+  (`verify-sftp-move`, `verify-remote-to-remote-live`), closing two gaps
+  ARCHITECTURE.md previously flagged as unconfirmed against a real
+  server: whether a server-side Move genuinely relocates a *directory*
+  (not just a file), and a full remote-to-remote transfer completing
+  end-to-end between two genuinely independent live SFTP servers with
+  byte-for-byte content confirmed on the destination's own disk. Both
+  found and fixed real conflict-collision bugs in the harnesses
+  themselves along the way (not in `TransferManager`) — see each `.cpp`'s
+  own header comment, ARCHITECTURE.md's `RemoteBackend`/`TransferManager`
+  Verification status entries, and CONTRIBUTING.md's live-server
+  verification section for the full detail.
+
 ## [0.5.0] — Server-side Move between panes on the same connection
 
 ### Added
