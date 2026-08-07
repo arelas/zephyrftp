@@ -58,6 +58,7 @@ public:
 
     QString currentPath() const override { return QStringLiteral("/fake"); }
     bool isLocalFilesystem() const override { return false; }
+    QString connectionIdentity() const override { return QStringLiteral("fake"); }
     void requestCancel() override {}
     void requestPause() override {}
 
@@ -72,6 +73,9 @@ public slots:
     void uploadFile(const QString &, const QString &, qint64 = 0) override {}
     void deleteEntry(const QString &, bool) override {}
     void renameEntry(const QString &, const QString &) override {}
+    void moveEntry(const QString &, const QString &, int requestId) override {
+        emit entryMoveFailed(QStringLiteral("Not implemented"), requestId);
+    }
     void createDirectory(const QString &) override {}
     void createFile(const QString &) override {}
     void listDirectoryForEnumeration(const QString &, int) override {}

@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QList>
+#include <QHash>
 #include <QElapsedTimer>
 #include <QPointer>
 #include "TransferItem.h"
@@ -38,6 +39,53 @@ public:
     // discovered file stages through its own local temp file via
     // enqueue()'s RemoteToRemote handling, same as a standalone file.
     void enqueueFolder(FilePaneWidget *sourcePane, FilePaneWidget *destPane, const QString &folderName);
+
+    // Moves a single file/folder-root server-side within ONE backend (both
+    // panes on the same connection — see moveEligible()/
+    // RemoteBackend::connectionIdentity()) instead of enqueue()'s
+    // download+upload. Deliberately NOT routed through the ordinary
+    // Queued/m_activeIndex pipeline: a rename is a single control-
+    // connection round trip, not a data transfer with meaningful
+    // progress/pause/cancel, so nothing is gained by serializing it
+    // behind whatever enqueue()'d transfer happens to be running —
+    // it's simply dispatched (and since it targets the SAME backend
+    // object as any transfer already running against it, still only
+    // actually executes after that transfer's own queued call returns,
+    // courtesy of Qt's per-thread FIFO event queue — no explicit
+    // coordination needed here). Still appends a TransferItem and emits
+    // itemAdded/itemUpdated so it's visible in the same queue view.
+    // Silently does nothing if the two panes aren't move-eligible —
+    // MainWindow is expected to have already checked moveEligible() and
+    // shown its own explanatory message before ever calling this, so
+    // reaching here ineligible means a caller bug, not a user-facing
+    // case worth its own error path.
+    void moveEntry(FilePaneWidget *sourcePane, FilePaneWidget *destPane, const QString &fileName);
+
+    // Same idea for a whole folder: skips FolderEnumerator entirely and
+    // issues one backend moveEntry() call on the folder's root path —
+    // the whole subtree relocates for free as a side effect of the
+    // server renaming the parent directory. Reuses the same root-level
+    // conflict check enqueueFolder() runs (via askConflict()) for a
+    // consistent prompt, but unlike enqueueFolder()'s "Write Into"
+    // (merge into an existing folder by transferring every file
+    // individually), a single rename() call cannot merge into a
+    // non-empty existing destination (POSIX rename(2) semantics, which
+    // both SFTP's RENAME and FTP's RNFR/RNTO map onto: renaming onto a
+    // non-empty directory fails). "Write Into" here therefore fails the
+    // move with a clear message rather than attempting anything —
+    // real merge machinery (copy the tree, then delete the source)
+    // would be significant new scope this project's existing "no
+    // recursive delete" precedent argues against, not a small addition
+    // to this pass.
+    void moveFolder(FilePaneWidget *sourcePane, FilePaneWidget *destPane, const QString &folderName);
+
+    // True when both panes have a backend and both report the same,
+    // non-empty connectionIdentity() — the precondition for both methods
+    // above. Public so MainWindow can check it BEFORE ever calling
+    // moveEntry()/moveFolder(), to show its own explanatory message for
+    // the ineligible case rather than relying on this class's silent
+    // no-op.
+    static bool moveEligible(FilePaneWidget *sourcePane, FilePaneWidget *destPane);
 
     // Cancels by id. If the item is Queued (hasn't started), just marks it
     // Cancelled directly — nothing to interrupt. If it's the currently
@@ -116,6 +164,16 @@ private slots:
     // shared one) keep these from corrupting each other if that happens.
     void onDestinationExistsChecked(const QString &path, bool exists, bool isDir, int requestId);
 
+    // Response to a moveEntry() backend call — requestId-correlated
+    // against m_pendingMoveItemId (NOT m_activeIndex; move items never
+    // become "the active item" — see moveEntry()'s own doc comment),
+    // since unlike the single-file/single-folder conflict check above,
+    // more than one move's backend call could plausibly be in flight
+    // at once if the person fires off several "Move Selected" actions
+    // in quick succession.
+    void onEntryMoved(int requestId);
+    void onEntryMoveFailed(const QString &reason, int requestId);
+
 private:
     void startNext();
     void connectToBackend(RemoteBackend *backend);
@@ -184,6 +242,24 @@ private:
     // can genuinely happen).
     void ensureExistsCheckConnected(RemoteBackend *backend);
 
+    // Same idea as ensureExistsCheckConnected() but for the
+    // entryMoved/entryMoveFailed pair moveEntry()/moveFolder() below
+    // rely on — connects both, Qt::UniqueConnection so repeat calls
+    // against the same backend are harmless no-ops.
+    void ensureMoveConnected(RemoteBackend *backend);
+
+    // Second half of moveEntry()/moveFolder(): called once a
+    // destination conflict check has come back clear (or been resolved
+    // as Overwrite/Write Into) for a SINGLE root path — appends the
+    // visible TransferItem, dispatches the actual backend moveEntry()
+    // call, and stashes the request id -> item id mapping
+    // onEntryMoved()/onEntryMoveFailed() resolve against. name is a
+    // folder or file name relative to both panes' current directories;
+    // identical for a file move and a whole-folder move, since a folder
+    // move is just this same single call issued against the folder's
+    // root path instead of individually walking its contents.
+    void dispatchMoveEntry(FilePaneWidget *sourcePane, FilePaneWidget *destPane, const QString &name);
+
     // Shows the Overwrite/Skip (files) or Write Into/Skip (folders)
     // dialog. Returns true for Overwrite/Write Into, false for Skip;
     // applyToAll is set from the "do this for all remaining conflicts"
@@ -250,4 +326,27 @@ private:
     FilePaneWidget *m_pendingFolderSourcePane = nullptr;
     FilePaneWidget *m_pendingFolderDestPane = nullptr;
     QString m_pendingFolderName;
+
+    // Stashed while moveEntry()'s/moveFolder()'s own root-conflict check
+    // is in flight — a separate id/stash from the two pairs above
+    // (rather than reusing m_pendingFileConflictCheckId or
+    // m_pendingFolderConflictCheckId) so a Move's conflict check can
+    // never collide with an ordinary enqueue()/enqueueFolder() check
+    // that happens to be in flight at the same moment; m_isFolder
+    // distinguishes which of the two askConflict() wordings + which
+    // post-conflict path (dispatch vs. the "can't merge" failure) to
+    // use once the response arrives.
+    int m_pendingMoveConflictCheckId = -1;
+    FilePaneWidget *m_pendingMoveSourcePane = nullptr;
+    FilePaneWidget *m_pendingMoveDestPane = nullptr;
+    QString m_pendingMoveName;
+    bool m_pendingMoveIsFolder = false;
+
+    // Maps a moveEntry() backend-call request id to the TransferItem::id
+    // it belongs to, resolved in onEntryMoved()/onEntryMoveFailed(). Not
+    // reusing m_activeIndex/m_currentBackend for this — move items are
+    // deliberately never "the active item" (see moveEntry()'s doc
+    // comment), so several could plausibly have calls in flight at once.
+    int m_nextMoveRequestId = 1;
+    QHash<int, int> m_pendingMoveItemId;
 };

@@ -64,6 +64,7 @@ public:
 
     void deleteEntry(const QString &path, bool isDirectory) override;
     void renameEntry(const QString &oldPath, const QString &newPath) override;
+    void moveEntry(const QString &oldPath, const QString &newPath, int requestId) override;
     void createDirectory(const QString &path) override;
     void createFile(const QString &path) override;
     void listDirectoryForEnumeration(const QString &path, int requestId) override;
@@ -71,6 +72,15 @@ public:
 
     QString currentPath() const override;
     bool isLocalFilesystem() const override { return false; }
+
+    // "sftp://" + username@host:port — deliberately excludes any path
+    // (starting directory is irrelevant to "is this the same server"),
+    // and the scheme prefix keeps this from ever comparing equal to an
+    // FtpBackend's identity even if host/port/username happened to match,
+    // since a Move needs one single rename call within one protocol —
+    // there's no way to rename across an SFTP session and an FTP session
+    // even if they reach the identical physical machine.
+    QString connectionIdentity() const override;
 
     // Thread-safe: just flips m_cancelRequested. Called directly from the
     // GUI thread while downloadFile()/uploadFile()'s read/write loop (on
@@ -101,6 +111,15 @@ private:
     // until it returns. Returns false if m_hostKeyVerifier is null (fails
     // safe rather than silently trusting an unaskable host).
     bool askUserToTrustHostKey(const QString &fingerprint, bool isMismatch);
+
+    // Shared core of renameEntry()/moveEntry() — both ultimately issue the
+    // identical libssh2_sftp_rename() call (its OVERWRITE|ATOMIC|NATIVE
+    // flags already handle overwriting an existing destination, so unlike
+    // LocalBackend there's no separate pre-removal step needed for
+    // either caller); they differ only in what happens after
+    // (self-refresh + fileOperationFailed vs. requestId-correlated
+    // entryMoved/entryMoveFailed), which stays in each public method.
+    bool performRename(const QString &oldPath, const QString &newPath, QString *errorReason);
 
     SftpCredentials m_credentials;
     HostKeyVerifier *m_hostKeyVerifier = nullptr;   // GUI-thread object, not owned

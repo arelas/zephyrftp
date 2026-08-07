@@ -45,6 +45,13 @@ private slots:
     void onLeftFilesActivated(const QList<RemoteEntry> &entries);
     void onRightFilesActivated(const QList<RemoteEntry> &entries);
     void onFilesDropped(FilePaneWidget *sourcePane, const QList<RemoteEntry> &entries);
+
+    // Fired from a pane's "Move Selected" context-menu action — see
+    // FilePaneWidget::moveRequested()'s doc comment on why eligibility
+    // isn't checked until here.
+    void onLeftMoveRequested(const QList<RemoteEntry> &entries);
+    void onRightMoveRequested(const QList<RemoteEntry> &entries);
+
     void onConnectTriggered();
     void onSiteManagerTriggered();
     void onDisconnectTriggered();
@@ -99,6 +106,19 @@ private:
     // (directories) — a mixed selection is valid and handled item-by-item.
     void enqueueEntries(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
                          const QList<RemoteEntry> &entries);
+
+    // Same shape as enqueueEntries(), but for the "Move Selected" action:
+    // checks TransferManager::moveEligible() ONCE up front (rather than
+    // per-entry — eligibility depends only on the two panes' backends,
+    // not on which entry is being moved) and shows an explanatory
+    // QMessageBox if it isn't met, matching this app's existing
+    // "explicit failure message over silently hidden options" convention
+    // (e.g. Disconnect stays visible-but-disabled rather than hidden).
+    // Routes each entry to TransferManager::moveEntry() (files) or
+    // moveFolder() (directories), same file/folder split as
+    // enqueueEntries().
+    void moveEntries(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
+                      const QList<RemoteEntry> &entries);
 
     // Both start on LocalBackend; either can become remote via its own
     // path-bar icon menu (FilePaneWidget::connectRequested and friends) or,

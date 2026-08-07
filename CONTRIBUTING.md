@@ -573,6 +573,33 @@ same one the real app uses, cleaned up by the test itself (and by
 `TransferManager`'s own constructor, which sweeps any leftovers from a
 previous run on startup).
 
+### A thirteenth target: `move-entry-test`
+
+Same "additional, not folded into the fixed count" treatment as
+`sort-and-commands-test`/`remote-to-remote-test` above — self-contained,
+`EXCLUDE_FROM_ALL`, added to all four `build.yml` jobs. Covers the
+server-side Move feature: `TransferManager::moveEligible()`'s
+`connectionIdentity()`-equality guard (both the eligible and ineligible
+cases), `moveEntry()`/`moveFolder()`'s request-id-correlated dispatch to a
+backend's `moveEntry()` — confirming a folder move issues exactly one
+backend call against the folder's root path with
+`listDirectoryForEnumeration()` never called, i.e. `FolderEnumerator` is
+genuinely skipped, not just unobserved — and a real `LocalBackend`
+exercised against real temp files/directories (a plain file move, a move
+onto an existing destination file to confirm it overwrites, and a folder
+move including its nested contents). See `src/move_entry_test.cpp`'s own
+header comment and ARCHITECTURE.md's `RemoteBackend`/`TransferManager`
+entries for the full detail. Run it locally the same way:
+
+```
+cmake --build build --target move-entry-test
+QT_QPA_PLATFORM=offscreen ./build/move-entry-test
+```
+
+Needs no fixtures or environment overrides beyond `QT_QPA_PLATFORM` — it
+builds and wipes its own scratch directory (`/tmp/move_entry_test`) at the
+top of `main()`, same convention `sort-and-commands-test` uses.
+
 ## Live-server verification (SFTP public-key auth, FTP/FTPS, cancel/pause/resume)
 
 The ten targets above are deliberately self-contained — no external

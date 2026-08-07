@@ -227,6 +227,32 @@ void LocalBackend::renameEntry(const QString &oldPath, const QString &newPath)
     listDirectory(m_currentPath);
 }
 
+void LocalBackend::moveEntry(const QString &oldPath, const QString &newPath, int requestId)
+{
+    // Deliberately NOT sharing renameEntry()'s body above — the two have
+    // genuinely different pre-conditions, not just a different response
+    // mechanism. renameEntry() REJECTS outright if newPath already
+    // exists (the right behavior for the single-pane Rename context-menu
+    // action, which never goes through any conflict-resolution flow).
+    // moveEntry() is only ever called after TransferManager has already
+    // resolved a destination conflict itself (Overwrite for a file; a
+    // folder move never reaches here if something's already at newPath —
+    // see TransferManager::moveFolder()'s own comment on why a merge
+    // isn't attempted). A pre-existing FILE at newPath is removed first,
+    // the same established convention uploadFile() already uses for an
+    // Overwrite-resolved transfer, so QDir::rename() below succeeds
+    // instead of failing on an existing-destination check of its own.
+    const QFileInfo destInfo(newPath);
+    if (destInfo.exists() && destInfo.isFile())
+        QFile::remove(newPath);
+
+    if (!QDir().rename(oldPath, newPath)) {
+        emit entryMoveFailed(QStringLiteral("Move failed"), requestId);
+        return;
+    }
+    emit entryMoved(requestId);
+}
+
 void LocalBackend::createDirectory(const QString &path)
 {
     if (QFileInfo::exists(path)) {

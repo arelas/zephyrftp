@@ -80,6 +80,16 @@ public:
     QString currentPath() const override;
     bool isLocalFilesystem() const override { return false; }
 
+    // "ftp://" + username@host:port — same reasoning as SftpBackend's
+    // connectionIdentity(): no path component, and the scheme prefix keeps
+    // this from ever comparing equal to an SftpBackend's identity even for
+    // a matching host/port/username. Deliberately does NOT distinguish
+    // plain FTP from FTPS (FtpsMode) — RNFR/RNTO are control-connection
+    // commands unaffected by whether that connection happens to be
+    // TLS-wrapped, so encryption status has no bearing on whether a
+    // server-side rename between two sessions would work.
+    QString connectionIdentity() const override;
+
     // Same thread-safe-flag contract as SftpBackend's identically-named
     // methods — see RemoteBackend's doc comments on requestCancel()/
     // requestPause() for the full reasoning. Polled inside the
@@ -107,6 +117,7 @@ public slots:
 
     void deleteEntry(const QString &path, bool isDirectory) override;
     void renameEntry(const QString &oldPath, const QString &newPath) override;
+    void moveEntry(const QString &oldPath, const QString &newPath, int requestId) override;
     void createDirectory(const QString &path) override;
     void createFile(const QString &path) override;
 
@@ -133,6 +144,12 @@ private:
     };
 
     void teardown();
+
+    // Shared core of renameEntry()/moveEntry() — both issue the identical
+    // RNFR/RNTO command pair; they differ only in what happens after
+    // (self-refresh + fileOperationFailed vs. requestId-correlated
+    // entryMoved/entryMoveFailed), which stays in each public method.
+    bool performRename(const QString &oldPath, const QString &newPath, QString *errorReason);
 
     // Establishes the control connection if not already up: TCP
     // connect, (if FTPS) AUTH TLS + PBSZ 0 + PROT P, USER/PASS login,

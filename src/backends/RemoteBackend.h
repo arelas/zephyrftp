@@ -17,6 +17,20 @@ public:
 
     virtual QString currentPath() const = 0;
 
+    // An opaque, comparable identity for "which underlying filesystem/
+    // server this backend actually talks to" — used by TransferManager to
+    // decide whether a cross-pane Move can be done via a single server-side
+    // moveEntry() (rename) instead of the much slower stage-through-local-
+    // disk transfer path. Two backends with equal, non-empty identities are
+    // considered safe to rename directly between. LocalBackend returns a
+    // fixed constant (any two local panes are trivially the same real
+    // filesystem); SftpBackend/FtpBackend build one from host/port/username
+    // — deliberately including protocol (via each concrete class's own
+    // scheme prefix), since an SFTP session and an FTP session to the same
+    // hostname can never be renamed between via one call regardless of
+    // whether they're "really" the same box.
+    virtual QString connectionIdentity() const = 0;
+
     // Lets callers (the transfer queue, mainly) pick upload vs. download
     // semantics and argument order without needing dynamic_cast or an enum
     // of backend types. True only for LocalBackend.
@@ -83,6 +97,24 @@ public slots:
     // dangerous feature that wasn't asked for.
     virtual void deleteEntry(const QString &path, bool isDirectory) = 0;
     virtual void renameEntry(const QString &oldPath, const QString &newPath) = 0;
+
+    // A server-side move (rename) between two DIFFERENT panes' directories
+    // — deliberately NOT the same slot as renameEntry() above, even though
+    // both ultimately issue the identical underlying rename call. Two real
+    // differences TransferManager needs that renameEntry()'s "fire and
+    // refresh its own directory, implicit success" contract doesn't give:
+    // an explicit, request-id-correlated success signal (entryMoved) to
+    // drive a TransferItem's status off of — renameEntry() has no success
+    // signal at all, only the ABSENCE of fileOperationFailed, too indirect
+    // to build UI state on; and no self-triggered directory refresh, since
+    // a cross-pane move needs BOTH panes refreshed (TransferManager does
+    // this itself via the existing transferSucceeded signal once this
+    // succeeds), not just the one directory renameEntry() already knows
+    // about. Only ever called when the source and destination backends'
+    // connectionIdentity() already compared equal — implementations don't
+    // need to re-check that themselves.
+    virtual void moveEntry(const QString &oldPath, const QString &newPath, int requestId) = 0;
+
     virtual void createDirectory(const QString &path) = 0;
     // Creates an empty (zero-byte) file. Fails if a file already exists
     // at that path rather than silently truncating it — both backends
@@ -155,4 +187,11 @@ signals:
     // Response to checkExists(). isDir is meaningless when exists is
     // false — nothing to have a type.
     void existsChecked(const QString &path, bool exists, bool isDir, int requestId);
+
+    // Response to moveEntry() — requestId-correlated the same way
+    // existsChecked()/directoryEnumerated() already are. entryMoveFailed's
+    // reason is a human-readable string, same convention
+    // fileOperationFailed() already uses.
+    void entryMoved(int requestId);
+    void entryMoveFailed(const QString &reason, int requestId);
 };

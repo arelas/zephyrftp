@@ -1310,25 +1310,66 @@ void FtpBackend::deleteEntry(const QString &path, bool isDirectory)
     listDirectory(m_currentPath);
 }
 
-void FtpBackend::renameEntry(const QString &oldPath, const QString &newPath)
+bool FtpBackend::performRename(const QString &oldPath, const QString &newPath, QString *errorReason)
 {
-    if (!ensureConnected())
-        return;
+    if (!ensureConnected()) {
+        if (errorReason)
+            *errorReason = QStringLiteral("Not connected");
+        return false;
+    }
 
     const FtpReply rnfrReply = sendCommand(QStringLiteral("RNFR %1").arg(oldPath));
     if (!rnfrReply.isValid() || rnfrReply.code != 350) {
-        emit fileOperationFailed(QStringLiteral("Rename"), oldPath,
-            rnfrReply.isValid() ? rnfrReply.text : QStringLiteral("No response from server"));
-        return;
+        if (errorReason)
+            *errorReason = rnfrReply.isValid() ? rnfrReply.text : QStringLiteral("No response from server");
+        return false;
     }
 
+    // Unlike SftpBackend's libssh2_sftp_rename() (OVERWRITE flag baked
+    // in), FTP's RNTO has no standardized overwrite behavior — whether a
+    // pre-existing destination is silently replaced or rejected is
+    // server-dependent. No pre-emptive DELE/RMD attempt is made here
+    // (moveEntry() doesn't know whether the destination, if any, is a
+    // file or directory), so a server that refuses to overwrite will
+    // surface as a normal failure with its own reply text — an honest
+    // limitation, not silently papered over. Matches this project's
+    // existing acknowledgment that "not every server honors" requested
+    // overwrite-on-conflict behavior (see SftpBackend::performRename()'s
+    // own comment).
     const FtpReply rntoReply = sendCommand(QStringLiteral("RNTO %1").arg(newPath));
     if (!rntoReply.isValid() || rntoReply.code >= 400) {
-        emit fileOperationFailed(QStringLiteral("Rename"), oldPath,
-            rntoReply.isValid() ? rntoReply.text : QStringLiteral("No response from server"));
+        if (errorReason)
+            *errorReason = rntoReply.isValid() ? rntoReply.text : QStringLiteral("No response from server");
+        return false;
+    }
+    return true;
+}
+
+void FtpBackend::renameEntry(const QString &oldPath, const QString &newPath)
+{
+    QString error;
+    if (!performRename(oldPath, newPath, &error)) {
+        emit fileOperationFailed(QStringLiteral("Rename"), oldPath, error);
         return;
     }
     listDirectory(m_currentPath);
+}
+
+void FtpBackend::moveEntry(const QString &oldPath, const QString &newPath, int requestId)
+{
+    QString error;
+    if (!performRename(oldPath, newPath, &error)) {
+        emit entryMoveFailed(error, requestId);
+        return;
+    }
+    emit entryMoved(requestId);
+}
+
+QString FtpBackend::connectionIdentity() const
+{
+    return QStringLiteral("ftp://%1@%2:%3")
+        .arg(m_credentials.username, m_credentials.host)
+        .arg(m_credentials.port);
 }
 
 void FtpBackend::createDirectory(const QString &path)

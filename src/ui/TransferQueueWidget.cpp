@@ -79,6 +79,7 @@ QString TransferQueueWidget::directionText(TransferDirection direction)
     case TransferDirection::RemoteToLocal:  return tr("remote -> local");
     case TransferDirection::LocalToLocal:   return tr("local copy");
     case TransferDirection::RemoteToRemote: return tr("server -> server");
+    case TransferDirection::Move:           return tr("move");
     case TransferDirection::Unsupported:    return tr("unsupported");
     }
     return {};
@@ -134,17 +135,22 @@ QIcon TransferQueueWidget::statusIcon(const TransferItem &item)
         return IconTheme::tintedIcon(":/icons/player-pause.svg", IconTheme::Amber);
 
     // Queued or InProgress: a direction-shaped icon (the mockup doesn't
-    // cover local-to-local, remote-to-remote, or unsupported directions,
-    // since it assumes only upload/download exist — arrows-left-right and
-    // alert-triangle are this app's own extensions of the same visual
-    // language; RemoteToRemote reuses arrows-left-right too, same "both
-    // directions" reasoning LocalToLocal already uses it for).
+    // cover local-to-local, remote-to-remote, move, or unsupported
+    // directions, since it assumes only upload/download exist —
+    // arrows-left-right and alert-triangle are this app's own extensions
+    // of the same visual language; RemoteToRemote reuses arrows-left-right
+    // too, same "both directions" reasoning LocalToLocal already uses it
+    // for. Move gets its own plain arrow-right — unlike every other
+    // direction here, it's a single one-way relocation with no data
+    // transfer, not a "both directions" copy, so arrows-left-right would
+    // send the wrong signal about what's actually happening.).
     QString path;
     switch (item.direction) {
     case TransferDirection::LocalToRemote:  path = ":/icons/arrow-up.svg"; break;
     case TransferDirection::RemoteToLocal:  path = ":/icons/arrow-down.svg"; break;
     case TransferDirection::LocalToLocal:   path = ":/icons/arrows-left-right.svg"; break;
     case TransferDirection::RemoteToRemote: path = ":/icons/arrows-left-right.svg"; break;
+    case TransferDirection::Move:           path = ":/icons/arrow-right.svg"; break;
     case TransferDirection::Unsupported:    path = ":/icons/alert-triangle.svg"; break;
     }
 
@@ -162,6 +168,7 @@ QIcon TransferQueueWidget::statusIcon(const TransferItem &item)
             // already imply.
             color = item.phase == TransferPhase::Uploading ? IconTheme::Green : IconTheme::Blue;
             break;
+        case TransferDirection::Move: color = IconTheme::Blue; break;   // brief; matches its icon's "in-flight" reading
         default: color = IconTheme::Gray; break;
         }
     }
@@ -354,10 +361,25 @@ void TransferQueueWidget::showContextMenu(const QPoint &pos)
     const bool pauseCapableDirection =
         direction == TransferDirection::LocalToRemote || direction == TransferDirection::RemoteToLocal;
 
+    // A Move item is never TransferManager's "active item" (see
+    // TransferManager::moveEntry()'s doc comment) — it's dispatched
+    // immediately and goes straight to InProgress outside the ordinary
+    // Queued/m_activeIndex pipeline. That means cancelItem() has nothing
+    // to actually interrupt (a real cancel-in-flight isn't offered for
+    // v1, matching the plan's "single fast round trip, low-stakes to
+    // skip" call), and retryItem() would be actively wrong: it re-queues
+    // through startNext()/dispatchActiveItem(), which has no case for
+    // TransferDirection::Move and would fail with a misleading generic
+    // "no backend to execute this transfer" error. Both are excluded
+    // here rather than left to silently misbehave; redoing "Move
+    // Selected" is the retry path for a failed move instead.
+    const bool isMove = direction == TransferDirection::Move;
+
     QMenu menu(this);
     QAction *cancelAction = menu.addAction(IconTheme::tintedIcon(":/icons/x.svg", IconTheme::Red), tr("Cancel"));
-    cancelAction->setEnabled(status == TransferStatus::Queued || status == TransferStatus::InProgress
-                              || status == TransferStatus::Paused);
+    cancelAction->setEnabled(!isMove
+                              && (status == TransferStatus::Queued || status == TransferStatus::InProgress
+                                  || status == TransferStatus::Paused));
     QAction *pauseAction = menu.addAction(
         IconTheme::tintedIcon(":/icons/player-pause.svg", IconTheme::Amber), tr("Pause"));
     pauseAction->setEnabled(status == TransferStatus::InProgress && pauseCapableDirection);
@@ -366,8 +388,9 @@ void TransferQueueWidget::showContextMenu(const QPoint &pos)
     resumeAction->setEnabled(status == TransferStatus::Paused);
     QAction *retryAction = menu.addAction(
         IconTheme::tintedIcon(":/icons/refresh.svg", IconTheme::Amber), tr("Retry"));
-    retryAction->setEnabled(status == TransferStatus::Failed || status == TransferStatus::Cancelled
-                             || status == TransferStatus::Skipped);
+    retryAction->setEnabled(!isMove
+                             && (status == TransferStatus::Failed || status == TransferStatus::Cancelled
+                                 || status == TransferStatus::Skipped));
 
     QAction *chosen = menu.exec(m_table->viewport()->mapToGlobal(pos));
     if (chosen == cancelAction)

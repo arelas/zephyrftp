@@ -17,6 +17,18 @@ enum class TransferDirection {
     // pause/resume isn't offered for this direction (see
     // TransferQueueWidget's pauseCapableDirection).
     RemoteToRemote,
+    // A server-side rename between two panes on the SAME filesystem/server
+    // (RemoteBackend::connectionIdentity() matched) — zero data transfer,
+    // a single control-connection round trip. See
+    // TransferManager::moveEntry()/moveFolder(). Deliberately a distinct
+    // direction from the others, not a special case of LocalToLocal/
+    // RemoteToRemote — those always mean "copy" (the source is left in
+    // place, confirmed as this app's existing, established behavior even
+    // for local-to-local); Move always means the source is gone
+    // afterward, a genuinely different operation a person opts into
+    // explicitly (the "Move Selected" context-menu action), never a
+    // silent substitution for an ordinary Transfer/drag.
+    Move,
     Unsupported   // reserved for a genuine future dispatch failure — no
                   // longer reachable for remote-to-remote specifically
 };

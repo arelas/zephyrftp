@@ -38,11 +38,22 @@ class FakeRemoteBackend : public RemoteBackend {
     Q_OBJECT
 public:
     explicit FakeRemoteBackend(QObject *parent = nullptr) : RemoteBackend(parent) {
+        static int nextInstanceId = 1;
+        m_identity = QStringLiteral("fake://%1").arg(nextInstanceId++);
         connect(&m_timer, &QTimer::timeout, this, &FakeRemoteBackend::tick);
     }
 
     QString currentPath() const override { return QStringLiteral("/fake"); }
     bool isLocalFilesystem() const override { return false; }
+    // Each instance gets its own identity string (see the constructor) —
+    // this test constructs two independent fakes representing two
+    // DIFFERENT servers, and moveEligible() requires equal, non-empty
+    // identities, so two default-constructed fakes returning the same
+    // fixed string would (wrongly) look move-eligible to any code that
+    // checked. Not exercised by THIS test (it's about the remote-to-
+    // remote staging path, not Move), but wrong-by-default here would be
+    // a trap for a future test that reused this fake.
+    QString connectionIdentity() const override { return m_identity; }
     void requestCancel() override { m_cancelRequested = true; }
     // RemoteToRemote is cancel-only for v1 — pause is never offered for
     // this direction (see TransferQueueWidget's pauseCapableDirection), so
@@ -104,6 +115,9 @@ public slots:
     // instantiable at all.
     void deleteEntry(const QString &, bool) override {}
     void renameEntry(const QString &, const QString &) override {}
+    void moveEntry(const QString &, const QString &, int requestId) override {
+        emit entryMoveFailed(QStringLiteral("Not implemented"), requestId);
+    }
     void createDirectory(const QString &) override {}
     void createFile(const QString &) override {}
     void listDirectoryForEnumeration(const QString &, int) override {}
@@ -155,6 +169,7 @@ private:
     }
 
     QTimer m_timer;
+    QString m_identity;
     QString m_writeTargetPath;
     qint64 m_done = 0;
     qint64 m_total = 0;

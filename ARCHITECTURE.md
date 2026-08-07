@@ -556,6 +556,37 @@ to drive FileZilla itself for a same-desktop comparison.
   same ambiguous-error-code territory `sftpErrorString()` already has to
   navigate (see that helper's own comment on `LIBSSH2_FX_FAILURE`) —
   not worth the complexity for an existence check specifically.
+  Also declares `connectionIdentity()` — an opaque, comparable string for
+  "which underlying filesystem/server this backend actually talks to",
+  used by `TransferManager` to decide whether a cross-pane Move can go
+  through a single server-side `moveEntry()` (rename) instead of the much
+  slower stage-through-local-disk transfer path. `LocalBackend` returns a
+  fixed constant (any two local panes are trivially the same real
+  filesystem); `SftpBackend`/`FtpBackend` build one from
+  protocol+host+port+username — the protocol prefix is deliberate, since
+  an SFTP session and an FTP session to the same hostname can never be
+  renamed between via one call regardless of whether they're "really" the
+  same box, so the two must never compare equal even when host/port/
+  username match.
+  Also declares `moveEntry(oldPath, newPath, requestId)` +
+  `entryMoved(requestId)`/`entryMoveFailed(reason, requestId)` —
+  deliberately a separate primitive from `renameEntry()` above, even
+  though both ultimately issue the identical underlying rename call
+  (`libssh2_sftp_rename()`/`RNFR`+`RNTO`/`QDir::rename()`; each backend
+  factors the shared core into a small private `performRename()` helper
+  the two public methods wrap differently). Two real differences drove
+  keeping it separate rather than reusing `renameEntry()`:
+  `TransferManager` needs an explicit, request-id-correlated success
+  signal to drive a `TransferItem`'s status off of —
+  `renameEntry()`'s "fire and refresh, implicit success" contract has no
+  success signal at all, only the *absence* of `fileOperationFailed`, too
+  indirect to build UI state on — and `moveEntry()` must NOT self-refresh
+  its directory the way `renameEntry()` does, since a cross-pane move
+  needs BOTH panes refreshed, which `TransferManager` handles itself via
+  the existing `transferSucceeded` signal once the move succeeds. Only
+  ever called once the source and destination backends'
+  `connectionIdentity()` already compared equal — implementations don't
+  re-check that themselves; see `TransferManager::moveEligible()` below.
 - `LocalBackend` — wraps `QDir`/`QFile`. Runs on the GUI thread; local
   listing/copy is fast enough that this hasn't been a problem, but it's a
   design decision worth revisiting if it ever needs to handle slow
@@ -565,6 +596,12 @@ to drive FileZilla itself for a same-desktop comparison.
   `QFileInfo::exists()` explicitly before create/rename so "the name is
   already taken" is reported as a specific error rather than silently
   overwriting or falling through to a generic OS failure message.
+  `moveEntry()` differs from `renameEntry()` in one respect: it removes a
+  pre-existing FILE destination before renaming onto it (mirroring
+  `uploadFile()`'s established Overwrite convention), where `renameEntry()`
+  rejects outright if the destination already exists — the two callers
+  have genuinely different pre-conditions, so this isn't shared with
+  `renameEntry()`'s own logic the way SFTP/FTP's `performRename()` is.
 - `SftpBackend` — wraps libssh2's synchronous API directly. Runs on a
   dedicated `QThread`, confirmed by the smoke test above. Its four
   operations (`connectToHost`, `listDirectory`, `downloadFile`,
@@ -1230,6 +1267,49 @@ to drive FileZilla itself for a same-desktop comparison.
   responses on its own, so there's no double-delivery risk to avoid, and
   tearing the connection down here would risk losing a response if two
   different backends both have checks in flight at once.
+  `moveEntry(sourcePane, destPane, fileName)`/`moveFolder(sourcePane,
+  destPane, folderName)` implement server-side Move — relocating a file or
+  whole folder between two panes on the SAME connection
+  (`TransferManager::moveEligible()`, both backends' `connectionIdentity()`
+  equal and non-empty) via one backend `moveEntry()` (rename) call instead
+  of `enqueue()`'s download+upload. Deliberately **not** routed through the
+  ordinary `Queued`/`m_activeIndex` pipeline `startNext()`/
+  `dispatchActiveItem()` drive: a rename is a single control-connection
+  round trip, not a data transfer with meaningful progress/pause/cancel,
+  so there's nothing to gain by serializing it behind whatever transfer
+  happens to be running — it's dispatched immediately (still visible in
+  the queue via the ordinary `itemAdded`/`itemUpdated` signals, appended
+  straight in as `InProgress` rather than `Queued`), and since it targets
+  the same backend object as any transfer already running against it, Qt's
+  per-thread FIFO event queue alone guarantees it still only actually
+  executes after that transfer's own already-queued call returns — no
+  explicit coordination needed. Request-id correlation
+  (`m_pendingMoveItemId`, mapping a `moveEntry()` call's request id to the
+  `TransferItem::id` it belongs to) is a separate mechanism from
+  `m_activeIndex`, since — unlike the ordinary queue, which only ever runs
+  one item at a time — several Move requests could plausibly have backend
+  calls in flight simultaneously. `moveFolder()` reuses the same
+  root-level `checkExists()`/`askConflict()` machinery `enqueueFolder()`
+  uses for a consistent prompt, but with a real semantic limit
+  `enqueueFolder()` doesn't have: a single rename cannot **merge** into a
+  non-empty existing destination directory (POSIX `rename(2)` fails with
+  `ENOTEMPTY` in that case — the same underlying call both SFTP's `RENAME`
+  and FTP's `RNFR`/`RNTO` map onto). So while `enqueueFolder()`'s "Write
+  Into" genuinely merges (transferring every file individually into
+  whatever's already there), `moveFolder()`'s "Write Into" instead fails
+  the move outright with a clear explanation — building real merge
+  machinery (copy the tree, then delete the source) would be significant
+  new scope this project's existing "no recursive delete" precedent argues
+  against, not a small addition. Cancel and Retry are both disabled in
+  `TransferQueueWidget`'s context menu for a Move item specifically because
+  of the "never the active item" design above: `cancelItem()` has nothing
+  to interrupt (no `m_activeIndex` entry to act on), and `retryItem()`
+  would be actively wrong — it re-queues through
+  `startNext()`/`dispatchActiveItem()`, which has no case for
+  `TransferDirection::Move` and would fail with a misleading generic "no
+  backend to execute this transfer" error; redoing the "Move Selected"
+  action is the retry path instead. Covered by `move-entry-test` (see
+  Verification status below).
 - `FolderEnumerator` (`src/transfer/FolderEnumerator.h/.cpp`) —
   recursively walks a folder via a backend's
   `listDirectoryForEnumeration()`, one directory at a time (not several
@@ -2002,6 +2082,38 @@ along the way — worth knowing about if it ever needs touching again.
   against — correctly distinguishing "genuinely orphaned" from "a
   still-running transfer needs this a moment longer" would need more
   machinery than this pass attempts.
+- **Server-side Move (a single-round-trip rename between two panes on the
+  same connection) is now supported, covered by a deterministic
+  fake-backend test plus a direct real-`LocalBackend` check — not yet
+  exercised against two live remote servers.** `move-entry-test`
+  (`src/move_entry_test.cpp`) covers `TransferManager::moveEligible()`'s
+  `connectionIdentity()`-equality guard both ways (two backends reporting
+  the same identity dispatch through `moveEntry()`; two reporting
+  different identities are rejected with no item queued and no backend
+  call made at all), that a single-file move calls the destination
+  backend's `moveEntry()` exactly once (never the source backend's, and
+  never `downloadFile()`/`uploadFile()`), and that a whole-folder move
+  issues exactly one `moveEntry()` call against the folder's root path
+  with `listDirectoryForEnumeration()` never called on either backend —
+  confirming the tree genuinely relocates via one rename rather than
+  `FolderEnumerator` silently still walking it unobserved. Separately,
+  the same test drives a real `LocalBackend` against real temp files: a
+  plain file move, a move onto an *existing* destination file (confirming
+  it overwrites, unlike `renameEntry()`), and a folder move including its
+  nested contents. **Not covered**: the "Write Into an existing folder
+  fails" path (`TransferManager::onDestinationExistsChecked()`'s
+  Move-conflict branch when a folder conflict is resolved as Write
+  Into) — exercising it would mean driving a live `askConflict()`
+  `QMessageBox`, the same category of manual-only gap
+  `conflict-resolution-test` already accepts for the ordinary transfer
+  path; a real cross-pane move against two live SFTP/FTP servers on the
+  same connection (this project's live-server harnesses target one
+  server per test, not two independent servers exposing the SAME
+  `connectionIdentity()`); and whether `libssh2_sftp_rename()`/`RNFR`+
+  `RNTO` genuinely relocate a *directory* (not just a file) server-side —
+  expected, standard `rename(2)`-equivalent semantics, but unconfirmed
+  against a real server the way the fake-backend test's directory case
+  necessarily can't be.
 - **`SftpBackend`'s `listDirectoryForEnumeration()` and the full
   `FolderEnumerator` recursive walk are now confirmed against a real
   server, including the trickiest cases.** Same harness as the

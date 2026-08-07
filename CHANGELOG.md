@@ -8,6 +8,24 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Added
+
+- **Move, not just copy, between two panes on the same server (or both on
+  your computer)** — a new "Move Selected" context-menu action, alongside
+  the existing Transfer, relocates a selection server-side via a single
+  instant rename instead of a download-then-upload copy. Works for whole
+  folders too, moving the entire subtree in one round trip; the one real
+  limit is that a folder Move can't *merge* into an existing folder of
+  the same name at the destination the way a copy's "write into" can — it
+  fails with a clear message instead of attempting a doomed rename. Only
+  offered when both panes are genuinely on the same connection (same
+  server, or both local) — otherwise a short message explains why, rather
+  than silently doing nothing. Verified by a new, deterministic
+  fake-backend regression test plus a direct real-`LocalBackend` check
+  against real temp files; see ARCHITECTURE.md's `RemoteBackend`/
+  `TransferManager` entries and [Known limitations](README.md#known-limitations)
+  for the full detail, including what isn't yet covered.
+
 ## [0.4.0] — Either pane can connect; server-to-server transfers
 
 ### Added

@@ -467,6 +467,33 @@ qt_add_executable(remote-to-remote-test EXCLUDE_FROM_ALL
 target_include_directories(remote-to-remote-test PRIVATE src)
 target_link_libraries(remote-to-remote-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
 
+# --- Move (server-side rename between two panes on the same
+# filesystem/server) test: TransferManager::moveEligible()'s
+# connectionIdentity()-equality guard, moveEntry()/moveFolder()'s
+# request-id-correlated dispatch to a backend's moveEntry() (confirming a
+# folder move skips FolderEnumerator entirely — exactly one backend call,
+# zero listDirectoryForEnumeration() calls), and LocalBackend::moveEntry()
+# against real temp files/directories (including the overwrite-an-existing-
+# file case). Self-contained and EXCLUDE_FROM_ALL like remote-to-remote-test
+# above, same "additional, not folded into the fixed count" treatment — see
+# src/move_entry_test.cpp's own header comment and
+# CONTRIBUTING.md/ARCHITECTURE.md for the full detail.
+qt_add_executable(move-entry-test EXCLUDE_FROM_ALL
+    src/move_entry_test.cpp
+    src/AppSettings.cpp
+    src/ui/FilePaneWidget.cpp
+    src/ui/FileTreeView.cpp
+    src/ui/IconTheme.cpp
+    src/backends/LocalBackend.cpp
+    src/backends/RemoteBackend.h
+    src/transfer/TransferManager.cpp
+    src/transfer/FolderEnumerator.cpp
+    resources/icons.qrc
+    resources/theme.qrc
+)
+target_include_directories(move-entry-test PRIVATE src)
+target_link_libraries(move-entry-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
+
 # --- Live-server verification harnesses (NOT part of the ten-target
 # self-contained test suite above — these need an external server
 # already running, started via tools/local-test-servers/*.sh; see each

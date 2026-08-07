@@ -816,10 +816,13 @@ void SftpBackend::deleteEntry(const QString &path, bool isDirectory)
     listDirectory(m_currentPath);
 }
 
-void SftpBackend::renameEntry(const QString &oldPath, const QString &newPath)
+bool SftpBackend::performRename(const QString &oldPath, const QString &newPath, QString *errorReason)
 {
-    if (!ensureSession())
-        return;
+    if (!ensureSession()) {
+        if (errorReason)
+            *errorReason = QStringLiteral("Not connected");
+        return false;
+    }
 
     emit commandLogged(QStringLiteral("Command: RENAME %1 -> %2").arg(oldPath, newPath));
 
@@ -828,18 +831,56 @@ void SftpBackend::renameEntry(const QString &oldPath, const QString &newPath)
     // ordinary rename semantics people expect, and ATOMIC/NATIVE just
     // ask the server to use its best available implementation when one
     // exists (falls back gracefully if not; not something this code
-    // needs to branch on).
+    // needs to branch on). This is also why moveEntry() below needs no
+    // separate pre-removal step for an Overwrite-resolved conflict, unlike
+    // LocalBackend's QDir::rename(), which doesn't overwrite on its own.
     if (libssh2_sftp_rename(m_sftp, oldPath.toUtf8().constData(), newPath.toUtf8().constData()) != 0) {
         // We do request overwrite-on-conflict (see the comment above),
         // but not every server honors that — so "the new name is
         // already taken" is still a plausible cause here, not just
         // permissions.
-        emit fileOperationFailed(QStringLiteral("Rename"), oldPath, sftpErrorString(m_sftp,
-            QStringLiteral("Something with the new name may already exist and the server may not "
-                           "support overwriting it, or you may not have permission to rename this.")));
+        if (errorReason) {
+            *errorReason = sftpErrorString(m_sftp,
+                QStringLiteral("Something with the new name may already exist and the server may not "
+                               "support overwriting it, or you may not have permission to rename this."));
+        }
+        return false;
+    }
+    return true;
+}
+
+void SftpBackend::renameEntry(const QString &oldPath, const QString &newPath)
+{
+    QString error;
+    if (!performRename(oldPath, newPath, &error)) {
+        emit fileOperationFailed(QStringLiteral("Rename"), oldPath, error);
         return;
     }
     listDirectory(m_currentPath);
+}
+
+void SftpBackend::moveEntry(const QString &oldPath, const QString &newPath, int requestId)
+{
+    QString error;
+    if (!performRename(oldPath, newPath, &error)) {
+        emit entryMoveFailed(error, requestId);
+        return;
+    }
+    emit entryMoved(requestId);
+}
+
+QString SftpBackend::connectionIdentity() const
+{
+    // No path/starting-directory component — deliberately, since "same
+    // server" for Move purposes doesn't care which directory either pane
+    // currently happens to be showing. See RemoteBackend::connectionIdentity()'s
+    // own doc comment for why the "sftp://" prefix matters (keeps this
+    // from ever comparing equal to an FtpBackend's identity, even for an
+    // identical host/port/username, since a Move needs a single rename
+    // call within ONE protocol session).
+    return QStringLiteral("sftp://%1@%2:%3")
+        .arg(m_credentials.username, m_credentials.host)
+        .arg(m_credentials.port);
 }
 
 void SftpBackend::createDirectory(const QString &path)

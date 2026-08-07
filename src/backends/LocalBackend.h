@@ -18,6 +18,7 @@ public:
 
     void deleteEntry(const QString &path, bool isDirectory) override;
     void renameEntry(const QString &oldPath, const QString &newPath) override;
+    void moveEntry(const QString &oldPath, const QString &newPath, int requestId) override;
     void createDirectory(const QString &path) override;
     void createFile(const QString &path) override;
     void listDirectoryForEnumeration(const QString &path, int requestId) override;
@@ -25,6 +26,12 @@ public:
 
     QString currentPath() const override;
     bool isLocalFilesystem() const override { return true; }
+
+    // Fixed constant, not derived from anything path-specific — every
+    // LocalBackend instance talks to the same real filesystem (this
+    // machine's), so any two are trivially "the same server" for Move
+    // purposes regardless of which directories they currently show.
+    QString connectionIdentity() const override { return QStringLiteral("local"); }
 
     // No-op: QFile::copy() is a single OS-level call with no loop of ours
     // to check a flag inside — there's nothing to interrupt mid-transfer.

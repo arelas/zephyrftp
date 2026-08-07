@@ -98,6 +98,16 @@ signals:
     // valid and handled entry-by-entry.
     void filesActivated(const QList<RemoteEntry> &entries);
 
+    // Emitted from the right-click "Move Selected" context-menu action —
+    // always emitted when there's a selection, regardless of whether the
+    // other pane is actually move-eligible (see
+    // TransferManager::moveEligible()); this pane has no way to know
+    // what the OTHER pane's backend is, by the same design that keeps
+    // filesActivated()/filesDropped() dumb about panes other than
+    // itself. MainWindow checks eligibility once the signal arrives and
+    // shows its own explanatory message if it isn't met.
+    void moveRequested(const QList<RemoteEntry> &entries);
+
     // Files (and/or folders) dropped ONTO this pane FROM a different
     // pane — forwarded straight through from FileTreeView::filesDroppedFrom.
     // MainWindow connects both panes' filesDropped signals to one slot,

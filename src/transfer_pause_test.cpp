@@ -36,6 +36,7 @@ public:
 
     QString currentPath() const override { return QStringLiteral("/fake"); }
     bool isLocalFilesystem() const override { return false; }   // pretend remote, so pause is meaningful
+    QString connectionIdentity() const override { return QStringLiteral("fake"); }
     void requestCancel() override { m_cancelRequested = true; }
     void requestPause() override { m_pauseRequested = true; }
 
@@ -57,6 +58,9 @@ public slots:
     // concrete fake needs some implementation to be instantiable at all.
     void deleteEntry(const QString &, bool) override {}
     void renameEntry(const QString &, const QString &) override {}
+    void moveEntry(const QString &, const QString &, int requestId) override {
+        emit entryMoveFailed(QStringLiteral("Not implemented"), requestId);
+    }
     void createDirectory(const QString &) override {}
     void createFile(const QString &) override {}
     void listDirectoryForEnumeration(const QString &, int) override {}

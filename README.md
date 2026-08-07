@@ -60,6 +60,13 @@ tracks what's changed between them.
   on the other side, nested structure and all, including empty
   subfolders. Each file inside shows up in the transfer queue like any
   other transfer — same pause/resume/cancel, same progress and speed.
+- **Move, not just copy, when both panes are on the same server (or both
+  on your computer).** Right-click a selection and choose "Move Selected"
+  to relocate it server-side — a single instant rename, not a
+  download-then-upload — instead of the usual Transfer/drag copy. Works
+  for whole folders too. Only offered between two panes that are
+  genuinely on the same connection; otherwise you'll see a short message
+  explaining why, rather than the option silently doing nothing.
 - **You're asked before anything gets overwritten.** If a file already
   exists at the destination, you'll be asked to Overwrite or Skip it —
   with a checkbox to apply that answer to everything else in the same
@@ -196,6 +203,13 @@ rather than being half-implemented:
   correct result. A fully automated, repeatable live-two-server test
   (mirroring `verify-sftp-pause-cancel`'s pattern) hasn't been built yet
   — see ARCHITECTURE.md's Known gaps.
+- **Move can't merge into a folder that already exists at the
+  destination.** A server-side rename can relocate a whole folder in one
+  step, but it can't combine it with an existing folder of the same name
+  the way a copy's "write into" can (transferring file by file) — if you
+  choose to write into an existing folder for a Move, it fails with a
+  clear explanation instead. Move a folder to a new name, or use the
+  ordinary Transfer/drag copy if you need a real merge.
 - **Pause only works for transfers involving a server, and not for
   server-to-server transfers either.** You can pause an upload or
   download directly to/from a server and pick it back up later, but a

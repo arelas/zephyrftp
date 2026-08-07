@@ -220,6 +220,8 @@ void MainWindow::buildLayout()
     connect(m_rightPane, &FilePaneWidget::filesActivated, this, &MainWindow::onRightFilesActivated);
     connect(m_leftPane, &FilePaneWidget::filesDropped, this, &MainWindow::onFilesDropped);
     connect(m_rightPane, &FilePaneWidget::filesDropped, this, &MainWindow::onFilesDropped);
+    connect(m_leftPane, &FilePaneWidget::moveRequested, this, &MainWindow::onLeftMoveRequested);
+    connect(m_rightPane, &FilePaneWidget::moveRequested, this, &MainWindow::onRightMoveRequested);
 
     // Either pane's own path-bar icon menu can request a connect/site-
     // manager/disconnect on ITSELF — both panes wired to the same three
@@ -325,6 +327,33 @@ void MainWindow::enqueueEntries(FilePaneWidget *sourcePane, FilePaneWidget *dest
             m_transferManager->enqueueFolder(sourcePane, destPane, entry.name);
         else
             m_transferManager->enqueue(sourcePane, destPane, entry.name);
+    }
+}
+
+void MainWindow::onLeftMoveRequested(const QList<RemoteEntry> &entries)
+{
+    moveEntries(m_leftPane, m_rightPane, entries);
+}
+
+void MainWindow::onRightMoveRequested(const QList<RemoteEntry> &entries)
+{
+    moveEntries(m_rightPane, m_leftPane, entries);
+}
+
+void MainWindow::moveEntries(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
+                              const QList<RemoteEntry> &entries)
+{
+    if (!TransferManager::moveEligible(sourcePane, destPane)) {
+        QMessageBox::information(this, tr("Move"),
+            tr("Move requires both panes to be on the same server, or both on your computer."));
+        return;
+    }
+
+    for (const RemoteEntry &entry : entries) {
+        if (entry.isDir)
+            m_transferManager->moveFolder(sourcePane, destPane, entry.name);
+        else
+            m_transferManager->moveEntry(sourcePane, destPane, entry.name);
     }
 }
 

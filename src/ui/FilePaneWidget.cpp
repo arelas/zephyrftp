@@ -428,6 +428,16 @@ void FilePaneWidget::showContextMenu(const QPoint &pos)
                              : tr("Transfer to Other Pane"));
     transferAction->setEnabled(!selected.isEmpty());
 
+    // Always visible/enabled whenever there's a selection, same as
+    // Transfer above — not grayed out based on live eligibility (this
+    // pane has no way to query the OTHER pane's backend; see
+    // moveRequested()'s doc comment). MainWindow shows an explanatory
+    // message if the panes turn out not to be move-eligible.
+    QAction *moveAction = menu.addAction(
+        selected.size() > 1 ? tr("Move %1 Items to Other Pane").arg(selected.size())
+                             : tr("Move to Other Pane"));
+    moveAction->setEnabled(!selected.isEmpty());
+
     menu.addSeparator();
     QAction *newFileAction = menu.addAction(
         IconTheme::tintedIcon(":/icons/file-plus.svg", IconTheme::Green), tr("New File..."));
@@ -452,6 +462,8 @@ void FilePaneWidget::showContextMenu(const QPoint &pos)
 
     if (chosen == transferAction)
         emit filesActivated(selected);
+    else if (chosen == moveAction)
+        emit moveRequested(selected);
     else if (chosen == newFileAction)
         promptAndCreateFile();
     else if (chosen == newFolderAction)
