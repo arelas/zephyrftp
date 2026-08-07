@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.4.0] — Either pane can connect; server-to-server transfers
+
 ### Added
 
 - **Either pane can now connect to a remote server, not just the right
@@ -47,7 +49,17 @@ in the README), so anything may still change between 0.x releases.
   see its own entry in the user-facing Added section for what it covers.
   Same "additional, not folded into the fixed count" treatment as
   `sort-and-commands-test`; all four `build.yml` jobs build and run it
-  too.
+  too. **Rewritten as an event-driven state machine after a real CI
+  flake**: an initial version (generous, doubled-nominal fixed `QTimer`
+  delays) passed 20+ local runs but failed on a real GitHub Actions
+  runner sharing its job with concurrent `linuxdeploy` work — reproduced
+  locally under deliberate heavy CPU contention, where the fixed-delay
+  version failed 15/15. Rewritten to react to the actual `itemUpdated`
+  signal each step is waiting for instead of guessing a wall-clock delay,
+  with a generous absolute-deadline timer as a safety net (not the
+  primary mechanism) rather than the sole guard against a hang. Confirmed
+  against the same contention setup that broke the old version: 40+
+  consecutive clean runs.
 - **`sort-and-commands-test`**, a new self-contained `EXCLUDE_FROM_ALL`
   regression test covering two things that had only ever been checked by
   screenshotting the running app: `CommandsPaneWidget`'s log and
@@ -773,7 +785,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.3.9...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/arelas/zephyrftp/releases/tag/v0.4.0
 [0.3.9]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.9
 [0.3.8]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.8
 [0.3.7]: https://github.com/arelas/zephyrftp/releases/tag/v0.3.7
