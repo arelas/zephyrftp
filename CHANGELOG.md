@@ -8,6 +8,32 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Multi-select Move silently dropped every selected entry but the last
+  one.** Selecting several files/folders and choosing "Move Selected"
+  only actually moved the last item in the selection — every earlier
+  one silently vanished with no error. Caused by `TransferManager`'s
+  conflict-check stage stashing each in-flight Move's state in shared
+  scalar members rather than tracking it per-request, so
+  `MainWindow::moveEntries()`'s synchronous per-entry loop clobbered
+  each call's state before its own response arrived. Found by code
+  review, not a user report — introduced with the Move feature itself
+  (v0.5.0) and present in v0.5.0/v0.5.1.
+- **A Move's "apply to all" conflict-resolution choice could silently
+  leak into a completely unrelated later transfer.** Choosing "apply to
+  all remaining conflicts" + Write Into during a Move could cause a
+  LATER, unrelated ordinary transfer's own folder conflict to be
+  silently resolved the same way with no prompt — Move's conflict
+  resolution shared state with the ordinary transfer pipeline but never
+  triggered that pipeline's own reset. Move now tracks its own,
+  separate resolution state. Also found by code review; present in
+  v0.5.0/v0.5.1.
+- `retryItem()` now guards against `TransferDirection::Move` directly
+  (previously enforced only by the transfer queue disabling the Retry
+  action for Move items, not by `TransferManager` itself) — closes a
+  latent misdispatch path a future caller could otherwise have hit.
+
 ## [0.5.1] — Real-server verification for Move and remote-to-remote transfers
 
 ### Changed (developer-facing only, no shipped behavior)

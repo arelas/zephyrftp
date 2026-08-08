@@ -591,9 +591,15 @@ move including its nested contents), and a folder move onto an existing
 destination resolved as "Write Into" failing cleanly with a merge-limitation
 error rather than dispatching a doomed rename, driven via a REAL
 `QMessageBox` using `conflict-resolution-test`'s own live-dialog technique
-(a continuous poller here, not a single fixed-delay shot). See
-`src/move_entry_test.cpp`'s own header comment and ARCHITECTURE.md's
-`RemoteBackend`/`TransferManager` entries for the full detail. Run it
+(a continuous poller here, not a single fixed-delay shot). Also covers
+three real bugs a code review found in the Move implementation after it
+had already shipped (multi-select Move dropping every entry but the
+last one; a Move's "apply to all" conflict choice leaking into an
+unrelated later transfer; `retryItem()` having no guard for
+`TransferDirection::Move`) — see ARCHITECTURE.md's `TransferManager`
+entry for the full detail on each. See `src/move_entry_test.cpp`'s own
+header comment and ARCHITECTURE.md's `RemoteBackend`/`TransferManager`
+entries for the full detail. Run it
 locally the same way:
 
 ```
@@ -613,7 +619,7 @@ mid-transfer cancel/pause/resume, and all of `FtpBackend` used to be
 genuinely unverified as a result (see ARCHITECTURE.md's Known gaps):
 nothing in this environment could reach a real server that way.
 `tools/local-test-servers/` closes that — throwaway local `sshd`/FTP/FTPS
-servers (no root, no system config touched) plus nine harnesses that
+servers (no root, no system config touched) plus seven harnesses that
 drive the real backend classes (and, for the three Move/remote-to-remote
 ones, real `TransferManager`/`FilePaneWidget` orchestration on top of
 them, not just the backend directly) against them:
@@ -726,7 +732,7 @@ vendor diversity for exactly what's confirmed and what still isn't,
 even after this, plus Move/remote-to-remote's own entries there for what
 `verify-sftp-move`/`verify-ftp-move`/`verify-remote-to-remote-live`
 specifically confirm.
-These nine targets are `EXCLUDE_FROM_ALL` like the main
+These seven targets are `EXCLUDE_FROM_ALL` like the main
 ten but intentionally **not** part of that suite or CI — an
 external-server precondition is a different category from "always runs
 the same way," which is the whole point of the other ten.

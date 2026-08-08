@@ -14,6 +14,21 @@
 // file_operations_test.cpp's "test the backend directly against a real
 // temp directory" approach for that part.
 //
+// Three scenarios below are regression tests for real bugs a code review
+// found in TransferManager's Move implementation after it had already
+// shipped: (1) multi-select Move silently dropped every entry but the
+// last one — the conflict-check stage stashed per-call state in shared
+// scalar members instead of a per-request map, so MainWindow::
+// moveEntries()'s synchronous per-entry loop clobbered each call's state
+// before its async response ever arrived; (2) a Move's "apply to all"
+// conflict-resolution choice leaked into a completely unrelated later
+// transfer, since it shared state with the ordinary transfer pipeline
+// but Move never triggers that pipeline's reset; (3) retryItem() had no
+// guard for a Failed Move item, so calling it (currently prevented only
+// by the UI, not the model) would silently misdispatch through a
+// pipeline with no case for Move. See each fix's own comment in
+// TransferManager.{h,cpp} for the full detail.
+//
 // Event-driven throughout, not fixed-delay — see remote_to_remote_test.cpp's
 // own header comment for why a fixed wall-clock delay isn't safe against
 // arbitrary system load. Every backend call here resolves in at most one
@@ -27,6 +42,7 @@
 // advance exactly when the dialog will appear.
 #include <QApplication>
 #include <QAbstractButton>
+#include <QCheckBox>
 #include <QDebug>
 #include <QDir>
 #include <QEventLoop>
@@ -247,7 +263,114 @@ int main(int argc, char *argv[])
               backendA->moveEntryCallCount == 0 && backendB->moveEntryCallCount == 0);
     }
 
-    // ---------- Part 3: TransferManager::moveEntry()/moveFolder() with two
+    // ---------- Part 3: multi-select Move dispatches EVERY selected
+    // entry, not just the last one. Regression test for a real bug found
+    // by code review: an earlier version stashed a moveEntry()/
+    // moveFolder() conflict check's source/dest pane + name + isFolder
+    // in single shared scalar members rather than a per-request map.
+    // MainWindow::moveEntries() calls moveEntry()/moveFolder() in a
+    // plain synchronous loop for a multi-select "Move Selected" — so
+    // each call in that loop silently clobbered the previous call's
+    // stashed state before its own async checkExists() response ever
+    // arrived, dropping every item but the last one with no error shown
+    // at all. Reproduced here by calling moveEntry() twice in a row,
+    // synchronously, before returning control to the event loop — the
+    // exact pattern MainWindow::moveEntries()'s selection loop
+    // produces. ----------
+    {
+        auto *srcFake = new FakeMoveBackend(QStringLiteral("fake://multiselect"));
+        auto *dstFake = new FakeMoveBackend(QStringLiteral("fake://multiselect"));
+        auto *srcPane = new FilePaneWidget(srcFake);
+        auto *dstPane = new FilePaneWidget(dstFake);
+        auto *mgr = new TransferManager(&app);
+
+        int doneCount = 0;
+        QObject::connect(mgr, &TransferManager::itemUpdated, &app, [&](const TransferItem &item) {
+            if (item.status == TransferStatus::Done)
+                ++doneCount;
+        });
+
+        // Synchronous, back to back — no event-loop turn in between.
+        mgr->moveEntry(srcPane, dstPane, QStringLiteral("multi1.bin"));
+        mgr->moveEntry(srcPane, dstPane, QStringLiteral("multi2.bin"));
+
+        QEventLoop loop;
+        QTimer timeoutTimer;
+        timeoutTimer.setSingleShot(true);
+        QObject::connect(&timeoutTimer, &QTimer::timeout, &loop, &QEventLoop::quit);
+        timeoutTimer.start(5000);
+        while (doneCount < 2 && timeoutTimer.isActive())
+            loop.processEvents(QEventLoop::AllEvents, 50);
+
+        check("multi-select move: BOTH entries got a real TransferItem (not just the last one)",
+              mgr->items().size() == 2);
+        check("multi-select move: BOTH reached Done", doneCount == 2);
+        check("multi-select move: the destination backend's moveEntry() was called twice",
+              dstFake->moveEntryCallCount == 2);
+    }
+
+    // ---------- Part 4: a Move's "apply to all" conflict-resolution
+    // choice must NOT leak into a separate, later Move conflict.
+    // Regression test for a real bug found by code review:
+    // m_fileConflictResolution/m_directoryConflictResolution (the
+    // ordinary enqueue()/enqueueFolder() pipeline's state) used to be
+    // shared with Move too, but are only ever reset in startNext()'s
+    // "queue fully drained" branch — which Move never calls (by design,
+    // since Move bypasses that pipeline entirely). A Move batch's
+    // "apply to all, Write Into" choice would persist indefinitely, and
+    // any LATER, completely unrelated Move (or ordinary transfer)
+    // conflict would silently reuse it with no prompt at all. Proven
+    // here behaviorally, not by inspecting internal state: a real
+    // QMessageBox must appear again for a second, independent folder
+    // conflict — under the old bug it would silently reuse the first
+    // decision instead, and no dialog would ever be found. ----------
+    {
+        auto *srcFake = new FakeMoveBackend(QStringLiteral("fake://isolation"));
+        auto *dstFake = new FakeMoveBackend(QStringLiteral("fake://isolation"));
+        dstFake->existsAtCheck = true;   // every checkExists() in this block reports a conflict
+        auto *srcPane = new FilePaneWidget(srcFake);
+        auto *dstPane = new FilePaneWidget(dstFake);
+        auto *mgr = new TransferManager(&app);
+
+        bool dialogAppeared = false;
+        auto driveOneDialog = [&](bool checkApplyToAll) {
+            dialogAppeared = false;
+            QEventLoop loop;
+            QTimer poll;
+            int elapsedMs = 0;
+            QObject::connect(&poll, &QTimer::timeout, &loop, [&]() {
+                if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+                    if (QCheckBox *checkbox = box->checkBox())
+                        checkbox->setChecked(checkApplyToAll);
+                    for (QAbstractButton *button : box->buttons()) {
+                        if (button->text().contains(QStringLiteral("Write Into"), Qt::CaseInsensitive)) {
+                            dialogAppeared = true;
+                            button->click();
+                            loop.quit();
+                            return;
+                        }
+                    }
+                }
+                elapsedMs += 20;
+                if (elapsedMs > 3000)
+                    loop.quit();   // no dialog appeared within the window — a genuinely different, checkable outcome
+            });
+            poll.start(20);
+            loop.exec();
+        };
+
+        mgr->moveFolder(srcPane, dstPane, QStringLiteral("isolation_a"));
+        driveOneDialog(/*checkApplyToAll=*/true);
+        check("conflict-resolution isolation: dialog appeared for the FIRST Move conflict", dialogAppeared);
+
+        mgr->moveFolder(srcPane, dstPane, QStringLiteral("isolation_b"));
+        driveOneDialog(/*checkApplyToAll=*/false);
+        check("conflict-resolution isolation: a SEPARATE Move conflict still prompts "
+              "(no leaked \"apply to all\" from the earlier, unrelated Move)",
+              dialogAppeared);
+    }
+
+    // ---------- Part 5: TransferManager::moveEntry()/moveFolder() with two
     // backends reporting the SAME connectionIdentity() — the eligible path.
     // Event-driven state machine below. ----------
     auto *sourceFake = new FakeMoveBackend(QStringLiteral("fake://shared"));
@@ -332,6 +455,24 @@ int main(int argc, char *argv[])
                 check("folder move onto an existing destination + Write Into: "
                       "transferSucceeded did NOT fire again (still 2 — this was a failure, not a success)",
                       transferSucceededCount == 2);
+
+                // Regression test for a real bug found by code review:
+                // retryItem() had no guard for TransferDirection::Move,
+                // so calling it on this exact Failed item would silently
+                // misdispatch through the ordinary startNext()/
+                // dispatchActiveItem() pipeline (which has no case for
+                // Move) instead of safely no-op'ing — the same invariant
+                // TransferQueueWidget already enforces by disabling
+                // Retry for Move items, now also enforced here at the
+                // model layer that actually owns it.
+                const int itemCountBeforeRetry = manager->items().size();
+                manager->retryItem(currentItemId);
+                check("retryItem() on a Failed Move item is a safe no-op (status still Failed)",
+                      manager->items().last().status == TransferStatus::Failed);
+                check("retryItem() on a Failed Move item dispatched nothing new",
+                      destFake->moveEntryCallCount == 2
+                          && manager->items().size() == itemCountBeforeRetry);
+
                 qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
                 app.exit(allPass ? 0 : 1);
             });

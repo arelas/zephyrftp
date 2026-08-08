@@ -1308,8 +1308,57 @@ to drive FileZilla itself for a same-desktop comparison.
   `startNext()`/`dispatchActiveItem()`, which has no case for
   `TransferDirection::Move` and would fail with a misleading generic "no
   backend to execute this transfer" error; redoing the "Move Selected"
-  action is the retry path instead. Covered by `move-entry-test` (see
-  Verification status below).
+  action is the retry path instead. `retryItem()` itself also guards
+  against `TransferDirection::Move` directly now (not just
+  `TransferQueueWidget` disabling the action) — see below for why that
+  guard was added after shipping without it.
+  **Three real bugs found by code review after this feature had already
+  shipped (v0.5.0/v0.5.1), all fixed, all now covered by regression tests
+  in `move-entry-test`:**
+  1. **Multi-select Move silently dropped every entry but the last one.**
+     `moveEntry()`/`moveFolder()`'s own conflict-check stage stashed the
+     in-flight request's source/dest pane + name + `isFolder` in single
+     shared scalar members (`m_pendingMoveConflictCheckId` and friends)
+     rather than a per-request map. `MainWindow::moveEntries()` calls
+     `moveEntry()`/`moveFolder()` in a plain synchronous loop for a
+     multi-select "Move Selected," so each call in that loop silently
+     clobbered the previous call's stashed state before its own async
+     `checkExists()` response ever arrived — by the time any response
+     came back, only the LAST iteration's state survived, so every
+     earlier item's response matched nothing and was dropped with no
+     error shown at all. Fixed by replacing the scalars with
+     `QHash<int, PendingMoveConflictCheck> m_pendingMoveConflictChecks`,
+     keyed by request id — the same per-request pattern
+     `m_pendingMoveItemId` above already used for the *later*
+     post-dispatch stage, just not applied to this *earlier*
+     conflict-check stage until this fix.
+  2. **A Move's "apply to all" conflict-resolution choice leaked into a
+     completely unrelated later transfer.** `m_fileConflictResolution`/
+     `m_directoryConflictResolution` were shared between the ordinary
+     `enqueue()`/`enqueueFolder()` pipeline and Move, but are only ever
+     reset back to `Ask` in `startNext()`'s "queue fully drained"
+     branch — which Move never calls (by design, per this entry's own
+     "never routed through the ordinary pipeline" reasoning above). A
+     Move batch's "apply to all, Write Into" choice would persist
+     indefinitely; any later, completely unrelated ordinary folder
+     conflict (or another Move) before the ordinary queue happened to
+     drain would silently reuse it with no prompt at all. Fixed by
+     giving Move its own separate `m_moveFileConflictResolution`/
+     `m_moveDirectoryConflictResolution`, reset via
+     `maybeResetMoveConflictResolution()` once no Move activity remains
+     outstanding (both the conflict-check hash above and
+     `m_pendingMoveItemId` empty) — the closest Move equivalent to
+     `startNext()`'s "queue drained" reset, since Move has no single
+     queue to drain.
+  3. **`retryItem()` had no guard for `TransferDirection::Move`** —
+     mentioned above, listed here for completeness: currently
+     unreachable via the shipped UI (`TransferQueueWidget` already
+     disables Retry for Move items), but the invariant wasn't enforced
+     at the model layer that actually owns it, only the UI layer. A
+     future caller (a bulk "retry all failed" action, a test, a UI
+     regression re-enabling the action) would have silently hit the
+     misdispatch described above. Fixed with a direct early-return guard
+     in `retryItem()` itself.
 - `FolderEnumerator` (`src/transfer/FolderEnumerator.h/.cpp`) —
   recursively walks a folder via a backend's
   `listDirectoryForEnumeration()`, one directory at a time (not several
@@ -2126,7 +2175,18 @@ along the way — worth knowing about if it ever needs touching again.
   under the same deliberate CPU-contention stress test (14 busy-loop
   processes) that broke an earlier fixed-delay design elsewhere in this
   project (see `remote-to-remote-test`'s own entry below) — 8+ clean
-  runs plus 4 more under contention, all passing.
+  runs plus 4 more under contention, all passing. **Also covers the
+  three real bugs a code review found after this feature had already
+  shipped** (see `TransferManager`'s own entry above for the full
+  detail): a multi-select Move scenario (two `moveEntry()` calls fired
+  synchronously back to back, reproducing `MainWindow::moveEntries()`'s
+  loop exactly) confirming BOTH entries now get a real `TransferItem` and
+  reach `Done`, not just the last one; a conflict-resolution isolation
+  scenario confirming a Move's "apply to all, Write Into" choice from one
+  conflict does NOT silently suppress the real conflict dialog for a
+  second, unrelated Move conflict; and confirming `retryItem()` on the
+  existing "Write Into fails" Failed item is a safe no-op rather than a
+  misdispatch.
   `verify-sftp-move` (`src/verify_sftp_move.cpp`, `EXCLUDE_FROM_ALL`, needs
   `tools/local-test-servers/start-sftp-pubkey.sh` already running) closes
   the real-server gap: two independent `SftpBackend` connections to the

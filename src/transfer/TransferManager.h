@@ -327,20 +327,47 @@ private:
     FilePaneWidget *m_pendingFolderDestPane = nullptr;
     QString m_pendingFolderName;
 
-    // Stashed while moveEntry()'s/moveFolder()'s own root-conflict check
-    // is in flight — a separate id/stash from the two pairs above
-    // (rather than reusing m_pendingFileConflictCheckId or
-    // m_pendingFolderConflictCheckId) so a Move's conflict check can
-    // never collide with an ordinary enqueue()/enqueueFolder() check
-    // that happens to be in flight at the same moment; m_isFolder
-    // distinguishes which of the two askConflict() wordings + which
-    // post-conflict path (dispatch vs. the "can't merge" failure) to
-    // use once the response arrives.
-    int m_pendingMoveConflictCheckId = -1;
-    FilePaneWidget *m_pendingMoveSourcePane = nullptr;
-    FilePaneWidget *m_pendingMoveDestPane = nullptr;
-    QString m_pendingMoveName;
-    bool m_pendingMoveIsFolder = false;
+    // Stashed while a moveEntry()'s/moveFolder()'s own root-conflict
+    // check is in flight — a QHash keyed by requestId, NOT a single
+    // shared scalar (an earlier version of this used one, and it was a
+    // real bug: MainWindow::moveEntries() can dispatch several entries
+    // in one synchronous loop before any of their checkExists() calls
+    // resolve, so a shared scalar let each new call silently clobber the
+    // previous one's stashed pane/name before its response ever arrived,
+    // dropping every item but the last one in a multi-select Move). Also
+    // a separate id-space from m_pendingFileConflictCheckId/
+    // m_pendingFolderConflictCheckId above (rather than reusing either)
+    // so a Move's conflict check can never collide with an ordinary
+    // enqueue()/enqueueFolder() check in flight at the same moment.
+    struct PendingMoveConflictCheck {
+        FilePaneWidget *sourcePane = nullptr;
+        FilePaneWidget *destPane = nullptr;
+        QString name;
+        bool isFolder = false;   // which askConflict() wording + which post-conflict path to use
+    };
+    QHash<int, PendingMoveConflictCheck> m_pendingMoveConflictChecks;
+
+    // Move's OWN file/folder conflict-resolution state — deliberately
+    // separate from m_fileConflictResolution/m_directoryConflictResolution
+    // above, not shared. Those are only ever reset back to Ask in
+    // startNext()'s "nothing left to run" branch, which Move never calls
+    // (by design — see moveEntry()'s doc comment on why Move bypasses the
+    // ordinary Queued/m_activeIndex pipeline entirely). Sharing them was a
+    // real bug: a Move batch's "apply to all, Write Into" choice would
+    // persist indefinitely and silently apply to a completely unrelated
+    // ordinary transfer's conflict later in the session, with no prompt.
+    // Reset via maybeResetMoveConflictResolution() once no Move activity
+    // remains outstanding.
+    ConflictResolution m_moveFileConflictResolution = ConflictResolution::Ask;
+    ConflictResolution m_moveDirectoryConflictResolution = ConflictResolution::Ask;
+
+    // Resets m_moveFileConflictResolution/m_moveDirectoryConflictResolution
+    // back to Ask once every Move-related bookkeeping structure is empty
+    // (no conflict check in flight, no backend call in flight) — the
+    // closest Move equivalent to startNext()'s "queue fully drained"
+    // reset, since Move has no single queue to drain. Safe to call
+    // liberally; a no-op unless both are actually empty.
+    void maybeResetMoveConflictResolution();
 
     // Maps a moveEntry() backend-call request id to the TransferItem::id
     // it belongs to, resolved in onEntryMoved()/onEntryMoveFailed(). Not

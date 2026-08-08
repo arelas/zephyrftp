@@ -138,14 +138,11 @@ void TransferManager::moveEntry(FilePaneWidget *sourcePane, FilePaneWidget *dest
     const QString destPath = joinPath(destPane->currentDirectory(), fileName);
 
     ensureExistsCheckConnected(destBackend);
-    m_pendingMoveConflictCheckId = m_nextConflictCheckId++;
-    m_pendingMoveSourcePane = sourcePane;
-    m_pendingMoveDestPane = destPane;
-    m_pendingMoveName = fileName;
-    m_pendingMoveIsFolder = false;
+    const int requestId = m_nextConflictCheckId++;
+    m_pendingMoveConflictChecks.insert(requestId, {sourcePane, destPane, fileName, false});
 
     QMetaObject::invokeMethod(destBackend, "checkExists", Qt::QueuedConnection,
-                               Q_ARG(QString, destPath), Q_ARG(int, m_pendingMoveConflictCheckId));
+                               Q_ARG(QString, destPath), Q_ARG(int, requestId));
 }
 
 void TransferManager::moveFolder(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
@@ -158,14 +155,11 @@ void TransferManager::moveFolder(FilePaneWidget *sourcePane, FilePaneWidget *des
     const QString destPath = joinPath(destPane->currentDirectory(), folderName);
 
     ensureExistsCheckConnected(destBackend);
-    m_pendingMoveConflictCheckId = m_nextConflictCheckId++;
-    m_pendingMoveSourcePane = sourcePane;
-    m_pendingMoveDestPane = destPane;
-    m_pendingMoveName = folderName;
-    m_pendingMoveIsFolder = true;
+    const int requestId = m_nextConflictCheckId++;
+    m_pendingMoveConflictChecks.insert(requestId, {sourcePane, destPane, folderName, true});
 
     QMetaObject::invokeMethod(destBackend, "checkExists", Qt::QueuedConnection,
-                               Q_ARG(QString, destPath), Q_ARG(int, m_pendingMoveConflictCheckId));
+                               Q_ARG(QString, destPath), Q_ARG(int, requestId));
 }
 
 void TransferManager::dispatchMoveEntry(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
@@ -461,6 +455,18 @@ void TransferManager::retryItem(int id)
         && item.status != TransferStatus::Skipped)
         return;
 
+    // A Move item is never TransferManager's "active item" and never
+    // reaches this Queued/m_activeIndex pipeline in the first place (see
+    // moveEntry()'s own doc comment) — re-queuing one here would hit
+    // dispatchActiveItem(), which has no case for TransferDirection::Move
+    // and would fail it again with a misleading generic "no backend to
+    // execute this transfer" error. TransferQueueWidget already disables
+    // the Retry action for Move items for exactly this reason; this
+    // guard enforces the same invariant at the model layer too, rather
+    // than relying solely on the UI never calling this for one.
+    if (item.direction == TransferDirection::Move)
+        return;
+
     item.status = TransferStatus::Queued;
     item.bytesDone = 0;
     item.bytesTotal = 0;
@@ -606,12 +612,14 @@ void TransferManager::onDestinationExistsChecked(const QString &path, bool exist
         return;
     }
 
-    if (requestId == m_pendingMoveConflictCheckId) {
-        m_pendingMoveConflictCheckId = -1;
-        FilePaneWidget *sourcePane = m_pendingMoveSourcePane;
-        FilePaneWidget *destPane = m_pendingMoveDestPane;
-        const QString name = m_pendingMoveName;
-        const bool isFolder = m_pendingMoveIsFolder;
+    const auto moveConflictIt = m_pendingMoveConflictChecks.find(requestId);
+    if (moveConflictIt != m_pendingMoveConflictChecks.end()) {
+        const PendingMoveConflictCheck pending = moveConflictIt.value();
+        m_pendingMoveConflictChecks.erase(moveConflictIt);
+        FilePaneWidget *sourcePane = pending.sourcePane;
+        FilePaneWidget *destPane = pending.destPane;
+        const QString name = pending.name;
+        const bool isFolder = pending.isFolder;
 
         if (!exists) {
             dispatchMoveEntry(sourcePane, destPane, name);
@@ -619,7 +627,14 @@ void TransferManager::onDestinationExistsChecked(const QString &path, bool exist
         }
 
         bool proceed;
-        ConflictResolution &resolution = isFolder ? m_directoryConflictResolution : m_fileConflictResolution;
+        // Move's OWN resolution state (m_moveFileConflictResolution/
+        // m_moveDirectoryConflictResolution) — NOT the ordinary transfer
+        // pipeline's m_fileConflictResolution/m_directoryConflictResolution;
+        // see TransferManager.h's doc comment on why sharing them was a
+        // real bug (a Move's "apply to all" choice leaking into an
+        // unrelated later ordinary transfer with no prompt).
+        ConflictResolution &resolution =
+            isFolder ? m_moveDirectoryConflictResolution : m_moveFileConflictResolution;
         if (resolution == ConflictResolution::AlwaysOverwrite) {
             proceed = true;
         } else if (resolution == ConflictResolution::AlwaysSkip) {
@@ -640,6 +655,7 @@ void TransferManager::onDestinationExistsChecked(const QString &path, bool exist
             // enqueueFolder()'s own skip notification.
             if (isFolder)
                 emit folderTransferSkipped(name);
+            maybeResetMoveConflictResolution();
             return;
         }
 
@@ -663,6 +679,7 @@ void TransferManager::onDestinationExistsChecked(const QString &path, bool exist
                                     "at the destination, and Move can't merge folders.").arg(name);
             m_items.append(item);
             emit itemAdded(m_items.last());
+            maybeResetMoveConflictResolution();
             return;
         }
 
@@ -843,6 +860,7 @@ void TransferManager::onEntryMoved(int requestId)
         return;   // stale/unrelated response
 
     const int itemId = m_pendingMoveItemId.take(requestId);
+    maybeResetMoveConflictResolution();
     const int idx = indexById(itemId);
     if (idx < 0)
         return;
@@ -859,6 +877,7 @@ void TransferManager::onEntryMoveFailed(const QString &reason, int requestId)
         return;
 
     const int itemId = m_pendingMoveItemId.take(requestId);
+    maybeResetMoveConflictResolution();
     const int idx = indexById(itemId);
     if (idx < 0)
         return;
@@ -867,6 +886,14 @@ void TransferManager::onEntryMoveFailed(const QString &reason, int requestId)
     item.status = TransferStatus::Failed;
     item.errorMessage = reason;
     emit itemUpdated(item);
+}
+
+void TransferManager::maybeResetMoveConflictResolution()
+{
+    if (m_pendingMoveConflictChecks.isEmpty() && m_pendingMoveItemId.isEmpty()) {
+        m_moveFileConflictResolution = ConflictResolution::Ask;
+        m_moveDirectoryConflictResolution = ConflictResolution::Ask;
+    }
 }
 
 int TransferManager::indexById(int id) const
