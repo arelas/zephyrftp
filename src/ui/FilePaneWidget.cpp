@@ -17,6 +17,7 @@
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QFileInfo>
+#include <QItemSelection>
 #include <algorithm>
 
 namespace {
@@ -126,12 +127,22 @@ void FilePaneWidget::setBackend(RemoteBackend *backend, QThread *thread)
             this, &FilePaneWidget::onDirectoryListed);
     connect(m_backend, &RemoteBackend::connectionFailed, this, [this](const QString &reason) {
         m_connecting = false;
+        // A failed listDirectory() (bad path) reports here too, NOT via
+        // directoryListed() — see m_navigationInFlight's own doc comment.
+        // Without this, a failed navigation would leave the flag stuck
+        // true forever, silently refusing every navigation attempt after
+        // the first bad path.
+        m_navigationInFlight = false;
         m_statusLabel->setText(QStringLiteral("Error: %1").arg(reason));
     });
     connect(m_backend, &RemoteBackend::connected, this, [this]() {
         m_connecting = false;
-        QMetaObject::invokeMethod(m_backend, "listDirectory",
-                                   Qt::QueuedConnection, Q_ARG(QString, QString()));
+        // Through navigateTo() (not a raw invokeMethod call) so this
+        // initial listing also holds m_navigationInFlight — otherwise a
+        // Back/Forward/Up/path-bar action fired in the brief window before
+        // this first response arrives could overlap it, the same race
+        // m_navigationInFlight exists to prevent elsewhere.
+        navigateTo(QString());
     });
     connect(m_backend, &RemoteBackend::fileOperationFailed,
             this, &FilePaneWidget::onFileOperationFailed);
@@ -270,6 +281,14 @@ QIcon FilePaneWidget::iconForEntry(const RemoteEntry &e)
 
 void FilePaneWidget::navigateTo(const QString &path)
 {
+    // See m_navigationInFlight's own doc comment for the real race this
+    // prevents. Callers that mutate other state before calling this
+    // (goBack()/goForward()'s m_historyIndex) check the flag THEMSELVES
+    // first, so they never touch that state for a request that ends up
+    // refused here.
+    if (m_navigationInFlight)
+        return;
+    m_navigationInFlight = true;
     QMetaObject::invokeMethod(m_backend, "listDirectory",
                                Qt::QueuedConnection, Q_ARG(QString, path));
 }
@@ -281,6 +300,26 @@ void FilePaneWidget::onPathBarReturnPressed()
 
 void FilePaneWidget::rebuildModel()
 {
+    // A real bug: this used to clear and rebuild the model unconditionally
+    // with no attempt to preserve the current selection, so toggling "Show
+    // hidden files" or hitting Refresh mid-selection (both re-enter here
+    // for the SAME directory, not just a genuine navigation to a
+    // different one) silently dropped whatever was selected — losing the
+    // target set of a pending Transfer/Move with no indication why.
+    // Captured by NAME rather than row/index, since sorting and filtering
+    // below both change row positions and this needs to survive either.
+    // This is also naturally correct for a genuine navigation to a
+    // DIFFERENT directory (the other caller of rebuildModel(), via
+    // onDirectoryListed()): the old selection's names essentially never
+    // match anything in an unrelated directory's listing, so nothing gets
+    // selected there, exactly as it should — no separate "is this the
+    // same directory" check needed.
+    QStringList previouslySelectedNames;
+    for (const QModelIndex &index : m_view->selectionModel()->selectedRows(ColName)) {
+        if (const RemoteEntry *entry = entryForRow(index.row()))
+            previouslySelectedNames.append(entry->name);
+    }
+
     // Real, existing inconsistency this filter also fixes: LocalBackend
     // has always excluded dotfiles outright (its QDir::entryInfoList()
     // call never passes QDir::Hidden), while SftpBackend/FtpBackend only
@@ -329,10 +368,26 @@ void FilePaneWidget::rebuildModel()
         m_model->appendRow({nameItem, sizeItem, modItem, permItem});
     }
     m_statusLabel->setText(tr("%1 items").arg(m_currentEntries.size()));
+
+    if (!previouslySelectedNames.isEmpty()) {
+        QItemSelection restoredSelection;
+        for (int row = 0; row < m_model->rowCount(); ++row) {
+            const RemoteEntry *entry = entryForRow(row);
+            if (entry && previouslySelectedNames.contains(entry->name)) {
+                restoredSelection.select(m_model->index(row, 0),
+                                          m_model->index(row, m_model->columnCount() - 1));
+            }
+        }
+        if (!restoredSelection.isEmpty()) {
+            m_view->selectionModel()->select(
+                restoredSelection, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+        }
+    }
 }
 
 void FilePaneWidget::onDirectoryListed(const QString &path, const QList<RemoteEntry> &entries)
 {
+    m_navigationInFlight = false;
     m_lastRawEntries = entries;
     m_pathBar->setText(path);
     rebuildModel();
@@ -589,6 +644,13 @@ void FilePaneWidget::goBack()
 {
     if (m_historyIndex <= 0)
         return;   // m_backButton should already be disabled in this case — defensive, not load-bearing
+    // Checked here, before mutating m_historyIndex, NOT left to
+    // navigateTo()'s own guard below — a refused request must never have
+    // already moved the index, or this pane's idea of "where history
+    // currently points" desyncs from what's actually on screen. See
+    // m_navigationInFlight's own doc comment.
+    if (m_navigationInFlight)
+        return;
     m_historyIndex--;
     m_navigatingHistory = true;
     navigateTo(m_history.at(m_historyIndex));
@@ -597,6 +659,8 @@ void FilePaneWidget::goBack()
 void FilePaneWidget::goForward()
 {
     if (m_historyIndex >= m_history.size() - 1)
+        return;
+    if (m_navigationInFlight)
         return;
     m_historyIndex++;
     m_navigatingHistory = true;
@@ -652,6 +716,13 @@ void FilePaneWidget::resetHistory()
     m_history.clear();
     m_historyIndex = -1;
     m_navigatingHistory = false;
+    // Called from setBackend() as part of swapping to a new backend — the
+    // OLD backend (and any navigateTo() request still outstanding against
+    // it) is being torn down right here, so its response can never arrive
+    // to clear this itself. Without resetting it, a navigation left
+    // in-flight at swap time would permanently block the new backend's
+    // very first navigateTo() call too.
+    m_navigationInFlight = false;
     // Buttons may not exist yet the very first time this runs (called
     // from setBackend() during the constructor, before buildUi() —
     // actually after, since buildUi() runs first in the constructor, but

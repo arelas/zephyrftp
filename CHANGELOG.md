@@ -8,6 +8,26 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Cancelling a transfer whose connection had already been torn down
+  (e.g. Disconnect while it was still running) could leave the whole
+  queue permanently stuck** — the cancelled item stayed stuck In
+  Progress forever, and nothing behind it in the queue would ever start.
+  Now resolves cleanly to Cancelled and lets the rest of the queue run.
+- **A rare cancel/pause timing overlap could mislabel a completely
+  unrelated LATER transfer's real failure as "Cancelled," hiding its
+  actual error message.**
+- **Clicking Back (or Forward) twice quickly could skip past the
+  directory you meant to land on and silently lose your forward
+  history.**
+- **Toggling "Show hidden files" or hitting Refresh while files were
+  selected silently cleared the selection**, losing the target set of
+  a Transfer/Move you were about to start with no indication why.
+- **The transfer queue's sort order broke as soon as a new transfer was
+  added** — sort by any column, then start a new transfer, and the new
+  row landed at the bottom out of order instead of where it belonged.
+
 ## [0.6.4] — Fix four real bugs found by code review of TransferManager and the UI layer
 
 ### Fixed

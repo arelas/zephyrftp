@@ -227,6 +227,25 @@ int main(int argc, char *argv[])
             check("entryForRow() row-independence check", false);
         }
 
+        // ---------- Regression: rebuildModel() must preserve the current
+        // selection across a same-directory refresh. A real bug:
+        // rebuildModel() used to clear and rebuild the model unconditionally
+        // with no attempt to preserve selection, so Refresh (navigateTo()
+        // the SAME directory again — exactly what's triggered here) or
+        // toggling "Show hidden files" mid-selection silently dropped
+        // whatever was selected, losing the target set of a pending
+        // Transfer/Move with no indication why. bravo.txt is still
+        // selected from the check just above; re-navigating to the same
+        // directory re-enters onDirectoryListed() -> rebuildModel() via
+        // the exact real path a Refresh click uses. ----------
+        sortPane->navigateTo(base);
+    });
+
+    QTimer::singleShot(800, &app, [&]() {
+        const QStringList stillSelected = sortPane->selectedFileNames();
+        check("selection survived a same-directory refresh (bravo.txt still selected)",
+              stillSelected.size() == 1 && stillSelected.first() == QStringLiteral("bravo.txt"));
+
         qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
         app.exit(allPass ? 0 : 1);
     });

@@ -1323,6 +1323,26 @@ to drive FileZilla itself for a same-desktop comparison.
   `resetHistory()` clears all of this on every `setBackend()` call — a
   new backend (Connect/Disconnect) is a fresh navigation context, not a
   continuation of the old one's history.
+  **A real bug found by testing: overlapping navigation requests could
+  corrupt `m_history`/`m_historyIndex`.** `onDirectoryListed()` decides
+  whether to push a new history entry using the single shared
+  `m_navigatingHistory` flag above, set by whichever `navigateTo()` call
+  most recently ran — but `listDirectory()`/`directoryListed()` carry no
+  per-request id to correlate a response back to the specific call that
+  triggered it. Clicking Back twice quickly (or Back then typing a new
+  path before the first response lands) let a second, overlapping
+  `navigateTo()` call's setup silently stomp the first's still-pending
+  state, or vice versa. Confirmed directly: two synchronous `goBack()`
+  calls landed on the wrong directory (skipping past the intended one)
+  with the real forward-history entry silently lost. Since there's no
+  way to correlate responses to requests without changing
+  `RemoteBackend`'s interface, `navigateTo()` instead refuses to issue a
+  second request while one is still outstanding (`m_navigationInFlight`,
+  set right before dispatching, cleared by `onDirectoryListed()` on
+  success, the `connectionFailed` handler on a bad path, or
+  `resetHistory()` on a backend swap) — `goBack()`/`goForward()` check
+  this BEFORE mutating `m_historyIndex`, so a refused request never
+  desyncs the index from what's actually displayed.
   Clicking a column header sorts by that column (`setSortingEnabled(true)`
   on the `QTreeView`; Qt's own header handling gives ascending/descending
   toggle on a second click for free), with a real `SortDataRole` numeric
@@ -1339,6 +1359,21 @@ to drive FileZilla itself for a same-desktop comparison.
   invariant sorting breaks outright once rows move. Fixed by tagging each
   row's Name item with the entry's real name (`SortDataRole`) and adding
   `entryForRow()` to look entries up by that instead of position.
+  **A real bug: `rebuildModel()` cleared and rebuilt the model
+  unconditionally with no attempt to preserve the current selection.**
+  `removeRows()` destroys the old `QStandardItem`s outright, and Qt's
+  `QItemSelectionModel` can't follow a selection across that — so
+  toggling "Show hidden files" or hitting Refresh mid-selection (both
+  re-enter `rebuildModel()` for the SAME directory via
+  `onDirectoryListed()`, not just a genuine navigation to a different
+  one) silently dropped whatever was selected, losing the target set of
+  a pending Transfer/Move with no indication why. Fixed by capturing the
+  selected entries' NAMES before rebuilding and re-selecting whichever
+  rows match those names afterward — naturally correct for a genuine
+  navigation to a DIFFERENT directory too (the old selection's names
+  essentially never match anything in an unrelated listing, so nothing
+  gets re-selected there, exactly as it should), no separate "is this
+  the same directory" check needed.
   **Either pane can now connect independently**, not just the right one —
   `updatePathBarIcon()`'s existing leading icon on the path bar (already
   there, previously just a static local/remote indicator) is now
@@ -1701,9 +1736,10 @@ to drive FileZilla itself for a same-desktop comparison.
      regression re-enabling the action) would have silently hit the
      misdispatch described above. Fixed with a direct early-return guard
      in `retryItem()` itself.
-  **Three more real bugs found by a later code review of TransferManager
-  broadly (not Move-specific this time), all fixed, the first now also
-  covered by a regression scenario in `folder-transfer-test`:**
+  **Five more real bugs found by a later code review of TransferManager
+  broadly (not Move-specific this time), all fixed, each now also
+  covered by a regression scenario in `folder-transfer-test`,
+  `transfer-pause-test`, or `transfer-queue-test`:**
   1. **`enqueueFolder()` had the exact same shared-scalar bug Move's fix
      #1 above already closed once — just never applied to this earlier,
      separate call site.** `m_pendingFolderConflictCheckId`/
@@ -1748,6 +1784,27 @@ to drive FileZilla itself for a same-desktop comparison.
      `transferPaused`); `existsChecked`/`entryMoved`/`entryMoveFailed`
      are `Qt::UniqueConnection` and request-id-correlated, so leaving
      them connected across backends was always safe.
+  4. **`cancelItem()` on the active item silently no-op'd if
+     `m_currentBackend` (a `QPointer`) had already gone null** —
+     reachable if the active item's backend is destroyed/swapped
+     mid-transfer (e.g. Disconnect on a pane with a transfer running
+     against it). With nothing to call `requestCancel()` on and no
+     `transferFailed`/`transferPaused` ever coming to resolve it, the
+     item AND `m_activeIndex` stayed stuck `InProgress` forever,
+     permanently blocking every later `Queued` item via `startNext()`'s
+     `if (m_activeIndex != -1) return;` guard. Fixed by resolving the
+     item directly to `Cancelled` (including `cleanupTempFile()` and
+     resetting `m_activeIndex`) when there's no backend left to ask.
+  5. **`onBackendPaused()` never reset `m_activeItemCancelled`, unlike
+     `onBackendFailed()`, which does.** A cancel racing a near-
+     simultaneous pause — `cancelItem()` sets the flag and calls
+     `requestCancel()`, but the backend resolves to `transferPaused`
+     instead of `transferFailed` before the cancel takes effect — left
+     the flag stale. The next item's genuine, completely unrelated
+     failure would then be misreported as `Cancelled` via
+     `onBackendFailed()`, with its real `errorMessage` blanked to an
+     empty string. Fixed by clearing the flag in `onBackendPaused()`
+     too.
 - `FolderEnumerator` (`src/transfer/FolderEnumerator.h/.cpp`) —
   recursively walks a folder via a backend's
   `listDirectoryForEnumeration()`, one directory at a time (not several
@@ -1826,6 +1883,21 @@ to drive FileZilla itself for a same-desktop comparison.
   rebuilds the table via the existing `onItemAdded()`+`onItemUpdated()`
   pair, reusing `percentFor()` (extracted from `onItemUpdated()` so the
   Progress column's sort key and its rendered value can't drift apart).
+  **A real bug found by testing: a newly-added item ignored whatever
+  sort was currently active.** `onItemAdded()` always appended the new
+  row at the bottom via `insertRow(rowCount())` regardless of
+  `m_sortColumn`/`m_sortOrder` — sort the queue by a column, then
+  drag-drop a new batch of files, and the new rows landed out of order
+  at the bottom and stayed there until the next header click silently
+  broke the sort the person had just set. Fixed by splitting the raw
+  row-construction out into its own `appendRow()` helper: `onItemAdded()`
+  now checks for an active sort and calls `resortAndRebuild()` instead
+  when one is set (which reads live from `TransferManager::items()`,
+  already including the new item by the time `itemAdded` fires);
+  `resortAndRebuild()`'s own rebuild loop calls `appendRow()` directly
+  rather than `onItemAdded()`, specifically to avoid recursing back into
+  itself — a real, caught-immediately bug the first version of this fix
+  introduced.
 - `CommandsPaneWidget` (`src/ui/CommandsPaneWidget.h/.cpp`) — a live,
   read-only log of protocol traffic, modeled on FileZilla's own message
   log, docked between the toolbar and the file panes by default (View >

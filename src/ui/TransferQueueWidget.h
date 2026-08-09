@@ -40,15 +40,26 @@ private:
     // key, so the two can't drift apart.
     static int percentFor(const TransferItem &item);
 
+    // The actual row-construction onItemAdded() used to do inline —
+    // factored out so resortAndRebuild()'s rebuild loop can call this
+    // directly instead of onItemAdded() itself, which would otherwise
+    // recurse straight back into resortAndRebuild() for as long as a sort
+    // is active (see onItemAdded()'s own comment on the real bug this
+    // split fixes). Always appends at the CURRENT bottom row — callers
+    // that care about sorted order are responsible for that themselves
+    // (onItemAdded() via resortAndRebuild(); resortAndRebuild() via its
+    // own already-sorted iteration order).
+    void appendRow(const TransferItem &item);
+
     // Re-sorts m_manager->items() by (m_sortColumn, m_sortOrder) and
-    // rebuilds every row from scratch via onItemAdded()+onItemUpdated().
-    // A full rebuild rather than QTableWidget::sortItems() specifically
+    // rebuilds every row from scratch via appendRow()+onItemUpdated(). A
+    // full rebuild rather than QTableWidget::sortItems() specifically
     // because ColDirection and ColProgress are QWidget cell widgets
     // (setCellWidget()), not QTableWidgetItems — sortItems() only
     // reorders items, so a cell widget stays pinned to its original row
     // number while the item text around it moves, silently pairing each
     // widget with the wrong row. Rebuilding from the same TransferManager
-    // data onItemAdded() already trusts sidesteps that entirely.
+    // data appendRow() already trusts sidesteps that entirely.
     void resortAndRebuild();
 
     int m_sortColumn = -1;   // -1: unsorted, insertion order (the pre-sort default)

@@ -31,7 +31,10 @@
 #include <QFile>
 #include <QCryptographicHash>
 #include <QRandomGenerator>
+#include <QTableWidget>
+#include <QHeaderView>
 #include "ui/FilePaneWidget.h"
+#include "ui/TransferQueueWidget.h"
 #include "backends/LocalBackend.h"
 #include "transfer/TransferManager.h"
 
@@ -219,7 +222,55 @@ int main(int argc, char *argv[])
         phase3Pass = pass;
         qDebug() << (pass ? "[phase3] PASS" : "[phase3] FAIL");
 
-        const bool overallPass = phase1Pass && phase2SyncPass && phase2Pass && phase3Pass;
+        qDebug() << (phase3Pass ? "[phase3] PASS" : "[phase3] FAIL");
+    });
+
+    // ---- Phase 4: TransferQueueWidget keeps a new item in its correct
+    // sorted position, not always appended at the bottom. Regression test
+    // for a real bug: onItemAdded() always called insertRow(rowCount()),
+    // ignoring whatever column sort was currently active — sorting the
+    // queue by Name, then enqueueing something, silently broke the sort
+    // the person had just set. A fresh TransferManager/TransferQueueWidget
+    // pair, isolated from phases 1-3's items — this only checks how new
+    // rows land relative to an active sort, not transfer execution, so
+    // the enqueued items never need to actually run (checked synchronously,
+    // before any event-loop turn lets startNext() begin real I/O). ----
+    bool phase4Pass = false;
+    QTimer::singleShot(3800, &app, [&]() {
+        auto *sortManager = new TransferManager(&app);
+        auto *queueWidget = new TransferQueueWidget(sortManager);
+        auto *table = queueWidget->findChild<QTableWidget *>();
+
+        sortManager->enqueue(leftPane, rightPane, "b_item.bin");
+        sortManager->enqueue(leftPane, rightPane, "a_item.bin");
+
+        // Same call Qt's own header-click handling invokes — sorts
+        // ascending by Name (column 0).
+        table->horizontalHeader()->sectionClicked(0);
+
+        const bool sortedAfterHeaderClick =
+            table->item(0, 0)->text() == "a_item.bin" && table->item(1, 0)->text() == "b_item.bin";
+        qDebug() << "[phase4] sorted ascending by Name after header click:" << sortedAfterHeaderClick;
+
+        // The regression check: enqueue a third item that belongs
+        // ALPHABETICALLY BETWEEN the first two, while the sort is still
+        // active. Under the old bug this always landed at row 2 (the
+        // bottom) regardless of the active sort, producing
+        // a_item/b_item/ab_item instead of the correctly sorted
+        // a_item/ab_item/b_item.
+        sortManager->enqueue(leftPane, rightPane, "ab_item.bin");
+
+        const bool stillSortedAfterNewItem = table->rowCount() == 3
+            && table->item(0, 0)->text() == "a_item.bin"
+            && table->item(1, 0)->text() == "ab_item.bin"
+            && table->item(2, 0)->text() == "b_item.bin";
+        qDebug() << "[phase4] new item landed in its correct sorted position, not appended at the bottom:"
+                  << stillSortedAfterNewItem;
+
+        phase4Pass = sortedAfterHeaderClick && stillSortedAfterNewItem;
+        qDebug() << (phase4Pass ? "[phase4] PASS" : "[phase4] FAIL");
+
+        const bool overallPass = phase1Pass && phase2SyncPass && phase2Pass && phase3Pass && phase4Pass;
         qDebug() << (overallPass ? "[test] ALL PHASES PASS" : "[test] AT LEAST ONE PHASE FAILED");
         app.exit(overallPass ? 0 : 1);
     });

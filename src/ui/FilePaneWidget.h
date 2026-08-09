@@ -246,6 +246,24 @@ private:
     int m_historyIndex = -1;
     bool m_navigatingHistory = false;
 
+    // A real bug found by testing: onDirectoryListed() decides whether to
+    // push a new history entry using the single shared m_navigatingHistory
+    // flag above, set by whichever navigateTo() call most recently ran —
+    // but listDirectory()/directoryListed() carry no per-request id to
+    // correlate a response back to the specific call that triggered it.
+    // Clicking Back twice quickly (or Back then typing a new path before
+    // the first response lands) let a second, overlapping navigateTo()
+    // call's setup silently stomp the first's still-pending state, or
+    // vice versa, corrupting m_history/m_historyIndex. Since there's no
+    // way to correlate responses to requests without changing
+    // RemoteBackend's interface, navigateTo() instead refuses to issue a
+    // second request while one is still outstanding — set true right
+    // before dispatching, cleared once a response (success via
+    // onDirectoryListed(), or failure via the connectionFailed handler in
+    // setBackend() — listDirectory() reports a bad path that way, not via
+    // directoryListed()) or a backend swap (resetHistory()) resolves it.
+    bool m_navigationInFlight = false;
+
     // Non-owning — outlives this pane (MainWindow owns it for the app's
     // whole lifetime). Null in every test that constructs a pane directly.
     AppSettings *m_settings;

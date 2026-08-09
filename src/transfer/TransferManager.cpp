@@ -469,12 +469,31 @@ void TransferManager::cancelItem(int id)
     TransferItem &item = m_items[idx];
 
     if (idx == m_activeIndex) {
-        // Currently running — ask the executing backend to stop, and
-        // remember to report the resulting transferFailed as Cancelled
-        // rather than Failed once it arrives.
         if (m_currentBackend) {
+            // Currently running — ask the executing backend to stop, and
+            // remember to report the resulting transferFailed as Cancelled
+            // rather than Failed once it arrives.
             m_activeItemCancelled = true;
             m_currentBackend->requestCancel();
+        } else {
+            // A real bug: m_currentBackend (a QPointer) can go null if the
+            // active item's backend is destroyed/swapped mid-transfer —
+            // e.g. Disconnect on a pane with a transfer running against
+            // it. There's no backend left to ask to stop, and no
+            // transferFailed/transferPaused signal is ever coming to
+            // resolve this item — without handling this case, the item
+            // AND m_activeIndex would stay stuck InProgress forever,
+            // permanently blocking every later item via startNext()'s
+            // `if (m_activeIndex != -1) return;` guard. Resolve it
+            // directly instead of waiting for a response that can't
+            // arrive, the same terminal state onBackendFailed() would
+            // have produced for a cancel.
+            item.status = TransferStatus::Cancelled;
+            item.speedBytesPerSec = 0;
+            cleanupTempFile(item);
+            emit itemUpdated(item);
+            m_activeIndex = -1;
+            startNext();
         }
         return;
     }
@@ -941,6 +960,16 @@ void TransferManager::onBackendPaused(const QString &fileName, qint64 bytesDone)
     item.status = TransferStatus::Paused;
     item.bytesDone = bytesDone;   // becomes the resume offset the next time this item runs
     item.speedBytesPerSec = 0;
+    // A real bug: unlike onBackendFailed(), this never consumed
+    // m_activeItemCancelled. A cancel racing a near-simultaneous pause
+    // (cancelItem() sets the flag and calls requestCancel(), but the
+    // backend reports transferPaused instead of transferFailed before
+    // the cancel takes effect) left the flag set with nothing to consume
+    // it — this item resolves to Paused either way, but the STALE flag
+    // then silently mislabeled the next unrelated item's genuine failure
+    // as Cancelled (blanking its real error message) the next time
+    // onBackendFailed() ran.
+    m_activeItemCancelled = false;
     emit itemUpdated(item);
 
     m_activeIndex = -1;

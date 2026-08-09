@@ -27,6 +27,8 @@
 #include <QApplication>
 #include <QTimer>
 #include <QDebug>
+#include <QDir>
+#include <QFile>
 #include "ui/FilePaneWidget.h"
 #include "backends/LocalBackend.h"
 #include "backends/RemoteBackend.h"
@@ -65,6 +67,16 @@ public:
     // directly than trying to detect a dialog that (with the fix
     // working) should never even be triggered.
     int checkExistsCallCount = 0;
+
+    // Test hook for the cancel/pause-race regression scenario below —
+    // directly emits transferPaused() regardless of m_cancelRequested,
+    // bypassing tick()'s own ordering (which always resolves a pending
+    // cancel first and could never naturally produce this race). A real
+    // backend's own internal cancel/pause resolution could plausibly land
+    // either way depending on exact timing; this drives TransferManager's
+    // ORCHESTRATION side of that race directly and deterministically,
+    // independent of how any specific backend happens to arbitrate it.
+    void forceEmitPaused() { emit transferPaused(m_name, m_done); }
 
 public slots:
     void connectToHost() override { emit connected(); }
@@ -145,6 +157,21 @@ private:
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
+
+    // Fixture for the cancel-unblocks-the-queue regression scenario
+    // further down — a real file, so that item's real LocalBackend
+    // transfer can genuinely reach Done (not just start), proving the
+    // queue is actually unblocked, not merely no-longer-stuck.
+    const QString unblockSrcDir = "/tmp/transfer_pause_test/unblock_src";
+    const QString unblockDstDir = "/tmp/transfer_pause_test/unblock_dst";
+    QDir("/tmp/transfer_pause_test").removeRecursively();
+    QDir().mkpath(unblockSrcDir);
+    QDir().mkpath(unblockDstDir);
+    {
+        QFile f(unblockSrcDir + "/real_file.bin");
+        f.open(QIODevice::WriteOnly);
+        f.write(QByteArray(500, 'y'));
+    }
 
     auto *fakeBackend = new FakePausableBackend();
     auto *leftPane = new FilePaneWidget(new LocalBackend());
@@ -234,6 +261,118 @@ int main(int argc, char *argv[])
         check("final bytesDone reached the full total", finalBytesDone == 1000);
         check("resuming did NOT re-check the destination for a conflict (checkExists called exactly once, "
               "not once per pause/resume cycle)", fakeBackend->checkExistsCallCount == 1);
+    });
+
+    // ---------- Regression: cancelItem() on the active item must not
+    // permanently stall the queue if its backend has gone null. A real
+    // bug: m_currentBackend is a QPointer that goes null if the active
+    // item's backend is destroyed/swapped mid-transfer (e.g. Disconnect
+    // on a pane with a transfer running against it) — cancelItem() used
+    // to just no-op in that case (nothing to call requestCancel() on),
+    // leaving the item AND m_activeIndex stuck forever, permanently
+    // blocking every later Queued item. A second, real LocalBackend
+    // transfer (item2) proves the queue is genuinely unblocked
+    // afterward, not just that item1 changed status. ----------
+    auto *unblockFake = new FakePausableBackend();
+    auto *unblockSrcPane = new FilePaneWidget(new LocalBackend());
+    auto *unblockDestPane = new FilePaneWidget(unblockFake);
+    auto *unblockLocalDestPane = new FilePaneWidget(new LocalBackend());
+    auto *unblockManager = new TransferManager(&app);
+    int unblockItem1Id = -1, unblockItem2Id = -1;
+    QObject::connect(unblockManager, &TransferManager::itemAdded, &app, [&](const TransferItem &item) {
+        if (item.fileName == "fakefile.bin") unblockItem1Id = item.id;
+        if (item.fileName == "real_file.bin") unblockItem2Id = item.id;
+    });
+    // Navigated immediately (not inside a later timer) so both panes'
+    // currentDirectory() is already correct by the time enqueue() runs
+    // below — navigateTo() dispatches asynchronously, so calling enqueue()
+    // right after it (rather than giving it real time first) would build
+    // item2's source/dest paths from whatever directory the pane was
+    // still sitting in beforehand, not unblockSrcDir/unblockDstDir. Same
+    // pattern transfer_queue_test.cpp's own phase 1 already uses.
+    unblockSrcPane->navigateTo(unblockSrcDir);
+    unblockLocalDestPane->navigateTo(unblockDstDir);
+
+    QTimer::singleShot(1700, &app, [&]() {
+        unblockManager->enqueue(unblockSrcPane, unblockDestPane, "fakefile.bin");   // dispatches against the fake
+        unblockManager->enqueue(unblockSrcPane, unblockLocalDestPane, "real_file.bin");   // stays Queued behind item1
+    });
+
+    // Swap the destination pane's backend — the same real trigger
+    // (Disconnect mid-transfer) that nulls TransferManager's
+    // m_currentBackend QPointer via deleteLater() + the event loop
+    // actually running it.
+    QTimer::singleShot(1900, &app, [&]() {
+        unblockDestPane->setBackend(new LocalBackend());
+    });
+
+    QTimer::singleShot(2100, &app, [&]() {
+        unblockManager->cancelItem(unblockItem1Id);
+    });
+
+    QTimer::singleShot(2500, &app, [&]() {
+        bool item1Cancelled = false, item2Done = false;
+        for (const TransferItem &it : unblockManager->items()) {
+            if (it.id == unblockItem1Id && it.status == TransferStatus::Cancelled)
+                item1Cancelled = true;
+            if (it.id == unblockItem2Id && it.status == TransferStatus::Done)
+                item2Done = true;
+        }
+        check("cancelItem() on an active item whose backend went null still resolves it to Cancelled",
+              item1Cancelled);
+        check("the queue was genuinely unblocked afterward — item2 actually ran to Done, "
+              "not left stuck behind item1 forever", item2Done);
+    });
+
+    // ---------- Regression: a cancel/pause race must not mislabel a
+    // LATER, unrelated item's genuine failure. A real bug: onBackendPaused()
+    // never reset m_activeItemCancelled (unlike onBackendFailed(), which
+    // does), so cancelItem() setting that flag followed by the backend
+    // resolving to Paused instead of Failed (a real, possible race — see
+    // forceEmitPaused()'s own comment) left the flag stale. The next
+    // item's genuine, unrelated failure would then be misreported as
+    // Cancelled with its real error message blanked out. ----------
+    auto *raceFake = new FakePausableBackend();
+    auto *raceSrcPane = new FilePaneWidget(new LocalBackend());
+    auto *raceDestPane = new FilePaneWidget(raceFake);
+    // Real LocalBackend, real (guaranteed) failure — a nonexistent source
+    // file — so item B's eventual status/errorMessage are genuine, not
+    // simulated.
+    auto *raceRealFailDestPane = new FilePaneWidget(new LocalBackend());
+    auto *raceManager = new TransferManager(&app);
+    int raceItemAId = -1, raceItemBId = -1;
+    QObject::connect(raceManager, &TransferManager::itemAdded, &app, [&](const TransferItem &item) {
+        if (item.fileName == "fakefile.bin") raceItemAId = item.id;
+        if (item.fileName == "doesnotexist_race.bin") raceItemBId = item.id;
+    });
+    raceSrcPane->navigateTo(unblockSrcDir);
+    raceRealFailDestPane->navigateTo(unblockDstDir);
+
+    QTimer::singleShot(2700, &app, [&]() {
+        raceManager->enqueue(raceSrcPane, raceDestPane, "fakefile.bin");   // dispatches against raceFake
+        raceManager->enqueue(raceSrcPane, raceRealFailDestPane, "doesnotexist_race.bin");   // stays Queued
+    });
+
+    QTimer::singleShot(2900, &app, [&]() {
+        raceManager->cancelItem(raceItemAId);   // sets m_activeItemCancelled, calls raceFake->requestCancel()
+        raceFake->forceEmitPaused();   // ...but the backend resolves to Paused, not Failed — the real race
+    });
+
+    QTimer::singleShot(3300, &app, [&]() {
+        TransferStatus itemBStatus = TransferStatus::Queued;
+        QString itemBError;
+        for (const TransferItem &it : raceManager->items()) {
+            if (it.id == raceItemBId) {
+                itemBStatus = it.status;
+                itemBError = it.errorMessage;
+            }
+        }
+        qDebug() << "[test] item B (unrelated, genuinely failing) final status ="
+                 << static_cast<int>(itemBStatus) << "error =" << itemBError;
+        check("a stale cancel flag from an earlier item's pause did NOT mislabel a later, "
+              "unrelated item's genuine failure as Cancelled",
+              itemBStatus == TransferStatus::Failed);
+        check("...and did not blank its real error message either", !itemBError.isEmpty());
 
         qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
         app.exit(allPass ? 0 : 1);

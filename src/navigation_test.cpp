@@ -8,6 +8,8 @@
 #include <QTimer>
 #include <QDebug>
 #include <QDir>
+#include <QEventLoop>
+#include <functional>
 #include "ui/FilePaneWidget.h"
 #include "backends/LocalBackend.h"
 
@@ -129,6 +131,73 @@ int main(int argc, char *argv[])
 
     QTimer::singleShot(2400, &app, [&]() {
         check("goUp() from root is a safe no-op (stays at root)", pane->currentDirectory() == "/");
+    });
+
+    // ---------- Regression: overlapping navigation requests must not
+    // corrupt history. A real bug: onDirectoryListed() decided whether to
+    // push a new history entry using a single shared m_navigatingHistory
+    // flag set by whichever navigateTo() call most recently ran — clicking
+    // Back twice quickly (no event-loop turn between them, exactly what's
+    // done below) let the second call's setup silently stomp the first's
+    // still-pending state, corrupting m_history/m_historyIndex. A fresh
+    // pane/directory tree, isolated from the sequence above. ----------
+    const QString raceBase = "/tmp/nav_test_race";
+    QDir().mkpath(raceBase + "/x");
+    QDir().mkpath(raceBase + "/y");
+    auto *racePane = new FilePaneWidget(new LocalBackend());
+
+    // Polls rather than a fixed delay for the SETUP navigation (not the
+    // deliberately-racy part below, which must stay two synchronous,
+    // back-to-back calls) — a fixed delay here would be exactly the kind
+    // of flaky timing assumption this project avoids elsewhere (see
+    // remote_to_remote_test.cpp's own header comment on why it was
+    // rewritten away from one). LocalBackend's round trip is normally
+    // near-instant, but a fixed 200ms margin was observed to occasionally
+    // not be enough under real system load.
+    auto waitUntil = [&](std::function<bool()> condition) {
+        QEventLoop loop;
+        QTimer timeoutTimer;
+        timeoutTimer.setSingleShot(true);
+        QObject::connect(&timeoutTimer, &QTimer::timeout, &loop, &QEventLoop::quit);
+        timeoutTimer.start(5000);
+        while (!condition() && timeoutTimer.isActive())
+            loop.processEvents(QEventLoop::AllEvents, 20);
+    };
+
+    QTimer::singleShot(2600, &app, [&]() {
+        racePane->navigateTo(raceBase + "/x");
+        waitUntil([&]() { return racePane->currentDirectory() == raceBase + "/x"; });
+
+        racePane->navigateTo(raceBase + "/y");
+        waitUntil([&]() { return racePane->currentDirectory() == raceBase + "/y"; });
+
+        check("race setup: at y, with x and (before this) the start dir behind it",
+              racePane->currentDirectory() == raceBase + "/y" && racePane->canGoBack());
+
+        // Two goBack() calls back to back, synchronously — no event-loop
+        // turn in between, the exact pattern a fast double-click produces.
+        // This part deliberately stays a raw, unwaited pair of calls: the
+        // whole point is exercising what happens when the second fires
+        // before the first's response has landed.
+        racePane->goBack();
+        racePane->goBack();
+
+        waitUntil([&]() { return racePane->currentDirectory() == raceBase + "/x"; });
+
+        // Pre-fix: the second, overlapping goBack() call still mutated
+        // m_historyIndex and issued its own navigateTo() before the
+        // first's response arrived, corrupting m_navigatingHistory's
+        // shared state — the actual, observable result was landing on
+        // the start directory (skipping x entirely) with the forward
+        // history (x and y) silently truncated/lost. Post-fix: the second
+        // call sees a navigation already in flight and is refused
+        // outright, so exactly one step back happens — landing on x,
+        // with y still intact as a forward entry.
+        check("only ONE of the two overlapping goBack() calls actually took effect — landed on x, "
+              "not skipped past it to the start directory",
+              racePane->currentDirectory() == raceBase + "/x");
+        check("forward history (y) survived — NOT silently truncated by the overlapping call",
+              racePane->canGoForward());
 
         qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
         app.exit(allPass ? 0 : 1);

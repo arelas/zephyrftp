@@ -226,6 +226,29 @@ QString TransferQueueWidget::speedText(const TransferItem &item)
 
 void TransferQueueWidget::onItemAdded(const TransferItem &item)
 {
+    // A real bug: this always appended the new row at the bottom via
+    // appendRow(), ignoring m_sortColumn/m_sortOrder entirely — sort the
+    // queue by a column, then drag-drop a new batch of files, and the new
+    // rows landed out of order at the bottom and stayed there until the
+    // next header click silently broke the sort the person had just set.
+    // If a sort is currently active, route through resortAndRebuild()
+    // instead: it reads live from m_manager->items(), which by now
+    // already includes this new item (itemAdded fires only after
+    // TransferManager appends it — see TransferManager::enqueue()), so
+    // this rebuilds the whole table with the new row in its correct
+    // sorted place rather than tacked on at the end. NOT a plain call to
+    // appendRow() followed by a sort — resortAndRebuild()'s own loop
+    // calls appendRow() directly (not this method), specifically to avoid
+    // this redirect recursing back into itself.
+    if (m_sortColumn != -1) {
+        resortAndRebuild();
+        return;
+    }
+    appendRow(item);
+}
+
+void TransferQueueWidget::appendRow(const TransferItem &item)
+{
     const int row = m_table->rowCount();
     m_table->insertRow(row);
 
@@ -477,13 +500,14 @@ void TransferQueueWidget::resortAndRebuild()
         return;   // m_sortColumn == -1 (no header clicked yet) — insertion order, nothing to rebuild
     }
 
-    // onItemAdded() alone would leave every row at its just-added defaults
-    // (0% progress, no speed) — following each with onItemUpdated() on the
-    // same real item brings every row back to its actual current state,
-    // just in the new order.
+    // appendRow() — NOT onItemAdded(), which would recurse straight back
+    // into this method for as long as a sort is active — alone would
+    // leave every row at its just-added defaults (0% progress, no speed);
+    // following each with onItemUpdated() on the same real item brings
+    // every row back to its actual current state, just in the new order.
     m_table->setRowCount(0);
     for (const TransferItem &item : items) {
-        onItemAdded(item);
+        appendRow(item);
         onItemUpdated(item);
     }
 }
