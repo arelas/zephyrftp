@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.6.1] — Fix a general resume bug and five real credential-storage bugs
+
 ### Fixed
 
 - **Resuming ANY paused transfer (not just server-to-server) could show
@@ -937,7 +939,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.1
 [0.6.0]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.0
 [0.5.2]: https://github.com/arelas/zephyrftp/releases/tag/v0.5.2
 [0.5.1]: https://github.com/arelas/zephyrftp/releases/tag/v0.5.1
