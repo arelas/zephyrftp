@@ -248,6 +248,25 @@ bool SftpBackend::verifyHostKey()
     const int typemask = LIBSSH2_KNOWNHOST_TYPE_PLAIN | LIBSSH2_KNOWNHOST_KEYENC_RAW
                           | hostkeyTypeToKnownhostKeyMask(keyType);
 
+    // Used for the two libssh2_knownhost_addc() calls below — NOT for
+    // checkp() itself, which already takes host and port as separate
+    // arguments and does its own internal port-aware matching against
+    // exactly this "[host]:port" bracket form (confirmed directly
+    // against libssh2 1.11.1's actual behavior, not assumed from its
+    // header comment's vague "does a better check"). A real bug found by
+    // code review: libssh2_knownhost_addc() has no port parameter at
+    // all, so storing entries under the bare hostname (as this used to)
+    // meant checkp() found the SAME entry regardless of port — a second,
+    // genuinely different SSH service on the same hostname but a
+    // different port (confirmed with a standalone reproduction: two
+    // fake, distinct keys added/checked against "127.0.0.1" on two
+    // ports) came back CHECK_MISMATCH, a scary "host key changed —
+    // possible MITM!" warning, instead of CHECK_NOTFOUND, the correct
+    // "first time seeing this service" case. Bracket-quoting fixes this
+    // for both the default port and any other, confirmed empirically —
+    // no port-based special-casing needed.
+    const QString knownHostsKey = QStringLiteral("[%1]:%2").arg(m_credentials.host).arg(m_credentials.port);
+
     struct libssh2_knownhost *matchedEntry = nullptr;
     const int check = libssh2_knownhost_checkp(knownHosts, m_credentials.host.toUtf8().constData(),
                                                 m_credentials.port, keyData, keyLen, typemask,
@@ -261,6 +280,16 @@ bool SftpBackend::verifyHostKey()
     if (const char *hashRaw = libssh2_hostkey_hash(m_session, LIBSSH2_HOSTKEY_HASH_SHA256)) {
         fingerprint = QStringLiteral("SHA256:")
             + QByteArray(hashRaw, 32).toBase64(QByteArray::OmitTrailingEquals);
+    } else {
+        // A real gap found by code review: libssh2_hostkey_hash() returns
+        // null if the linked crypto backend doesn't support SHA256
+        // host-key hashing — rare, but silently left fingerprint empty,
+        // rendering as a blank "Fingerprint: " line in the trust dialog
+        // with no indication why. A person can't verify a blank string
+        // against anything; at least being honest that it's unavailable
+        // (rather than looking like a rendering bug) doesn't change the
+        // trust decision itself, which stays exactly as manual either way.
+        fingerprint = QStringLiteral("(unavailable — this build's crypto backend doesn't support SHA256 host-key hashing)");
     }
 
     bool trusted = false;
@@ -277,20 +306,38 @@ bool SftpBackend::verifyHostKey()
             // other SSH client would.
             if (matchedEntry)
                 libssh2_knownhost_del(knownHosts, matchedEntry);
-            libssh2_knownhost_addc(knownHosts, m_credentials.host.toUtf8().constData(), nullptr,
+            libssh2_knownhost_addc(knownHosts, knownHostsKey.toUtf8().constData(), nullptr,
                                     keyData, keyLen, nullptr, 0, typemask, nullptr);
-            libssh2_knownhost_writefile(knownHosts, knownHostsPath.toUtf8().constData(),
-                                        LIBSSH2_KNOWNHOST_FILE_OPENSSH);
+            // Return value checked — a real gap found by code review: the
+            // confirmation dialog promises "this will be remembered for
+            // future connections," but writefile() can fail (a read-only
+            // config directory, a full disk) with nothing telling the
+            // user their trust decision didn't actually persist, so every
+            // later connection would silently re-prompt from scratch with
+            // no clue why. Surfaced via commandLogged (the Commands
+            // pane's existing informational-message channel) rather than
+            // connectionFailed — the connection itself still succeeds,
+            // only the on-disk persistence failed.
+            if (libssh2_knownhost_writefile(knownHosts, knownHostsPath.toUtf8().constData(),
+                                             LIBSSH2_KNOWNHOST_FILE_OPENSSH) != 0) {
+                emit commandLogged(QStringLiteral(
+                    "Warning: could not save the updated host key to %1 — "
+                    "this trust decision may not persist to your next connection.").arg(knownHostsPath));
+            }
         }
         break;
 
     case LIBSSH2_KNOWNHOST_CHECK_NOTFOUND:
         trusted = askUserToTrustHostKey(fingerprint, /*isMismatch=*/false);
         if (trusted) {
-            libssh2_knownhost_addc(knownHosts, m_credentials.host.toUtf8().constData(), nullptr,
+            libssh2_knownhost_addc(knownHosts, knownHostsKey.toUtf8().constData(), nullptr,
                                     keyData, keyLen, nullptr, 0, typemask, nullptr);
-            libssh2_knownhost_writefile(knownHosts, knownHostsPath.toUtf8().constData(),
-                                        LIBSSH2_KNOWNHOST_FILE_OPENSSH);
+            if (libssh2_knownhost_writefile(knownHosts, knownHostsPath.toUtf8().constData(),
+                                             LIBSSH2_KNOWNHOST_FILE_OPENSSH) != 0) {
+                emit commandLogged(QStringLiteral(
+                    "Warning: could not save the trusted host key to %1 — "
+                    "this trust decision may not persist to your next connection.").arg(knownHostsPath));
+            }
         }
         break;
 
@@ -352,20 +399,34 @@ bool SftpBackend::ensureSession()
 
     const libssh2_socket_t sock = static_cast<libssh2_socket_t>(m_socket->socketDescriptor());
 
+    // Every failure path from here on calls teardown() before returning
+    // false — a real, repeatable resource leak found by code review:
+    // m_socket/m_session were left allocated (and, on retry, silently
+    // overwritten with brand-new ones, orphaning the old socket fd and
+    // libssh2 session) on every failure after this point — a wrong
+    // password, a rejected host key, a handshake failure, or an SFTP
+    // subsystem init failure. teardown() (already used by the
+    // destructor) is safe to call here too: it checks each of
+    // m_sftp/m_session/m_socket for null before touching it, so it's a
+    // correct no-op for whichever of them was never actually reached at
+    // a given failure point.
     m_session = libssh2_session_init();
     if (!m_session) {
         emit connectionFailed(QStringLiteral("libssh2_session_init failed"));
+        teardown();
         return false;
     }
 
     if (libssh2_session_handshake(m_session, sock) != 0) {
         emit connectionFailed(QStringLiteral("SSH handshake failed"));
+        teardown();
         return false;
     }
 
     if (!verifyHostKey()) {
         // connectionFailed already emitted inside verifyHostKey() with a
         // specific reason (rejected / unverifiable / no verifier wired up).
+        teardown();
         return false;
     }
 
@@ -374,31 +435,41 @@ bool SftpBackend::ensureSession()
                                        m_credentials.password.toUtf8().constData()) != 0) {
             emit connectionFailed(QStringLiteral("Password authentication failed for %1")
                                    .arg(m_credentials.username));
+            teardown();
             return false;
         }
     } else {
         // Public-key auth. libssh2_userauth_publickey_fromfile_ex (the
         // underlying call) wants an actual public-key file, not just the
-        // private key — falls back to the conventional <privatekey>.pub
-        // sibling if the person didn't specify one separately.
-        //
-        // UNVERIFIED: assumes that .pub-sibling convention holds for
-        // whatever key file is provided. If it doesn't, this fails with a
-        // libssh2 auth error rather than silently doing something
-        // unexpected — no real SFTP server has exercised this path yet.
+        // private key — uses the conventional <privatekey>.pub sibling
+        // when it actually exists on disk. A real functional gap found
+        // by code review: this used to build that path unconditionally
+        // and pass it regardless of whether the file was actually there
+        // — a private key exported/copied/renamed without its .pub
+        // sibling (not unusual) would fail auth with a generic "Public-
+        // key authentication failed" error even though the private key
+        // itself was entirely valid and sufficient. Falls back to
+        // nullptr when the sibling doesn't exist, letting libssh2 derive
+        // the public key directly from the private key file instead —
+        // confirmed working against a real server (a real ed25519
+        // keypair with its own .pub sibling temporarily removed still
+        // authenticated successfully).
         const QString publicKeyPath = m_credentials.privateKeyPath + QStringLiteral(".pub");
+        const bool hasPublicKeySibling = QFile::exists(publicKeyPath);
+        const QByteArray publicKeyPathUtf8 = publicKeyPath.toUtf8();
         const QByteArray passphraseUtf8 = m_credentials.passphrase.toUtf8();
         const char *passphrasePtr = passphraseUtf8.isEmpty() ? nullptr : passphraseUtf8.constData();
 
         const int rc = libssh2_userauth_publickey_fromfile(
             m_session,
             m_credentials.username.toUtf8().constData(),
-            publicKeyPath.toUtf8().constData(),
+            hasPublicKeySibling ? publicKeyPathUtf8.constData() : nullptr,
             m_credentials.privateKeyPath.toUtf8().constData(),
             passphrasePtr);
         if (rc != 0) {
             emit connectionFailed(QStringLiteral("Public-key authentication failed for %1")
                                    .arg(m_credentials.username));
+            teardown();
             return false;
         }
     }
@@ -406,6 +477,7 @@ bool SftpBackend::ensureSession()
     m_sftp = libssh2_sftp_init(m_session);
     if (!m_sftp) {
         emit connectionFailed(QStringLiteral("SFTP subsystem init failed"));
+        teardown();
         return false;
     }
 

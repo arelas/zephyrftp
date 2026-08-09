@@ -8,6 +8,38 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A different-but-similarly-certified certificate on an FTPS data
+  connection could be silently accepted instead of failing closed.**
+  The fingerprint check that's supposed to catch this only ran when Qt
+  itself flagged a TLS error; a certificate that happened to validate
+  cleanly on its own (e.g. a real CA-issued cert that just isn't the
+  SAME one the control connection already trusted) skipped the check
+  entirely.
+- Fixed a real (if narrow) use-after-scope-exit bug in FTPS certificate
+  verification, and an active-mode connection fallback that could
+  incorrectly refuse to even try on some dual-stack systems.
+- A malformed or malicious PASV server reply could produce a nonsensical
+  connection target instead of a clean error.
+- **Connecting to a real host key that legitimately differs by port
+  (two SSH services on the same hostname, different ports) could show a
+  scary "host key changed — possible MITM!" warning for what was
+  actually just a different, never-before-seen service.** Host keys are
+  now correctly tracked per host *and* port.
+- A connect-time failure (wrong password, rejected host key, etc.) could
+  leak a socket and an SSH session; retrying after fixing the problem
+  leaked another one each time.
+- A failure to save a newly-trusted host key to disk (a full disk, a
+  briefly read-only config directory) was silent — every later
+  connection would keep re-prompting with no indication why.
+- Connecting with a private key that has no `.pub` sibling file now
+  works (previously failed authentication outright, even though the
+  private key itself was valid).
+- A private key whose fingerprint can't be computed (a rare crypto-backend
+  limitation) now says so plainly in the trust dialog instead of showing
+  a blank fingerprint.
+
 ## [0.6.1] — Fix a general resume bug and five real credential-storage bugs
 
 ### Fixed

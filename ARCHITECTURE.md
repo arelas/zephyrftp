@@ -695,6 +695,106 @@ to drive FileZilla itself for a same-desktop comparison.
   used only for that ambiguous case — not asserted as certain, since it
   isn't. Any other, genuinely unmapped code still falls back to the raw
   number rather than guessing at those too.
+  **Five real bugs found by a dedicated code review of this class's
+  auth/host-key code, four fixed, one documented instead:**
+  1. **`ensureSession()` leaked the `QTcpSocket` and `LIBSSH2_SESSION` on
+     every failure path after the socket connected** — a wrong password,
+     a rejected host key, a handshake failure, or an SFTP subsystem init
+     failure all just `return false` without calling `teardown()` (only
+     ever invoked from the destructor before this fix) or resetting
+     `m_socket`/`m_session` to `nullptr`. Worse than a one-time leak: on
+     retry, `ensureSession()`'s own `if (m_session && m_sftp) return true;`
+     guard doesn't catch this (`m_sftp` is still null after an auth
+     failure), so it allocates a BRAND NEW socket and session, silently
+     overwriting the old pointers — a real, repeatable leak of one socket
+     fd and one libssh2 session per failed connect+retry cycle (a wrong
+     password typed once, corrected, and retried, is a completely normal
+     interactive flow). Fixed by calling `teardown()` — already
+     null-safe on each of `m_sftp`/`m_session`/`m_socket` — before every
+     `return false` from this point in the function onward.
+  2. **Host keys were looked up with `libssh2_knownhost_checkp()` (which
+     takes a port, "to do a better check" per its own header comment) but
+     stored with `libssh2_knownhost_addc()` (which has no port parameter
+     at all)** — both calls used the bare hostname, with no port
+     information going into the stored entry either way. Confirmed via a
+     standalone reproduction against the actual installed libssh2 (not
+     assumed from the header alone): two different fake keys added/
+     checked against "127.0.0.1" on two different ports came back
+     `CHECK_MISMATCH` for the second one — a real "host key changed —
+     possible MITM!" warning for what should have been a first-time
+     sighting of a genuinely different service. This is exactly the
+     shape of this project's own `tools/local-test-servers/` setups
+     (multiple fixture servers, same "127.0.0.1", different ports) and
+     of Move/`RemoteToRemote`'s own two-connections-to-possibly-different-
+     ports pattern. Fixed by storing (not looking up — `checkp()` already
+     matches this form correctly when given a port, confirmed in the same
+     reproduction) entries as `"[host]:port"`, OpenSSH's own bracket
+     convention for a non-default port — confirmed working for the
+     default port too, so no port-based special-casing was needed.
+  3. **`libssh2_knownhost_writefile()`'s return value was ignored on both
+     the accept-new-host and accept-changed-host paths** — the
+     confirmation dialog promises "this will be remembered for future
+     connections," but a failed persist (a briefly read-only config
+     directory, a full disk) left nothing telling the user that promise
+     didn't hold; every later connection would silently re-prompt from
+     scratch with no indication why. Fixed by checking the return value
+     and surfacing a warning via `commandLogged` (the Commands pane's
+     existing informational-message channel) — the connection itself
+     still succeeds either way, only the on-disk persistence failed.
+  4. **A blank fingerprint if `libssh2_hostkey_hash()` returns null**
+     (SHA256 hashing unsupported by whatever crypto backend libssh2 was
+     linked against — rare, but real) **rendered as an empty
+     "Fingerprint:" line in the trust dialog**, asking the person to
+     verify a host key against nothing. Fixed with an explicit,
+     honest placeholder explaining why it's unavailable instead of
+     silently blank.
+  5. **Public-key auth always built the public-key path as
+     `<privatekey>.pub` and passed it unconditionally**, even when that
+     file didn't actually exist on disk (a private key exported, copied,
+     or renamed without its `.pub` sibling — not an unusual thing to
+     happen) — auth would then fail with a generic "Public-key
+     authentication failed" error even though the private key itself was
+     entirely valid and sufficient. The code's own comment already
+     flagged this convention as UNVERIFIED. Fixed by checking whether the
+     `.pub` sibling actually exists first, falling back to `nullptr` (letting
+     libssh2 derive the public key directly from the private key file)
+     when it doesn't — confirmed working against a real server: a real
+     ed25519 keypair authenticated successfully with its `.pub` sibling
+     temporarily removed.
+  **Not fixed, documented instead — a real, latent trap, not currently
+  reachable in practice:** `askUserToTrustHostKey()`'s
+  `Qt::BlockingQueuedConnection` call into `HostKeyVerifier` silently
+  returns `false` (rather than deadlocking or asserting) if it's ever
+  invoked from the same thread as `m_hostKeyVerifier` — nothing in
+  `SftpBackend` enforces the "always runs on its own worker thread"
+  invariant at runtime. Every real call site (`MainWindow::startConnection()`,
+  every `verify-*` harness) already respects this, so it isn't reachable
+  today; a future caller that didn't (a new test harness, a refactor that
+  calls `connectToHost()` synchronously from the GUI thread for a quick
+  validation path) would see every host key silently rejected with a
+  misleading "not trusted" error rather than a clear signal that the
+  threading precondition was violated. Not fixed here — enforcing it
+  would mean adding real cross-thread runtime assertions this class
+  doesn't have anywhere else either, a larger change than this pass
+  attempts.
+  **A sixth, related issue found independently while re-verifying these
+  fixes against real servers (not from the original review), also
+  documented rather than fixed — see this file's own Known gaps entry
+  for the full detail:** two `SftpBackend` instances connecting around
+  the same time (exactly what Move and `RemoteToRemote` both do) can race
+  on `known_hosts`, since each instance independently reads-modifies-
+  writes the entire shared file with no coordination — the second to
+  finish can silently overwrite the first's newly-trusted entry. Confirmed
+  directly: a two-real-server test run left only one of the two servers'
+  host keys actually persisted to disk afterward. Fails toward "ask
+  again next time" (annoying, not a silent wrong-trust), which is why
+  this is recorded as a known gap rather than treated as urgent.
+  Re-verified against real servers after fixes #1-5:
+  `verify-sftp-pubkey` (including a real run with the `.pub` sibling
+  temporarily removed, directly exercising fix #5), `verify-sftp-pause-cancel`,
+  `verify-sftp-move`, and `verify-remote-to-remote-live` (two real
+  servers, exercising the port-qualification fix #2's actual scenario)
+  all still pass.
 - `FtpBackend` (`src/backends/FtpBackend.h/.cpp`) — FTP and explicit FTPS,
   hand-rolled directly on `QTcpSocket`/`QSslSocket`. Implements the full
   `RemoteBackend` interface and runs on a dedicated worker thread under
@@ -746,6 +846,61 @@ to drive FileZilla itself for a same-desktop comparison.
   best-effort attempt at the session reuse RFC 4217 permits servers to
   require, not a guarantee (see Known gaps for what is and isn't
   confirmed about it).
+  **Four real bugs found by a dedicated code review of this file's
+  parsing/data-channel/TLS logic, all fixed:**
+  1. **The data-connection certificate-pinning guarantee this entry
+     itself describes above ("a DIFFERENT certificate fails closed with
+     no prompt") had a real hole**: the fingerprint comparison lived
+     entirely inside the `sslErrors` handler in `verifyPeerCertificate()`
+     — if the data connection's certificate happened to validate cleanly
+     against the system trust store on its own (no `sslErrors` at all,
+     e.g. a certificate that legitimately chains to a public CA but
+     still isn't the SAME certificate the control connection already
+     trusted), the fingerprint check never ran and the connection
+     silently succeeded. "Independently valid" was never the actual bar
+     for a data connection — matching the control connection's own
+     already-trusted certificate is. Fixed with an explicit check for
+     exactly this case (encrypted, is a data connection, no `sslErrors`
+     fired) that still compares fingerprints and fails closed on a
+     mismatch.
+  2. **`verifyPeerCertificate()`'s `sslErrors` connection was never
+     explicitly disconnected**, and its context object was `socket`
+     (which, for the control connection, outlives the function call for
+     the whole session) rather than the function's own scope — the
+     lambda captures `sawErrors`/`fingerprint`/`details`/`isDataConnection`
+     BY REFERENCE, all stack-local to `verifyPeerCertificate()`. If
+     `sslErrors` were ever emitted again on the same socket after the
+     function returned, the lambda would read/write already-destroyed
+     stack memory — real undefined behavior, not just a style issue.
+     Fixed by explicitly disconnecting the connection before the
+     function returns, on every path.
+  3. **`openActiveDataChannel()`'s active-mode fallback rejected any
+     local address whose `protocol()` wasn't reported as exactly
+     `IPv4Protocol`** — on a dual-stack host, the control connection's
+     local address can be surfaced as an IPv4-MAPPED IPv6 address
+     (`protocol()` reports `IPv6Protocol`) even though it's genuinely
+     IPv4 underneath, something `QHostAddress::toIPv4Address()`'s own
+     success flag still correctly recognizes. The old check would refuse
+     the active/PORT fallback outright in that case — no real attempt at
+     all — even though a genuine active-mode session over that same
+     address would have worked. Fixed by checking `toIPv4Address()`'s own
+     `ok` output parameter instead of `protocol()`.
+  4. **PASV reply octets were parsed with `toInt()` but never range-checked
+     to [0, 255]** — a malformed or actively malicious PASV reply (a
+     compromised/rogue server, or a MITM on the control connection) could
+     produce an invalid dotted-quad host string (a confusing DNS-lookup
+     failure instead of the "Could not parse PASV reply" error this code
+     already intends for malformed replies) or, worse, a negative octet
+     feeding a left shift of a negative signed value — undefined behavior
+     in C++. Fixed with an explicit per-octet range check.
+  Re-verified against real servers after all four fixes:
+  `verify-ftp-live` (plain FTP, FTPS with an untrusted self-signed cert
+  correctly still rejected, legacy-LIST fallback, **active-mode
+  fallback** — directly exercising fix #3's code path — and a real
+  CA-trusted FTPS round trip with a clean handshake and no `sslErrors` at
+  all, directly exercising fix #1's new branch) and `verify-ftps-trust`
+  (first-sighting trust prompt, silent match on an unchanged certificate,
+  and a real mismatch warning on a genuinely changed one) all still pass.
 - `Protocol` / `ConnectionRequest` (`src/backends/Protocol.h`,
   `ConnectionRequest.h`) — the seam between "the user picked a protocol"
   and "construct the matching backend." `Protocol` is a three-value enum
@@ -1869,6 +2024,28 @@ along the way — worth knowing about if it ever needs touching again.
 
 ## Known gaps (flagged, not fixed)
 
+- **Two `SftpBackend` instances connecting around the same time can race
+  on `known_hosts`, silently dropping one of their host-key trust
+  decisions.** `verifyHostKey()` reads the entire shared `known_hosts`
+  file into a fresh, per-call `LIBSSH2_KNOWNHOSTS` collection, potentially
+  adds one entry, then writes that WHOLE collection back out — with no
+  locking or cross-instance coordination. Two backends connecting
+  concurrently (exactly what Move and `RemoteToRemote` both do — see
+  `TransferManager`'s own entries) can interleave: if backend B's read
+  happens before backend A's write completes, B's own collection never
+  had A's newly-trusted entry, and B's later write overwrites the file,
+  erasing it. **Confirmed directly, not theorized**: a real two-server
+  `verify-remote-to-remote-live` run (two independent SFTP servers, two
+  independent host keys) left only ONE of the two servers' host keys
+  actually persisted to `known_hosts` afterward. Found while re-verifying
+  the host-key fixes above (`SftpBackend`'s own entry), not from the
+  original code review that found those. Fails toward "ask to trust
+  again next time" — annoying, not a silent wrong-trust — which is why
+  this is recorded as a known gap rather than treated as urgent. A real
+  fix would need genuine synchronization (a file lock, or routing all
+  `known_hosts` I/O through a single coordinating owner instead of each
+  backend instance managing it independently); not attempted in this
+  pass.
 - **FTP/FTPS has now actually touched a real server on every one of its
   code paths, not just the happy path — control connection, PASV AND
   active/PORT data connections, real transfers, the `AUTH TLS` upgrade,

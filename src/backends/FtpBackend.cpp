@@ -291,7 +291,20 @@ bool FtpBackend::verifyPeerCertificate(QSslSocket *socket, bool isDataConnection
     // the cross-thread blocking call to a GUI-thread verifier — is in
     // effect before waitForEncrypted() returns, same technique already
     // proven for host-key verification in SftpBackend.
-    QObject::connect(socket, &QSslSocket::sslErrors, socket,
+    // Connection explicitly disconnected before this function returns
+    // (see below) — a real bug found by code review: connect(socket,
+    // signal, socket, lambda) ties the connection's lifetime to
+    // `socket`, NOT to this function call. socket (the control socket,
+    // for the non-data-connection case) outlives this function for the
+    // rest of the session; the lambda captures sawErrors/fingerprint/
+    // details/isDataConnection BY REFERENCE, all stack-local to this
+    // function. If sslErrors were ever emitted again on the same socket
+    // after this function returns, the lambda would read/write already-
+    // destroyed stack memory — undefined behavior. Explicitly
+    // disconnecting closes this off entirely rather than relying on
+    // sslErrors never firing again in practice.
+    const QMetaObject::Connection sslErrorsConnection = QObject::connect(
+        socket, &QSslSocket::sslErrors, socket,
                      [&](const QList<QSslError> &errors) {
         sawErrors = true;
         const QSslCertificate cert = socket->peerCertificate();
@@ -333,7 +346,7 @@ bool FtpBackend::verifyPeerCertificate(QSslSocket *socket, bool isDataConnection
     });
 
     socket->startClientEncryption();
-    const bool encrypted = socket->waitForEncrypted(15000);
+    bool encrypted = socket->waitForEncrypted(15000);
 
     if (encrypted && !isDataConnection && !sawErrors) {
         // A genuinely valid certificate (verified against the system
@@ -345,10 +358,34 @@ bool FtpBackend::verifyPeerCertificate(QSslSocket *socket, bool isDataConnection
         // treated as a change rather than a first-ever sighting.
         const QSslCertificate cert = socket->peerCertificate();
         m_trustedCertFingerprint = QString::fromLatin1(cert.digest(QCryptographicHash::Sha256).toHex());
+    } else if (encrypted && isDataConnection && !sawErrors) {
+        // A real bug found by code review: a data connection's
+        // certificate validating cleanly against the system trust store
+        // (no sslErrors at all) skipped the fingerprint check entirely —
+        // the isDataConnection comparison above only ever runs INSIDE
+        // the sslErrors lambda, which never fires in this case. That
+        // silently broke the guarantee this class's own doc comment (and
+        // ARCHITECTURE.md) makes: a data connection presenting a
+        // DIFFERENT certificate than the control connection's already-
+        // trusted one must fail closed with no prompt, regardless of
+        // whether that different certificate happens to also chain to a
+        // publicly trusted CA on its own. "Independently valid" isn't
+        // the bar for a data connection — matching the control
+        // connection's own already-trusted certificate is.
+        const QSslCertificate cert = socket->peerCertificate();
+        const QString fingerprint = QString::fromLatin1(cert.digest(QCryptographicHash::Sha256).toHex());
+        if (m_trustedCertFingerprint.isEmpty() || fingerprint != m_trustedCertFingerprint) {
+            encrypted = false;
+            details = QStringLiteral("Subject: %1\nIssuer: %2\nProblem: certificate differs from the "
+                                      "control connection's already-trusted certificate")
+                .arg(cert.subjectDisplayName(), cert.issuerDisplayName());
+        }
     }
 
+    QObject::disconnect(sslErrorsConnection);
+
     if (!encrypted && errorOut) {
-        *errorOut = (sawErrors && !details.isEmpty())
+        *errorOut = (!details.isEmpty())
             ? QStringLiteral("Certificate not trusted:\n%1").arg(details)
             : QStringLiteral("TLS handshake failed: %1").arg(socket->errorString());
     }
@@ -537,10 +574,24 @@ bool FtpBackend::openDataChannel(DataChannel *channel, QString *errorOut)
         return false;
     }
 
+    // Each field is range-checked to [0, 255] — a real gap found by code
+    // review: toInt() alone accepts any valid integer string ("300",
+    // "-1", ...), which used to fall through as a malformed dotted-quad
+    // host ("300.1.1.1", triggering a confusing DNS-lookup failure
+    // instead of the clear "Could not parse PASV reply" this code
+    // already intends for a malformed reply) or, worse, a negative
+    // octets[4]/octets[5] feeding `octets[4] << 8` below — a left shift
+    // of a negative signed value, undefined behavior in C++. A malformed
+    // or actively malicious PASV reply (a compromised/rogue server, or a
+    // MITM on the control connection) is exactly the input this should
+    // be hardened against, not trusted to be well-formed.
     bool ok = true;
     int octets[6];
-    for (int i = 0; i < 6 && ok; ++i)
+    for (int i = 0; i < 6 && ok; ++i) {
         octets[i] = parts[i].trimmed().toInt(&ok);
+        if (ok && (octets[i] < 0 || octets[i] > 255))
+            ok = false;
+    }
     if (!ok) {
         if (errorOut) *errorOut = QStringLiteral("Could not parse PASV reply: %1").arg(pasvReply.text);
         return false;
@@ -575,9 +626,20 @@ bool FtpBackend::openActiveDataChannel(DataChannel *channel, QString *errorOut)
     }
 
     // IPv4 only, matching PASV's existing scope — the PORT command
-    // itself (RFC 959) is IPv4-only regardless.
+    // itself (RFC 959) is IPv4-only regardless. Checked via
+    // toIPv4Address()'s own success flag, NOT protocol() ==
+    // IPv4Protocol — a real bug found by code review: on a dual-stack
+    // host, the control connection's local address can be surfaced as
+    // an IPv4-MAPPED IPv6 address (protocol() reports IPv6Protocol) even
+    // though it's really an IPv4 address underneath, one
+    // toIPv4Address() still correctly extracts. The old strict-protocol()
+    // check rejected that case outright with no real fallback attempt,
+    // even though a genuine active/PORT session over that same address
+    // would have worked.
     const QHostAddress localAddress = m_controlSocket->localAddress();
-    if (localAddress.protocol() != QAbstractSocket::IPv4Protocol) {
+    bool localAddressIsIPv4 = false;
+    const quint32 ip = localAddress.toIPv4Address(&localAddressIsIPv4);
+    if (!localAddressIsIPv4) {
         if (errorOut) *errorOut = QStringLiteral("Active mode requires an IPv4 control connection");
         return false;
     }
@@ -590,7 +652,6 @@ bool FtpBackend::openActiveDataChannel(DataChannel *channel, QString *errorOut)
         return false;
     }
 
-    const quint32 ip = localAddress.toIPv4Address();
     const quint16 port = server->serverPort();
     const QString portCommand = QStringLiteral("PORT %1,%2,%3,%4,%5,%6")
         .arg((ip >> 24) & 0xFF).arg((ip >> 16) & 0xFF).arg((ip >> 8) & 0xFF).arg(ip & 0xFF)
