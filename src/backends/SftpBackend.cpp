@@ -7,6 +7,7 @@
 #include <QStandardPaths>
 #include <QDir>
 #include <QMetaObject>
+#include <QLockFile>
 
 namespace {
 // Shared by listDirectory() and listDirectoryForEnumeration() — factored
@@ -229,6 +230,30 @@ bool SftpBackend::verifyHostKey()
     }
 
     const QString knownHostsPath = knownHostsFilePath();
+
+    // Guards the read-modify-write below (readfile ... writefile) against
+    // two SftpBackend instances racing on the same known_hosts file — each
+    // one loads the WHOLE file into its own private in-memory collection,
+    // then later overwrites the WHOLE file with that collection, so without
+    // this a second instance's read-before-first-instance's-write silently
+    // drops whatever the first instance just persisted. Confirmed for real
+    // via verify-remote-to-remote-live (two servers connecting around the
+    // same time left only one host key actually saved on 8/8 pre-fix
+    // stress-test runs) — see ARCHITECTURE.md's own SftpBackend entry for
+    // the full before/after verification. QLockFile rather than a QMutex because
+    // the race is across independent SftpBackend threads within one process
+    // AND across separate app instances sharing the same config directory;
+    // a mutex only covers the former. lock() (not tryLock()) blocks until
+    // available rather than failing — the underlying operation is a quick
+    // file read+write, not something worth giving up on, and blocking here
+    // never stalls the GUI thread since this always runs on a worker thread.
+    QLockFile knownHostsLock(knownHostsPath + QStringLiteral(".lock"));
+    if (!knownHostsLock.lock()) {
+        emit commandLogged(QStringLiteral(
+            "Warning: could not lock %1 for exclusive access — a concurrent "
+            "connection may cause this host key not to be saved.").arg(knownHostsPath));
+    }
+
     // Best-effort load: a missing/empty file just means every host is
     // currently unknown, which is the expected state on first run —
     // libssh2_knownhost_readfile()'s return value is intentionally not

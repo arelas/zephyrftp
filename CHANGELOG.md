@@ -8,6 +8,20 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Two `SftpBackend` instances connecting around the same time (Move or
+  a server-to-server transfer between two SFTP servers, for example)
+  could race on `known_hosts`, silently dropping one of their host-key
+  trust decisions.** Each connection loaded the whole file into its own
+  in-memory copy and later overwrote the whole file with it; a second
+  connection finishing first could erase whatever the first had just
+  persisted, with nothing telling you it happened — you'd just get asked
+  to trust that host again next time. Reliably reproducible (8/8 runs in
+  a repeated stress test), not a rare edge case. Fixed by guarding the
+  read-modify-write with a file lock. See ARCHITECTURE.md's `SftpBackend`
+  entry for the full before/after verification.
+
 ## [0.6.2] — Fix nine real bugs found by code review of FTP/SFTP auth and protocol code
 
 ### Fixed

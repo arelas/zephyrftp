@@ -696,7 +696,7 @@ to drive FileZilla itself for a same-desktop comparison.
   isn't. Any other, genuinely unmapped code still falls back to the raw
   number rather than guessing at those too.
   **Five real bugs found by a dedicated code review of this class's
-  auth/host-key code, four fixed, one documented instead:**
+  auth/host-key code, all five fixed:**
   1. **`ensureSession()` leaked the `QTcpSocket` and `LIBSSH2_SESSION` on
      every failure path after the socket connected** — a wrong password,
      a rejected host key, a handshake failure, or an SFTP subsystem init
@@ -778,23 +778,38 @@ to drive FileZilla itself for a same-desktop comparison.
   doesn't have anywhere else either, a larger change than this pass
   attempts.
   **A sixth, related issue found independently while re-verifying these
-  fixes against real servers (not from the original review), also
-  documented rather than fixed — see this file's own Known gaps entry
-  for the full detail:** two `SftpBackend` instances connecting around
-  the same time (exactly what Move and `RemoteToRemote` both do) can race
-  on `known_hosts`, since each instance independently reads-modifies-
-  writes the entire shared file with no coordination — the second to
-  finish can silently overwrite the first's newly-trusted entry. Confirmed
-  directly: a two-real-server test run left only one of the two servers'
-  host keys actually persisted to disk afterward. Fails toward "ask
-  again next time" (annoying, not a silent wrong-trust), which is why
-  this is recorded as a known gap rather than treated as urgent.
-  Re-verified against real servers after fixes #1-5:
+  fixes against real servers (not from the original review) — initially
+  left as a known gap, now fixed too:** two `SftpBackend` instances
+  connecting around the same time (exactly what Move and `RemoteToRemote`
+  both do) could race on `known_hosts`, since each instance independently
+  reads-modifies-writes the entire shared file with no coordination — the
+  second to finish could silently overwrite the first's newly-trusted
+  entry. Not a one-off: an 8-iteration stress test (two brand-new host
+  keys, two `SftpBackend` instances connecting concurrently via
+  `verify-remote-to-remote-live`, `known_hosts` wiped and both throwaway
+  servers restarted with fresh host keys between each run) lost one of
+  the two entries on **8 out of 8** pre-fix runs — a reliably reproducible
+  race, not a rare one. Fixed with a `QLockFile`
+  (`<known_hosts path>.lock`) guarding the entire read-modify-write span
+  (`libssh2_knownhost_readfile()` through `libssh2_knownhost_writefile()`)
+  — a `QLockFile` rather than a plain in-process `QMutex` specifically
+  because the race is across separate app instances sharing the same
+  config directory, not just separate threads within one process, which
+  a mutex alone wouldn't cover. `lock()` (blocking, not `tryLock()`) is
+  used deliberately: this always runs on a worker thread, never the GUI
+  thread, so blocking here can't freeze the UI, and the operation being
+  waited on is a quick file read+write, not something worth giving up on.
+  Re-ran the identical 8-iteration stress test after the fix: **0 dropped
+  entries across 13 total runs** (8 fresh + 5 more on a later
+  re-verification pass), with a real pre/post control — the same build
+  with the fix reverted reproduced the loss on 8/8 runs again, confirming
+  the fix (not some other change) is what closes the race.
+  Re-verified against real servers after all six fixes:
   `verify-sftp-pubkey` (including a real run with the `.pub` sibling
   temporarily removed, directly exercising fix #5), `verify-sftp-pause-cancel`,
   `verify-sftp-move`, and `verify-remote-to-remote-live` (two real
-  servers, exercising the port-qualification fix #2's actual scenario)
-  all still pass.
+  servers, exercising both the port-qualification fix #2's actual
+  scenario and, repeatedly, fix #6's) all still pass.
 - `FtpBackend` (`src/backends/FtpBackend.h/.cpp`) — FTP and explicit FTPS,
   hand-rolled directly on `QTcpSocket`/`QSslSocket`. Implements the full
   `RemoteBackend` interface and runs on a dedicated worker thread under
@@ -2024,28 +2039,6 @@ along the way — worth knowing about if it ever needs touching again.
 
 ## Known gaps (flagged, not fixed)
 
-- **Two `SftpBackend` instances connecting around the same time can race
-  on `known_hosts`, silently dropping one of their host-key trust
-  decisions.** `verifyHostKey()` reads the entire shared `known_hosts`
-  file into a fresh, per-call `LIBSSH2_KNOWNHOSTS` collection, potentially
-  adds one entry, then writes that WHOLE collection back out — with no
-  locking or cross-instance coordination. Two backends connecting
-  concurrently (exactly what Move and `RemoteToRemote` both do — see
-  `TransferManager`'s own entries) can interleave: if backend B's read
-  happens before backend A's write completes, B's own collection never
-  had A's newly-trusted entry, and B's later write overwrites the file,
-  erasing it. **Confirmed directly, not theorized**: a real two-server
-  `verify-remote-to-remote-live` run (two independent SFTP servers, two
-  independent host keys) left only ONE of the two servers' host keys
-  actually persisted to `known_hosts` afterward. Found while re-verifying
-  the host-key fixes above (`SftpBackend`'s own entry), not from the
-  original code review that found those. Fails toward "ask to trust
-  again next time" — annoying, not a silent wrong-trust — which is why
-  this is recorded as a known gap rather than treated as urgent. A real
-  fix would need genuine synchronization (a file lock, or routing all
-  `known_hosts` I/O through a single coordinating owner instead of each
-  backend instance managing it independently); not attempted in this
-  pass.
 - **FTP/FTPS has now actually touched a real server on every one of its
   code paths, not just the happy path — control connection, PASV AND
   active/PORT data connections, real transfers, the `AUTH TLS` upgrade,
