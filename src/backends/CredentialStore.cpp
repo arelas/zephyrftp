@@ -88,12 +88,14 @@ bool remove(const QString &siteId)
 
 bool hasSecret(const QString &siteId)
 {
-    const std::wstring target = targetName(siteId).toStdWString();
-    PCREDENTIALW cred = nullptr;
-    if (!CredReadW(target.c_str(), CRED_TYPE_GENERIC, 0, &cred))
-        return false;
-    CredFree(cred);
-    return true;
+    // Delegates to load() rather than its own CredReadW/CredFree pair —
+    // matches both CredentialStore.h's documented contract ("implemented
+    // on top of load() on both platforms") and the Linux implementation
+    // below, which already does this. Code review found these had drifted
+    // apart: a future fix to load()'s behavior (error handling, encoding)
+    // wouldn't otherwise have applied here too.
+    QString discard;
+    return load(siteId, &discard);
 }
 
 #else
@@ -105,10 +107,20 @@ bool save(const QString &siteId, const QString &secret)
     // secret service (GNOME Keyring, KWallet's Secret Service
     // compatibility layer, etc.) treats as default — not this app's
     // call to make.
+    // secret specifically (unlike siteId, always one of this app's own
+    // ASCII UUIDs, and the label, this app's own ASCII text) can be
+    // arbitrary user-typed text — encoded here as UTF-8 explicitly,
+    // matching load()'s QString::fromUtf8() decode below. qPrintable()
+    // would use the LOCAL 8-bit encoding instead, which is identical to
+    // UTF-8 on the common case (a UTF-8 locale) but silently corrupts a
+    // non-ASCII password/passphrase on any system that isn't — a real
+    // bug found by code review, not exercised by any test in an
+    // environment that's always been UTF-8.
+    const QByteArray secretUtf8 = secret.toUtf8();
     const bool ok = secret_password_store_sync(
         credentialSchema(), SECRET_COLLECTION_DEFAULT,
         qPrintable(QStringLiteral("ZephyrFTP: saved site %1").arg(siteId)),
-        qPrintable(secret), nullptr, &error,
+        secretUtf8.constData(), nullptr, &error,
         "site_id", qPrintable(siteId), nullptr);
 
     if (error) {

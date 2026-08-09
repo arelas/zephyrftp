@@ -290,6 +290,17 @@ void TransferManager::startNext()
         m_activeIndex = i;
         TransferItem &item = m_items[i];
 
+        // A resumed item's destination conflict check already happened
+        // (or was deliberately skipped for a good reason) the first time
+        // it was dispatched — see TransferItem::skipConflictCheckOnDispatch's
+        // own doc comment for why re-checking here would be actively
+        // wrong, not just redundant.
+        if (item.skipConflictCheckOnDispatch) {
+            item.skipConflictCheckOnDispatch = false;
+            dispatchActiveItem();
+            return;
+        }
+
         // Check the destination for a conflict before doing anything
         // visible (no InProgress status yet, nothing dispatched to a
         // backend) — dispatchActiveItem() only runs once this comes back
@@ -551,6 +562,15 @@ void TransferManager::resumeItem(int id)
     // startNext() will pass through to the backend. This is the one
     // place this differs from retryItem().
     item.status = TransferStatus::Queued;
+    // See TransferItem::skipConflictCheckOnDispatch's own doc comment —
+    // this item's destination already legitimately has its own partial
+    // content sitting there; re-checking on resume would find that and
+    // show a real (spurious) conflict prompt. retryItem() does NOT set
+    // this: a retry genuinely restarts from byte 0 (bytesDone reset to
+    // 0, and for RemoteToRemote, phase/tempFilePath reset too), so
+    // whatever's at the destination really is a fresh, worth-asking-
+    // about conflict there, same as any other new dispatch.
+    item.skipConflictCheckOnDispatch = true;
     emit itemUpdated(item);
 
     startNext();

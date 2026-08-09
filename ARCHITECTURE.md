@@ -944,6 +944,67 @@ to drive FileZilla itself for a same-desktop comparison.
   `m_portSpin->setFixedHeight(m_hostEdit->sizeHint().height())` —
   matched to a sibling field's actual height rather than a hardcoded
   pixel count, so it stays correct if the theme's font/padding changes.
+  **Five real bugs found by a dedicated code review of this file and
+  `CredentialStore`, all fixed:**
+  1. **Deleting a saved site never removed its stored secret.**
+     `onDeleteSite()` removed the site from `sites.json` but never called
+     `CredentialStore::remove()` — a saved password/passphrase orphaned
+     permanently in the OS credential store with no id left in
+     `sites.json` to ever look it up or remove it again. Fixed by calling
+     `CredentialStore::remove()` unconditionally in `onDeleteSite()`,
+     same as the existing "checkbox unchecked" path already does
+     (`remove()` is a harmless no-op when nothing was actually stored).
+  2. **Switching a saved site's auth method (Password <-> Private key —
+     including indirectly, via protocol changes that force Password for
+     a protocol with no key auth) left an already-stored secret
+     untouched under the checkbox's OLD meaning.** A password and a
+     passphrase are different kinds of secrets; `onConnectClicked()`
+     would pre-fill the new prompt with the old one as if it were the
+     right kind, and accepting that pre-fill as-is would silently
+     overwrite the stored secret with the wrong value. Fixed in
+     `updateAuthFieldsVisibility()`: compares the radio buttons' current
+     state against the *selected site's own currently persisted*
+     `authMethod` (not just "did the radio fire," which happens
+     constantly, including harmlessly while a different site's data is
+     being loaded into the form) and unchecks `m_savePasswordCheck` — its
+     own existing `toggled` handler removes the stale secret — only on a
+     genuine divergence.
+  3. **`CredentialStore::save()`'s libsecret backend encoded the secret
+     with `qPrintable()` (the local 8-bit encoding) while `load()`
+     decoded with `QString::fromUtf8()`.** Identical bytes on a UTF-8
+     locale (the common case, and why this went unnoticed), but a real,
+     silent corruption of any non-ASCII password/passphrase on a system
+     whose locale isn't UTF-8. Fixed by encoding the secret specifically
+     (not the site id or label, both always this app's own ASCII text)
+     with `.toUtf8()` explicitly, matching `load()`'s decode.
+  4. **`onConnectClicked()` called `CredentialStore::hasSecret()` and
+     then `CredentialStore::load()` separately** — since `hasSecret()` is
+     itself implemented on top of `load()` (per `CredentialStore.h`'s own
+     documented contract), this performed the exact same OS
+     credential-store lookup twice for one logical operation. Harmless
+     with an already-unlocked keyring, but a real, avoidable cost: a
+     locked keyring can prompt the user to unlock it on each lookup, so
+     this could have shown that prompt twice in a row for a single
+     Connect click. Fixed by calling `load()` once and using its own
+     return value, dropping the redundant `hasSecret()` call.
+  5. **`CredentialStore`'s Windows `hasSecret()` reimplemented its own
+     `CredReadW`/`CredFree` pair instead of delegating to `load()`**,
+     contradicting `CredentialStore.h`'s own documented contract
+     ("implemented on top of `load()` on both platforms") and diverging
+     from the Linux implementation, which already delegates correctly.
+     Not a runtime bug on its own, but a real maintenance trap: a future
+     fix to `load()` (error handling, encoding) wouldn't automatically
+     have applied here too. Fixed to delegate, matching Linux.
+  **Not covered by an automated test**: none of the five fixes above
+  have regression coverage — `CredentialStore` writes to the real OS
+  credential store with no test-friendly override the way `SiteStore`
+  has `XDG_CONFIG_HOME`, so an automated test would leave real test
+  secrets in whoever's keyring runs it, the same category of risk this
+  project avoids elsewhere (e.g. `site-store-test`'s own config
+  isolation). Verified by direct code reading and reasoning through each
+  call path instead, consistent with this project's "say so explicitly
+  rather than letting it read as verified" standard where a real test
+  isn't a safe option.
 - `AppSettings` (`src/AppSettings.h/.cpp`) — app-wide preferences, the
   first general settings mechanism this project has had (there was
   nothing to persist before this). Follows `SiteStore`'s own convention
@@ -1246,6 +1307,45 @@ to drive FileZilla itself for a same-desktop comparison.
   `resumeItem()` deliberately does NOT reset `bytesDone` the way
   `retryItem()` resets it to zero — that value is exactly the resume
   offset `startNext()` passes through to the backend on the next run.
+  **A real, general bug found via live-server verification (not specific
+  to any one direction), fixed:** `startNext()` unconditionally re-runs
+  the destination `checkExists()` conflict check for the next `Queued`
+  item it finds — including one that just came from `resumeItem()`. For
+  ANY paused-then-resumed transfer, the destination already legitimately
+  has `bytesDone` bytes in it (this item's own partial content from
+  before the pause) — a real backend's `checkExists()` would truthfully
+  report "yes, something's there," triggering a real Overwrite/Skip
+  conflict prompt for what was never actually a conflict, for exactly
+  the item the person just asked to continue. Clicking "Skip" there
+  would abandon a transfer the person explicitly tried to resume; even
+  "Overwrite" only happens to work by accident (a resumed upload's write
+  at a nonzero offset doesn't truncate regardless of what the app-level
+  choice nominally means). This is not a `RemoteToRemote`-specific bug —
+  it affects `LocalToRemote`/`RemoteToLocal` resume too, and predates
+  this session's `RemoteToRemote` pause/resume work entirely; it went
+  undetected because every fake backend's `checkExists()` stub in this
+  test suite (`FakePausableBackend`, `FakeRemoteBackend`) unconditionally
+  reports "doesn't exist" regardless of real state, and the one harness
+  that DOES drive a real backend's pause/resume
+  (`verify_sftp_pause_cancel.cpp`) calls `SftpBackend::uploadFile()`/
+  `downloadFile()` directly, bypassing `TransferManager`'s conflict-check
+  machinery entirely. Only surfaced once `verify-remote-to-remote-live`
+  drove a real pause/resume through the FULL `TransferManager`
+  orchestration against a real server with real destination state.
+  Fixed with `TransferItem::skipConflictCheckOnDispatch` (set by
+  `resumeItem()`, consumed and cleared by `startNext()` at the moment
+  that specific item is actually dispatched) — `retryItem()` does NOT
+  set it, since a retry genuinely restarts from byte 0 (and, for
+  `RemoteToRemote`, resets `phase`/`tempFilePath` too), so whatever's at
+  the destination in that case really is a fresh, worth-asking-about
+  conflict, unlike a resume. Regression-tested two ways: `checkExists()`
+  call-counting in `transfer-pause-test` (asserts exactly one call across
+  a full pause/resume/complete cycle — no real dialog needed to prove
+  the fix, since with it working there's nothing left to trigger one),
+  and `verify-remote-to-remote-live`'s own pause/resume scenario against
+  two real servers, which is what found the bug in the first place (it
+  hung indefinitely on a real, undismissable `askConflict()` dialog
+  before this fix).
   Live speed (`TransferItem::speedBytesPerSec`) is sampled roughly every
   250ms in `onBackendProgress()` (via `QElapsedTimer`) rather than on
   every single progress signal, which for SFTP's 32KB-chunk read/write
@@ -2185,6 +2285,20 @@ along the way — worth knowing about if it ever needs touching again.
   instead of requiring a fresh server restart each time. Confirmed stable
   across multiple consecutive clean runs against the same live server
   pair after that fix.
+  **A second scenario, added after Pause/resume was enabled for this
+  direction, found and closed the general `resumeItem()`
+  destination-conflict bug documented in `TransferManager`'s own entry
+  above.** Pauses and resumes a real transfer during BOTH phases against
+  the two real servers, using the same deterministic "trigger on the
+  first real progress tick" technique `verify_sftp_pause_cancel.cpp`
+  uses. Before the fix, this hung indefinitely at 90 seconds: resuming
+  phase 2 (upload) found the destination already had this same item's
+  own partial upload sitting there from before the pause, triggered a
+  real `askConflict()` `QMessageBox` this headless harness has no way to
+  dismiss, and the item never reached `Done`. After the fix: all pass,
+  confirmed byte-for-byte content correctness surviving two real
+  pause/resume cycles against genuine libssh2 I/O, stable across
+  repeated runs against the same already-running server pair.
   **Known, accepted gap, not attempted here:** if the app closes while a
   `RemoteToRemote` item is still mid-flight, its temp file leaks for that
   run — `closeEvent()` tears down both panes' backends without

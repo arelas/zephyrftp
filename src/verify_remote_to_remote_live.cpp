@@ -37,6 +37,19 @@
 // thing it structurally can't: real bytes, over a real network, between
 // two genuinely different server processes.
 //
+// A second scenario, after the first transfer completes cleanly: pausing
+// and resuming a RemoteToRemote transfer during BOTH phases, against real
+// SftpBackend instances on real worker threads — closing the gap that
+// this capability (enabled after `remote-to-remote-test`'s fake-backend
+// scenario E proved the orchestration correct) had only ever been
+// exercised against a fake backend, never real libssh2 I/O. Triggers the
+// pause the instant real progress is seen (same deterministic technique
+// `verify_sftp_pause_cancel.cpp` uses for a real, single-backend
+// pause/cancel) rather than guessing a wall-clock delay — reliable
+// regardless of how fast the loopback connection actually is, since the
+// first progress tick lands after just one ~480000-byte chunk, leaving
+// most of a 10MB file's transfer still ahead of it either way.
+//
 // Needs TWO local-test-servers running on different ports, e.g.:
 //   SFTP_TEST_SCRATCH=/tmp/zephyrftp-local-test-servers/sftp-a SFTP_TEST_PORT=2222 \
 //       tools/local-test-servers/start-sftp-pubkey.sh
@@ -127,6 +140,7 @@ int main(int argc, char *argv[])
     const QString serverRootA = scratchA + "/root";
     const QString serverRootB = scratchB + "/root";
     const QString fixtureName = QStringLiteral("r2r_fixture.bin");
+    const QString fixtureName2 = QStringLiteral("r2r_fixture_pause.bin");   // scenario 2's own fixture — see idempotency note below
 
     // A real, sizable random fixture (QRandomGenerator, not memset) —
     // written directly into server A's served directory rather than
@@ -144,9 +158,13 @@ int main(int argc, char *argv[])
     // what makes re-running this harness against the same two
     // already-running servers safe, not just a happens-to-work-once
     // demo. QFile::remove() on a nonexistent path is a harmless no-op.
+    // Same idempotency treatment for fixtureName2 (scenario 2's own
+    // fixture, uniquely named so it can't collide with fixtureName's own
+    // conflict-avoidance either).
     QFile::remove(serverRootB + "/" + fixtureName);
-    {
-        QFile f(serverRootA + "/" + fixtureName);
+    QFile::remove(serverRootB + "/" + fixtureName2);
+    auto writeRandomFixture = [&](const QString &path) {
+        QFile f(path);
         f.open(QIODevice::WriteOnly | QIODevice::Truncate);
         QByteArray chunk(4 * 1024 * 1024, Qt::Uninitialized);
         qint64 written = 0;
@@ -157,9 +175,12 @@ int main(int argc, char *argv[])
             f.write(chunk.constData(), toWrite);
             written += toWrite;
         }
-    }
-    fprintf(stderr, "[setup] fixture: %s (%lld MB) on server A\n",
-            qPrintable(serverRootA + "/" + fixtureName), fixtureSize / 1024 / 1024);
+    };
+    writeRandomFixture(serverRootA + "/" + fixtureName);
+    writeRandomFixture(serverRootA + "/" + fixtureName2);
+    fprintf(stderr, "[setup] fixtures: %s, %s (%lld MB each) on server A\n",
+            qPrintable(serverRootA + "/" + fixtureName), qPrintable(serverRootA + "/" + fixtureName2),
+            fixtureSize / 1024 / 1024);
 
     auto *hostKeyVerifier = new HostKeyVerifier(&app);
 
@@ -193,9 +214,19 @@ int main(int argc, char *argv[])
     bool sawUploadProgress = false;
     QString capturedTempPath;
 
-    enum class Stage { Connecting, WaitAdded, WaitDone, Done };
+    enum class Stage {
+        Connecting, WaitAdded, WaitDone,
+        // Scenario 2: pause + resume during BOTH phases, against real
+        // SftpBackend I/O — see this file's header comment.
+        Second_WaitAdded, Second_WaitDownloadStarted, Second_WaitPausedPhase1, Second_WaitResumedPhase1,
+        Second_WaitUploadStarted, Second_WaitPausedPhase2, Second_WaitResumedPhase2, Second_WaitDone,
+        Done
+    };
     Stage stage = Stage::Connecting;
     int currentItemId = -1;
+    qint64 pausedBytesDone1 = -1;
+    qint64 pausedBytesDone2 = -1;
+    QString pausedTempPath;
 
     auto fail = [&](const QString &reason) {
         if (failureReason.isEmpty())
@@ -227,9 +258,15 @@ int main(int argc, char *argv[])
 
     QObject::connect(manager, &TransferManager::itemAdded, &app, [&](const TransferItem &item) {
         currentItemId = item.id;
-        check("enqueue() with both panes remote produces RemoteToRemote",
-              item.direction == TransferDirection::RemoteToRemote);
-        stage = Stage::WaitDone;
+        if (stage == Stage::WaitAdded) {
+            check("enqueue() with both panes remote produces RemoteToRemote",
+                  item.direction == TransferDirection::RemoteToRemote);
+            stage = Stage::WaitDone;
+        } else if (stage == Stage::Second_WaitAdded) {
+            check("scenario 2: enqueue() also produces RemoteToRemote",
+                  item.direction == TransferDirection::RemoteToRemote);
+            stage = Stage::Second_WaitDownloadStarted;
+        }
     });
 
     QObject::connect(manager, &TransferManager::itemUpdated, &app, [&](const TransferItem &item) {
@@ -238,16 +275,84 @@ int main(int argc, char *argv[])
         if (!item.tempFilePath.isEmpty())
             capturedTempPath = item.tempFilePath;
 
-        if (item.status == TransferStatus::InProgress && item.bytesDone > 0) {
+        const bool realProgressTick = item.status == TransferStatus::InProgress && item.bytesDone > 0;
+        if (realProgressTick) {
             if (item.phase == TransferPhase::Downloading)
                 sawDownloadProgress = true;
             else if (item.phase == TransferPhase::Uploading)
                 sawUploadProgress = true;
         } else if (item.status == TransferStatus::Failed) {
             fail(QStringLiteral("transfer failed: %1").arg(item.errorMessage));
-        } else if (item.status == TransferStatus::Done) {
-            stage = Stage::Done;
-            qApp->quit();
+            return;
+        }
+
+        switch (stage) {
+        case Stage::WaitDone:
+            if (item.status == TransferStatus::Done) {
+                stage = Stage::Second_WaitAdded;
+                manager->enqueue(sourcePane, destPane, fixtureName2);
+            }
+            break;
+        case Stage::Second_WaitDownloadStarted:
+            if (realProgressTick && item.phase == TransferPhase::Downloading) {
+                stage = Stage::Second_WaitPausedPhase1;   // set BEFORE pauseItem() — same discipline remote_to_remote_test.cpp's fake-backend scenario E uses
+                manager->pauseItem(currentItemId);
+            }
+            break;
+        case Stage::Second_WaitPausedPhase1:
+            if (item.status == TransferStatus::Paused) {
+                check("scenario 2: paused while still in phase 1 (Downloading), against a REAL server",
+                      item.phase == TransferPhase::Downloading);
+                check("scenario 2: paused with a real nonzero bytesDone", item.bytesDone > 0);
+                check("scenario 2: the local temp file survives the pause (not cleaned up)",
+                      QFile::exists(capturedTempPath));
+                pausedBytesDone1 = item.bytesDone;
+                pausedTempPath = capturedTempPath;
+                stage = Stage::Second_WaitResumedPhase1;   // set BEFORE resumeItem() — it synchronously emits itemUpdated(Queued) before its own async re-dispatch
+                manager->resumeItem(currentItemId);
+            }
+            break;
+        case Stage::Second_WaitResumedPhase1:
+            if (realProgressTick && item.phase == TransferPhase::Downloading) {
+                check("scenario 2: resume continues phase 1 from the paused offset against a REAL server, not from zero",
+                      item.bytesDone >= pausedBytesDone1);
+                check("scenario 2: resume reuses the SAME local temp file", capturedTempPath == pausedTempPath);
+                stage = Stage::Second_WaitUploadStarted;
+            }
+            break;
+        case Stage::Second_WaitUploadStarted:
+            if (realProgressTick && item.phase == TransferPhase::Uploading) {
+                stage = Stage::Second_WaitPausedPhase2;
+                manager->pauseItem(currentItemId);
+            }
+            break;
+        case Stage::Second_WaitPausedPhase2:
+            if (item.status == TransferStatus::Paused) {
+                check("scenario 2: paused while in phase 2 (Uploading), against a REAL server",
+                      item.phase == TransferPhase::Uploading);
+                check("scenario 2: paused with a real nonzero bytesDone (phase 2)", item.bytesDone > 0);
+                pausedBytesDone2 = item.bytesDone;
+                stage = Stage::Second_WaitResumedPhase2;
+                manager->resumeItem(currentItemId);
+            }
+            break;
+        case Stage::Second_WaitResumedPhase2:
+            if (realProgressTick && item.phase == TransferPhase::Uploading) {
+                check("scenario 2: resume continues phase 2 from the paused offset against a REAL server, not from zero",
+                      item.bytesDone >= pausedBytesDone2);
+                stage = Stage::Second_WaitDone;
+            }
+            break;
+        case Stage::Second_WaitDone:
+            if (item.status == TransferStatus::Done) {
+                check("scenario 2: after pausing/resuming BOTH phases against real servers, "
+                      "the item still completes normally end to end", item.status == TransferStatus::Done);
+                stage = Stage::Done;
+                qApp->quit();
+            }
+            break;
+        default:
+            break;
         }
     });
 
@@ -255,10 +360,13 @@ int main(int argc, char *argv[])
     destPane->setBackend(destBackend, destThread);
     autoAcceptHostKeyPrompt();
 
-    QTimer::singleShot(60000, &app, [&]() {
+    // Longer than scenario 1 alone needs — now covers a second full
+    // transfer plus two real pause/resume round trips against live
+    // servers.
+    QTimer::singleShot(90000, &app, [&]() {
         if (stage == Stage::Done)
             return;
-        fail(QStringLiteral("timed out after 60s in stage %1").arg(static_cast<int>(stage)));
+        fail(QStringLiteral("timed out after 90s in stage %1").arg(static_cast<int>(stage)));
     });
 
     app.exec();
@@ -275,6 +383,10 @@ int main(int argc, char *argv[])
     check("the fixture landed on server B's real disk", QFile::exists(serverRootB + "/" + fixtureName));
     check("server B's copy matches server A's original byte-for-byte",
           filesMatchByteForByte(serverRootA + "/" + fixtureName, serverRootB + "/" + fixtureName));
+    check("scenario 2: its fixture also landed on server B's real disk",
+          QFile::exists(serverRootB + "/" + fixtureName2));
+    check("scenario 2: content survived two real pause/resume cycles byte-for-byte",
+          filesMatchByteForByte(serverRootA + "/" + fixtureName2, serverRootB + "/" + fixtureName2));
 
     sourcePane->setBackend(new LocalBackend(), nullptr);
     destPane->setBackend(new LocalBackend(), nullptr);

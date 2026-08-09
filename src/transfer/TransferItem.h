@@ -112,6 +112,22 @@ struct TransferItem {
     // onBackendFinished()'s phase transition.
     QPointer<RemoteBackend> capturedDestBackend;
 
+    // Set by TransferManager::resumeItem(), consumed (and reset to
+    // false) by startNext() at the moment this item is actually
+    // dispatched. Skips startNext()'s usual destination-conflict
+    // checkExists() call for this one dispatch — resuming a paused
+    // transfer isn't a fresh start the way a freshly enqueue()'d or
+    // retryItem()'d one is; the destination file already legitimately
+    // has bytesDone bytes in it (this item's own earlier progress), so
+    // re-checking would find "something's already there" and prompt a
+    // real Overwrite/Skip conflict for what is, in fact, this exact
+    // transfer's own in-progress partial content — not a real conflict
+    // at all. A real bug found via live-server verification: every
+    // fake-backend test's checkExists() stub unconditionally reports
+    // "doesn't exist", so this was structurally impossible to catch
+    // without a real backend actually tracking real destination state.
+    bool skipConflictCheckOnDispatch = false;
+
     FilePaneWidget *sourcePane = nullptr;
     FilePaneWidget *destPane = nullptr;
 };

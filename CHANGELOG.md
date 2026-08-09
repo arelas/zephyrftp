@@ -8,6 +8,37 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Resuming ANY paused transfer (not just server-to-server) could show
+  a real, spurious "file already exists" prompt for the transfer's own
+  in-progress content.** Resuming re-checked the destination for a
+  conflict the same way a brand-new transfer does — but the destination
+  already legitimately has the bytes already sent before the pause, so
+  a real server would (correctly) report "yes, something's there,"
+  triggering an Overwrite/Skip prompt for what was never actually a
+  conflict. Choosing "Skip" there would abandon the exact transfer you
+  just asked to continue. Found via live-server pause/resume
+  verification (`verify-remote-to-remote-live`) — every fake backend in
+  the test suite always reported "doesn't exist" regardless of real
+  state, so this was invisible without a real backend and real
+  destination content. Predates this release; affected any resumed
+  upload or download.
+- **Deleting a saved site never removed its stored password/passphrase**
+  from the OS credential store — it stayed there permanently, orphaned,
+  with no way left in the app to ever remove it. Deleting a site now
+  also removes its saved secret, if it had one.
+- **Switching a saved site's sign-in method (password <-> private key)
+  could carry an old saved secret forward as if it were the new kind**,
+  offering (and, if accepted as-is, silently saving) an old password as
+  a private key's passphrase or vice versa. Switching the sign-in method
+  now clears the old saved secret instead.
+- A non-ASCII saved password or passphrase could be silently corrupted
+  on Linux systems using a non-UTF-8 locale, due to an encoding mismatch
+  between saving and loading.
+- The Site Manager's Connect button could prompt to unlock your OS
+  keyring twice in a row for a single click, due to a redundant lookup.
+
 ## [0.6.0] — Pause/resume for server-to-server transfers; real RemoteToRemote bugs fixed
 
 ### Added

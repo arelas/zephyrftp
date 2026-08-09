@@ -1,6 +1,18 @@
 // Tests TransferManager's pause/resume ORCHESTRATION — status transitions,
-// bytesDone preservation across a pause, and that resumeItem() actually
-// causes the next run to start from the paused offset rather than zero.
+// bytesDone preservation across a pause, that resumeItem() actually
+// causes the next run to start from the paused offset rather than zero,
+// and — added after live-server verification (verify-remote-to-remote-live)
+// found a real bug — that resuming does NOT re-run the destination
+// conflict check startNext() normally does for a fresh dispatch. That
+// bug was invisible to this fake-backend test until checkExistsCallCount
+// was added specifically to catch it: a real backend's checkExists()
+// would truthfully report "yes, something's there" on resume (this
+// item's own partial content from before the pause), triggering a real,
+// spurious Overwrite/Skip conflict prompt for what was never actually a
+// conflict — but this fake's own checkExists() stub always reports
+// false regardless, so the ONLY way to catch a stray second call here is
+// to count them directly, not to observe a dialog that (with the fix
+// working) should never even be triggered.
 //
 // Does NOT test SftpBackend's real byte-offset resume logic (the seek64
 // calls, the local-file clamping/trimming) — that needs a live SFTP
@@ -40,6 +52,20 @@ public:
     void requestCancel() override { m_cancelRequested = true; }
     void requestPause() override { m_pauseRequested = true; }
 
+    // Test hook — see main()'s own check() using this: a resumed item
+    // must NOT trigger a second checkExists() call. Real backends would
+    // legitimately report "yes, something's there" the second time
+    // (this item's own partial content from before the pause), which
+    // would show a real, spurious Overwrite/Skip conflict prompt for
+    // what isn't actually a conflict at all — a real bug this fake's
+    // own always-false checkExists() stub could never have caught on
+    // its own, only found via live-server verification
+    // (verify-remote-to-remote-live). This count is what actually proves
+    // the fix (TransferItem::skipConflictCheckOnDispatch) works, more
+    // directly than trying to detect a dialog that (with the fix
+    // working) should never even be triggered.
+    int checkExistsCallCount = 0;
+
 public slots:
     void connectToHost() override { emit connected(); }
     void listDirectory(const QString &path) override { emit directoryListed(path, {}); }
@@ -72,6 +98,7 @@ public slots:
     // test that exercises a real transfer through this fake.
     void checkExists(const QString &path, int requestId) override
     {
+        ++checkExistsCallCount;
         emit existsChecked(path, false, false, requestId);
     }
 
@@ -119,8 +146,9 @@ int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
 
+    auto *fakeBackend = new FakePausableBackend();
     auto *leftPane = new FilePaneWidget(new LocalBackend());
-    auto *rightPane = new FilePaneWidget(new FakePausableBackend());
+    auto *rightPane = new FilePaneWidget(fakeBackend);
     auto *manager = new TransferManager(&app);
 
     bool allPass = true;
@@ -204,6 +232,8 @@ int main(int argc, char *argv[])
         }
         check("transfer completed to Done after resuming", foundDone);
         check("final bytesDone reached the full total", finalBytesDone == 1000);
+        check("resuming did NOT re-check the destination for a conflict (checkExists called exactly once, "
+              "not once per pause/resume cycle)", fakeBackend->checkExistsCallCount == 1);
 
         qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
         app.exit(allPass ? 0 : 1);

@@ -493,6 +493,33 @@ void SiteManagerDialog::updateAuthFieldsVisibility()
 {
     m_authFieldsStack->setCurrentIndex(m_passwordAuthRadio->isChecked() ? 0 : 1);
     m_savePasswordCheck->setText(m_passwordAuthRadio->isChecked() ? tr("Save password") : tr("Save passphrase"));
+
+    // A real bug found by code review: switching a saved site's auth
+    // method (Password <-> Private key — including indirectly, via
+    // onProtocolChanged() forcing Password for a protocol with no key
+    // auth) used to leave any already-stored secret untouched under the
+    // checkbox's OLD meaning. A password and a passphrase are different
+    // kinds of secrets; onConnectClicked() would then pre-fill the NEW
+    // prompt with the OLD secret as if it were the right kind (e.g. an
+    // old FTP password offered up as a private key's passphrase), and
+    // accepting that pre-filled value as-is would silently overwrite the
+    // stored secret with the wrong one entirely.
+    //
+    // Detected by comparing against the SELECTED SITE's own currently
+    // PERSISTED authMethod (not just "did the radio change", which fires
+    // constantly) — this is deliberately also called while populating
+    // the form for a newly-selected site (see populateFormFromSite()'s
+    // explicit onProtocolChanged() call after loading), where the radio
+    // is set to match that site's own already-correct authMethod, so
+    // this comparison is naturally false there and only fires on an
+    // actual, real change.
+    if (SavedSite *site = selectedSite()) {
+        const SftpAuthMethod newMethod =
+            m_keyAuthRadio->isChecked() ? SftpAuthMethod::PublicKey : SftpAuthMethod::Password;
+        if (site->authMethod != newMethod && m_savePasswordCheck->isChecked())
+            m_savePasswordCheck->setChecked(false);   // its own toggled handler removes the stale secret
+    }
+
     onFieldEdited();   // auth-method choice is itself an edit worth persisting immediately
 }
 
@@ -552,6 +579,16 @@ void SiteManagerDialog::onDeleteSite()
         }
     }
     SiteStore::save(m_sites);
+    // Without this, a saved password/passphrase for this site (opt-in,
+    // via the "Save password" checkbox) orphans permanently in the OS
+    // credential store — deleting the site removes its id from
+    // sites.json, so there's no UI path left that will ever look it up
+    // or remove it again. A real bug found by code review, not a
+    // hypothetical: CredentialStore::remove() is already a harmless
+    // no-op when nothing was actually stored, so this is safe to call
+    // unconditionally, same as the "checkbox unchecked" case in
+    // onConnectClicked() already does.
+    CredentialStore::remove(idToRemove);
 
     m_selectedId.clear();
     rebuildTree();
@@ -605,9 +642,16 @@ void SiteManagerDialog::onConnectClicked()
     // not blank in that case. Whatever's actually typed here (accepted
     // as-is, or edited) is also what gets saved/removed afterward, so
     // this one prompt does triple duty: reuse, update, and initial save.
+    // load() alone (not hasSecret() first, then load()) — hasSecret() is
+    // itself implemented on top of load() (see CredentialStore.h), so
+    // calling both here did the exact same OS-credential-store lookup
+    // twice for one logical operation. Harmless when the keyring's
+    // already unlocked, but a real, avoidable cost found by code review:
+    // if it's locked, each lookup can itself trigger an OS unlock
+    // prompt, so this would have shown that prompt twice in a row for
+    // what should be a single Connect click.
     QString storedSecret;
-    const bool hasStoredSecret = site && CredentialStore::hasSecret(site->id)
-        && CredentialStore::load(site->id, &storedSecret);
+    const bool hasStoredSecret = site && CredentialStore::load(site->id, &storedSecret);
 
     if (request.protocol == Protocol::Sftp
         && request.sftp.authMethod == SftpAuthMethod::PublicKey) {
