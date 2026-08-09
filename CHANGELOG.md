@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.6.5] — Fix five more real bugs found by code review of TransferManager and the UI layer
+
 ### Fixed
 
 - **Cancelling a transfer whose connection had already been torn down
@@ -1036,7 +1038,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.4...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.5...HEAD
+[0.6.5]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.5
 [0.6.4]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.4
 [0.6.3]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.3
 [0.6.2]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.2
