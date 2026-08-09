@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.6.2] — Fix nine real bugs found by code review of FTP/SFTP auth and protocol code
+
 ### Fixed
 
 - **A different-but-similarly-certified certificate on an FTPS data
@@ -971,7 +973,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.2
 [0.6.1]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.1
 [0.6.0]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.0
 [0.5.2]: https://github.com/arelas/zephyrftp/releases/tag/v0.5.2
