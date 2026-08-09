@@ -104,6 +104,11 @@ void FilePaneWidget::setBackend(RemoteBackend *backend, QThread *thread)
 
     m_backend = backend;
     m_backendThread = thread;
+    // Only a thread-owning backend's connectToHost() can actually block
+    // long enough to matter — LocalBackend's runs synchronously on the GUI
+    // thread and returns immediately either way, so there's nothing for a
+    // caller to usefully wait out. See isConnecting()'s own doc comment.
+    m_connecting = (m_backendThread != nullptr);
 
     updatePathBarIcon();
     resetHistory();
@@ -120,9 +125,11 @@ void FilePaneWidget::setBackend(RemoteBackend *backend, QThread *thread)
     connect(m_backend, &RemoteBackend::directoryListed,
             this, &FilePaneWidget::onDirectoryListed);
     connect(m_backend, &RemoteBackend::connectionFailed, this, [this](const QString &reason) {
+        m_connecting = false;
         m_statusLabel->setText(QStringLiteral("Error: %1").arg(reason));
     });
     connect(m_backend, &RemoteBackend::connected, this, [this]() {
+        m_connecting = false;
         QMetaObject::invokeMethod(m_backend, "listDirectory",
                                    Qt::QueuedConnection, Q_ARG(QString, QString()));
     });

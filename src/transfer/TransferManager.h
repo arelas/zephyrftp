@@ -317,15 +317,25 @@ private:
 
     int m_nextConflictCheckId = 1;
     int m_pendingFileConflictCheckId = -1;
-    int m_pendingFolderConflictCheckId = -1;
 
     // Stashed while a folder's root-conflict check (enqueueFolder(),
-    // before enumeration starts) is in flight — restored once
-    // onDestinationExistsChecked() routes back to the folder-conflict
-    // continuation.
-    FilePaneWidget *m_pendingFolderSourcePane = nullptr;
-    FilePaneWidget *m_pendingFolderDestPane = nullptr;
-    QString m_pendingFolderName;
+    // before enumeration starts) is in flight — a QHash keyed by
+    // requestId, NOT a single shared scalar (this used to be three
+    // scalars — id/sourcePane/destPane/name — and it was a real bug:
+    // MainWindow's drag-drop/multi-select handling can call
+    // enqueueFolder() for several folders in one synchronous loop before
+    // any of their checkExists() calls resolve, so a shared scalar let
+    // each new call silently clobber the previous one's stashed pane/
+    // name before its response ever arrived, dropping every folder but
+    // the last one in a multi-folder drag. Same fix as
+    // m_pendingMoveConflictChecks below, which had already hit and fixed
+    // the identical bug for Move — see that struct's own comment.
+    struct PendingFolderConflictCheck {
+        FilePaneWidget *sourcePane = nullptr;
+        FilePaneWidget *destPane = nullptr;
+        QString folderName;
+    };
+    QHash<int, PendingFolderConflictCheck> m_pendingFolderConflictChecks;
 
     // Stashed while a moveEntry()'s/moveFolder()'s own root-conflict
     // check is in flight — a QHash keyed by requestId, NOT a single
@@ -336,7 +346,7 @@ private:
     // previous one's stashed pane/name before its response ever arrived,
     // dropping every item but the last one in a multi-select Move). Also
     // a separate id-space from m_pendingFileConflictCheckId/
-    // m_pendingFolderConflictCheckId above (rather than reusing either)
+    // m_pendingFolderConflictChecks above (rather than reusing either)
     // so a Move's conflict check can never collide with an ordinary
     // enqueue()/enqueueFolder() check in flight at the same moment.
     struct PendingMoveConflictCheck {

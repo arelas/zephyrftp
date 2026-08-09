@@ -460,6 +460,23 @@ void MainWindow::siteManagerViaDialog(FilePaneWidget *targetPane)
 
 void MainWindow::startConnection(const ConnectionRequest &request, FilePaneWidget *targetPane)
 {
+    // A real bug this guards against: targetPane->setBackend() (called at
+    // the end of this function) tears down whatever backend the pane
+    // already has with a blocking QThread::quit()+wait() — but quit()
+    // cannot interrupt a worker thread currently stuck inside a blocking
+    // connect()/SSH-handshake syscall (see FilePaneWidget::isConnecting()'s
+    // own doc comment). Clicking Connect again on a pane whose previous
+    // connection attempt hasn't resolved yet (a slow or packet-dropping
+    // host) would otherwise freeze the entire GUI until that syscall times
+    // out on its own. Refusing here — rather than fixing the underlying
+    // blocking I/O, a much larger change — is the same tradeoff
+    // disconnectPane() makes for the identical hazard on the Disconnect path.
+    if (targetPane->isConnecting()) {
+        statusBar()->showMessage(
+            tr("Still connecting on this pane — wait for that to finish or fail first."), 5000);
+        return;
+    }
+
     // No parent on the backend: it's about to be moved to a worker thread,
     // and Qt refuses to reparent an object across thread boundaries.
     // FilePaneWidget owns its lifetime manually from here via setBackend()'s
@@ -536,6 +553,20 @@ void MainWindow::onDisconnectTriggered()
 
 void MainWindow::disconnectPane(FilePaneWidget *targetPane)
 {
+    // Same hazard startConnection() guards against, for the same reason:
+    // setBackend() below tears down the pane's current backend with a
+    // blocking QThread::quit()+wait(), which can't interrupt a worker
+    // thread still stuck inside a blocking connect()/SSH-handshake
+    // syscall. Disconnecting (including via closeEvent()'s own call to
+    // this, on app close) while that's happening would otherwise freeze
+    // the GUI until the syscall times out on its own — refusing here is
+    // deliberately preferred to attempting to interrupt that blocking I/O.
+    if (targetPane->isConnecting()) {
+        statusBar()->showMessage(
+            tr("Still connecting on this pane — wait for that to finish or fail first."), 5000);
+        return;
+    }
+
     // Swap back to a plain LocalBackend. setBackend() handles tearing down
     // whatever was there before — including, if it was an SftpBackend, the
     // thread quit()/wait()/delete sequence.

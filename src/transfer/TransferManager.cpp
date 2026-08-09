@@ -123,13 +123,11 @@ void TransferManager::enqueueFolder(FilePaneWidget *sourcePane, FilePaneWidget *
     // individually would be far more prompting than this is worth.
     const QString destFolderPath = joinPath(destPane->currentDirectory(), folderName);
     ensureExistsCheckConnected(dstBackend);
-    m_pendingFolderConflictCheckId = m_nextConflictCheckId++;
-    m_pendingFolderSourcePane = sourcePane;
-    m_pendingFolderDestPane = destPane;
-    m_pendingFolderName = folderName;
+    const int requestId = m_nextConflictCheckId++;
+    m_pendingFolderConflictChecks.insert(requestId, {sourcePane, destPane, folderName});
 
     QMetaObject::invokeMethod(dstBackend, "checkExists", Qt::QueuedConnection,
-                               Q_ARG(QString, destFolderPath), Q_ARG(int, m_pendingFolderConflictCheckId));
+                               Q_ARG(QString, destFolderPath), Q_ARG(int, requestId));
 }
 
 bool TransferManager::moveEligible(FilePaneWidget *sourcePane, FilePaneWidget *destPane)
@@ -519,6 +517,17 @@ void TransferManager::retryItem(int id)
     item.bytesDone = 0;
     item.bytesTotal = 0;
     item.errorMessage.clear();
+    // A real bug: resumeItem() sets skipConflictCheckOnDispatch so a
+    // resumed transfer doesn't get a spurious conflict prompt against its
+    // own partial content (see TransferItem.h's own comment on the flag).
+    // If that item is then cancelled while still Queued (never dispatched,
+    // so the flag never gets consumed/cleared) and retried instead of
+    // resumed, retryItem() genuinely restarts from byte 0 — exactly the
+    // "fresh, worth-asking-about conflict" case the flag exists to skip
+    // ONLY for a resume. Without this, a stale skipConflictCheckOnDispatch
+    // from an earlier pause/resume could silently bypass this retry's
+    // conflict check and overwrite whatever now exists at the destination.
+    item.skipConflictCheckOnDispatch = false;
     // A RemoteToRemote item must restart from phase 1, not resume wherever
     // it failed — its temp file was already deleted by onBackendFailed()'s
     // cleanupTempFile() call, so re-entering at phase == Uploading would
@@ -578,8 +587,25 @@ void TransferManager::resumeItem(int id)
 
 void TransferManager::connectToBackend(RemoteBackend *backend)
 {
-    if (m_currentBackend)
-        disconnect(m_currentBackend, nullptr, this, nullptr);
+    // Disconnect only the four transfer signals THIS method connected below
+    // — not a wildcard disconnect(m_currentBackend, nullptr, this, nullptr)
+    // (a real bug this fixes: that wiped out every connection the old
+    // backend had to `this`, including entryMoved/entryMoveFailed from
+    // ensureMoveConnected() for an in-flight Move still running against
+    // that same backend object, e.g. a Move to a server that's also
+    // m_currentBackend for an ordinary transfer — the Move's response
+    // would arrive with nothing listening, leaving its TransferItem stuck
+    // InProgress forever). existsChecked/entryMoved/entryMoveFailed are
+    // deliberately left alone here; they're Qt::UniqueConnection and
+    // requestId-correlated, so leaving them connected across backends is
+    // safe (see ensureExistsCheckConnected()/ensureMoveConnected()'s own
+    // comments) — unlike these four, which must not double-deliver.
+    if (m_currentBackend) {
+        disconnect(m_currentBackend, &RemoteBackend::transferProgress, this, &TransferManager::onBackendProgress);
+        disconnect(m_currentBackend, &RemoteBackend::transferFinished, this, &TransferManager::onBackendFinished);
+        disconnect(m_currentBackend, &RemoteBackend::transferFailed, this, &TransferManager::onBackendFailed);
+        disconnect(m_currentBackend, &RemoteBackend::transferPaused, this, &TransferManager::onBackendPaused);
+    }
 
     connect(backend, &RemoteBackend::transferProgress, this, &TransferManager::onBackendProgress);
     connect(backend, &RemoteBackend::transferFinished, this, &TransferManager::onBackendFinished);
@@ -637,11 +663,13 @@ void TransferManager::onDestinationExistsChecked(const QString &path, bool exist
                        // it always has, rather than trying to guess the right resolution for a
                        // case Overwrite/Skip doesn't really describe anyway
 
-    if (requestId == m_pendingFolderConflictCheckId) {
-        m_pendingFolderConflictCheckId = -1;
-        FilePaneWidget *sourcePane = m_pendingFolderSourcePane;
-        FilePaneWidget *destPane = m_pendingFolderDestPane;
-        const QString folderName = m_pendingFolderName;
+    const auto folderConflictIt = m_pendingFolderConflictChecks.find(requestId);
+    if (folderConflictIt != m_pendingFolderConflictChecks.end()) {
+        const PendingFolderConflictCheck pending = folderConflictIt.value();
+        m_pendingFolderConflictChecks.erase(folderConflictIt);
+        FilePaneWidget *sourcePane = pending.sourcePane;
+        FilePaneWidget *destPane = pending.destPane;
+        const QString folderName = pending.folderName;
 
         if (!exists) {
             startFolderEnumeration(sourcePane, destPane, folderName);

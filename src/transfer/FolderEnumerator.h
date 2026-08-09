@@ -76,7 +76,22 @@ private:
     QList<PendingDir> m_pending;
     PendingDir m_activeDir;   // the one currently being listed, popped from m_pending in enumerateNext()
 
-    int m_nextRequestId = 1;
+    // A real bug found by testing: this used to be a per-INSTANCE counter
+    // starting at 1. Each instance connects directly to the shared
+    // backend's directoryEnumerated signal (see the constructor), so two
+    // FolderEnumerators walking concurrently against the same backend
+    // (e.g. two folders enqueued back to back onto the same source pane)
+    // could both be waiting on request id 1 at the same time — Qt fans a
+    // signal out to every connected slot, so each instance's
+    // onDirectoryEnumerated() would see BOTH responses, and a colliding id
+    // meant each incorrectly accepted the OTHER instance's response as its
+    // own (requestId == m_activeRequestId matching for the wrong reason),
+    // corrupting both enumerations' results together. A `static` counter,
+    // shared across every instance ever created, makes that collision
+    // structurally impossible — instances are only ever constructed on the
+    // GUI thread (see this class's own header comment), so a plain
+    // (non-atomic) static is sufficient.
+    static int s_nextRequestId;
     int m_activeRequestId = -1;
     QList<EnumeratedItem> m_results;
 };

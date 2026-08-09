@@ -1258,7 +1258,25 @@ to drive FileZilla itself for a same-desktop comparison.
   its lifetime manually — `deleteLater()` on the backend (runs on its own
   thread's queue) followed by `thread->quit()` + `thread->wait()`. Passing
   `thread=nullptr` (e.g. for `LocalBackend`) falls back to normal
-  parent-child ownership. Right-click on selected rows offers "Transfer
+  parent-child ownership.
+  **A real bug found by testing: `thread->wait()` above can freeze the
+  entire GUI if called while the OLD backend is still stuck inside a
+  blocking `connect()`/SSH-handshake syscall on its worker thread** —
+  `thread->quit()` only stops the thread's event loop after whatever's
+  currently running returns, and it can't interrupt a blocking syscall
+  already in progress. Calling `setBackend()` again on a pane whose
+  previous connection attempt hasn't resolved yet (a second Connect
+  click, or Disconnect, against a slow or packet-dropping host) would
+  hit this teardown path and hang the whole app until that syscall times
+  out on its own. `isConnecting()` (true from the moment `setBackend()`
+  queues a thread-owning backend's `connectToHost()` until `connected`
+  or `connectionFailed` fires) lets a caller check before ever calling
+  `setBackend()` again on the same pane, rather than attempting to
+  interrupt the blocking I/O itself — a much larger change to
+  `SftpBackend`/`FtpBackend`'s connection handling. See `MainWindow`'s
+  entry below for where this is actually checked
+  (`startConnection()`/`disconnectPane()`).
+  Right-click on selected rows offers "Transfer
   Selected" (multi-select, via `filesActivated` — carries full
   `RemoteEntry`, not bare names, specifically so `isDir` survives to
   `MainWindow`'s routing between `TransferManager::enqueue()` (files) and
@@ -1683,6 +1701,53 @@ to drive FileZilla itself for a same-desktop comparison.
      regression re-enabling the action) would have silently hit the
      misdispatch described above. Fixed with a direct early-return guard
      in `retryItem()` itself.
+  **Three more real bugs found by a later code review of TransferManager
+  broadly (not Move-specific this time), all fixed, the first now also
+  covered by a regression scenario in `folder-transfer-test`:**
+  1. **`enqueueFolder()` had the exact same shared-scalar bug Move's fix
+     #1 above already closed once — just never applied to this earlier,
+     separate call site.** `m_pendingFolderConflictCheckId`/
+     `m_pendingFolderSourcePane`/`m_pendingFolderDestPane`/
+     `m_pendingFolderName` stashed a folder's root-conflict check in
+     single shared scalars, not a per-request map. Dragging two folders
+     onto a pane at once (`MainWindow`'s drop handling calls
+     `enqueueFolder()` once per folder in a plain synchronous loop, same
+     shape as Move's multi-select loop) let the second call silently
+     clobber the first's stashed state before its own async
+     `checkExists()` response ever arrived, dropping the first folder's
+     transfer entirely with no error shown. Fixed the same way: replaced
+     with `QHash<int, PendingFolderConflictCheck> m_pendingFolderConflictChecks`,
+     keyed by request id. Fixing this surfaced a second, previously-
+     unreachable bug in `FolderEnumerator` — see that entry below.
+  2. **`retryItem()` reset `bytesDone`/`bytesTotal`/`errorMessage` but
+     never cleared `skipConflictCheckOnDispatch`.** `resumeItem()` sets
+     that flag so a resumed transfer doesn't get a spurious conflict
+     prompt against its own partial content (see `TransferItem.h`'s own
+     comment on the flag) — but if that same item is then cancelled
+     while still `Queued` (never dispatched, so the flag is never
+     consumed) and retried instead of resumed, `retryItem()` genuinely
+     restarts from byte 0, exactly the fresh case the flag is supposed
+     to skip only for a resume. A stale flag from an earlier pause/
+     resume could silently bypass a retry's destination conflict check
+     and overwrite whatever now exists there. Fixed by explicitly
+     resetting the flag to `false` in `retryItem()`.
+  3. **`connectToBackend()`'s teardown was a wildcard
+     `disconnect(m_currentBackend, nullptr, this, nullptr)`** — removing
+     *every* connection the old backend had to `this`, not just the four
+     transfer signals this method itself re-adds below. That included
+     `entryMoved`/`entryMoveFailed` from `ensureMoveConnected()` for an
+     in-flight Move still running against that same backend object: if a
+     Move's destination backend was also (or became) `m_currentBackend`
+     for an ordinary transfer, and a different queued transfer dispatched
+     against a different backend before the Move's response arrived,
+     `connectToBackend()`'s wildcard disconnect would sever the Move's
+     signal wiring — its eventual `entryMoved` would arrive with nothing
+     listening, leaving that `TransferItem` stuck `InProgress` forever.
+     Fixed by disconnecting only the four specific signals this method
+     connects (`transferProgress`/`transferFinished`/`transferFailed`/
+     `transferPaused`); `existsChecked`/`entryMoved`/`entryMoveFailed`
+     are `Qt::UniqueConnection` and request-id-correlated, so leaving
+     them connected across backends was always safe.
 - `FolderEnumerator` (`src/transfer/FolderEnumerator.h/.cpp`) —
   recursively walks a folder via a backend's
   `listDirectoryForEnumeration()`, one directory at a time (not several
@@ -1699,6 +1764,26 @@ to drive FileZilla itself for a same-desktop comparison.
   rather than skipping the failed subdirectory and continuing — silently
   completing with missing content would look successful while actually
   being wrong, which is worse than clearly failing.
+  **A real bug, previously unreachable, found by testing the
+  `enqueueFolder()` fix above: two instances walking concurrently
+  against the same backend could each accept the OTHER's response as
+  their own.** Each `FolderEnumerator` numbered its own
+  `listDirectoryForEnumeration()` requests starting from 1, but connects
+  directly to the shared backend's `directoryEnumerated` signal in its
+  constructor — Qt fans a signal out to every connected slot, not just
+  the instance that issued the matching request. Two enumerators walking
+  concurrently (only reachable at all once the `enqueueFolder()` fix
+  above stopped silently dropping the second of two folders enqueued
+  together) could both be waiting on request id 1 at the same moment, so
+  each instance's `requestId == m_activeRequestId` filter matched for
+  the wrong reason, letting one instance consume the other's response
+  and corrupting both enumerations' results together — confirmed
+  directly: a regression test enqueueing two folders onto the same
+  source pane at once briefly showed one folder's file appearing inside
+  the other's result set. Fixed by making the request-id counter
+  (`s_nextRequestId`) `static` — shared across every `FolderEnumerator`
+  instance ever created, not per-instance — so two concurrent instances
+  can never collide regardless of how many requests either has issued.
 - `TransferQueueWidget` — table view mirroring `TransferManager`'s
   `itemAdded`/`itemUpdated` signals, plus a right-click context menu
   (Cancel/Pause/Resume/Retry, each enabled based on the item's current
@@ -1813,7 +1898,19 @@ to drive FileZilla itself for a same-desktop comparison.
   requesting pane straight from the signal and call the same
   `connectViaDialog()`/`siteManagerViaDialog()`/`disconnectPane()` helpers
   with it. "Disconnect" (toolbar, or a pane's own menu) swaps that pane
-  back to `LocalBackend` via `disconnectPane()`. The menu bar's
+  back to `LocalBackend` via `disconnectPane()`.
+  Both `startConnection()` and `disconnectPane()` check
+  `targetPane->isConnecting()` first and refuse (a status-bar message
+  instead) if it's true — see `FilePaneWidget`'s entry above for the real
+  GUI-freeze bug this guards against (calling `setBackend()` again on a
+  pane whose previous connection attempt is still blocked in a worker
+  thread's synchronous handshake). `disconnectPane()`'s guard also
+  applies during `closeEvent()`'s own unconditional teardown calls for
+  both panes on app close — deliberately: refusing to tear down a
+  still-connecting pane there just leaves its worker thread to be
+  reclaimed by the OS at process exit (the window closes immediately
+  either way) rather than freezing the whole app on quit.
+  The menu bar's
   "Connection" menu (`buildMenuBar()`, next to Help) mirrors the toolbar's
   three (right-pane) actions — same `QAction`-triggered slots, no separate
   logic — for keyboard/menu access alongside the toolbar buttons rather

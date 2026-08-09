@@ -8,6 +8,31 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Clicking Connect again (or Disconnect) on a pane whose previous
+  connection attempt hadn't resolved yet — a slow or packet-dropping
+  host — could freeze the entire app** until the OS's own connection
+  timeout eventually gave up. Both actions now refuse with a status-bar
+  message instead of attempting a teardown that couldn't actually
+  interrupt the stuck connection attempt.
+- **Dragging two folders onto a pane at the same time could silently
+  drop the first one — no error, it just never transferred.** The
+  second drag's setup overwrote the first's in-progress state before it
+  had a chance to actually start. Fixed, and along the way this also
+  caught (and fixed) a second bug it had been hiding: two folders
+  enumerating at once could briefly mix up which files belonged to
+  which folder.
+- **A transfer that was paused, then cancelled instead of resumed, then
+  retried, could silently overwrite whatever now existed at its
+  destination** instead of asking first — a retry is supposed to treat
+  the destination as a fresh unknown, but it was still carrying a
+  leftover "skip the check" flag from the earlier pause.
+- **A server-side Move could get stuck "In Progress" forever** if
+  another transfer started against a different server while the Move's
+  own confirmation was still in flight — the new transfer's setup could
+  accidentally sever the Move's connection to its own result.
+
 ## [0.6.3] — Fix a known_hosts race between concurrent SFTP connections
 
 ### Fixed

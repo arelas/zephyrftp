@@ -25,11 +25,41 @@
 // SftpBackend's implementation of listDirectoryForEnumeration() is NOT
 // covered here — no live SFTP server is available in this environment,
 // the same limitation already flagged elsewhere in this project.
+//
+// Also covers a regression for a real bug found by code review:
+// enqueueFolder() used to stash its pending root-conflict-check state
+// (requestId/sourcePane/destPane/folderName) in single shared scalar
+// members instead of a per-request map — the same bug class Move's own
+// conflict-check tracking already hit and fixed once (see
+// TransferManager.h's m_pendingFolderConflictChecks comment). Dragging
+// two folders onto a pane at once (MainWindow's drop handling calls
+// enqueueFolder() once per folder in a plain synchronous loop) let the
+// second call silently clobber the first's stashed state before its own
+// async checkExists() response ever arrived, dropping the first folder's
+// transfer entirely with no error shown. Reproduced below the same way
+// move_entry_test.cpp reproduces the identical Move bug: two
+// enqueueFolder() calls back to back, synchronously, with no event-loop
+// turn in between — exactly what the real drop-handling loop produces.
+//
+// This same scenario caught a SECOND, previously-unreachable bug along
+// the way: FolderEnumerator numbered its listDirectoryForEnumeration()
+// requests with a per-INSTANCE counter starting at 1, but connects
+// directly to the shared backend's directoryEnumerated signal — two
+// enumerators walking concurrently against the same source pane's
+// backend (only possible once the enqueueFolder() bug above stopped
+// silently dropping the second folder) could both be waiting on request
+// id 1 at once, so each instance's response-filtering accepted the
+// OTHER instance's response as its own, corrupting both enumerations'
+// results together. Fixed by making the id counter static (shared
+// across every instance) instead of per-instance — see
+// FolderEnumerator.h's own comment on s_nextRequestId.
 #include <QApplication>
 #include <QTimer>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
+#include <QHash>
+#include <QSet>
 #include "ui/FilePaneWidget.h"
 #include "backends/LocalBackend.h"
 #include "transfer/TransferManager.h"
@@ -52,6 +82,11 @@ int main(int argc, char *argv[])
     QDir().mkpath(srcBase + "/myfolder/subdir1");
     QDir().mkpath(srcBase + "/myfolder/subdir2/nested");
     QDir().mkpath(srcBase + "/myfolder/emptydir");
+    // Two more source folders, for the concurrent-enqueueFolder() regression
+    // scenario below — deliberately separate from myfolder so that
+    // scenario doesn't interact with the timing/counts of this one.
+    QDir().mkpath(srcBase + "/folderA");
+    QDir().mkpath(srcBase + "/folderB");
     QDir().mkpath(dstBase);
 
     auto writeFile = [](const QString &path, const QString &content) {
@@ -63,6 +98,14 @@ int main(int argc, char *argv[])
     writeFile(srcBase + "/myfolder/subdir1/b.txt", "hi from b");
     writeFile(srcBase + "/myfolder/subdir1/c.txt", "hi from c");
     writeFile(srcBase + "/myfolder/subdir2/nested/d.txt", "hi from d");
+    writeFile(srcBase + "/folderA/fileA.txt", "hi from A");
+    writeFile(srcBase + "/folderB/fileB.txt", "hi from B");
+
+    auto readFile = [](const QString &path) -> QString {
+        QFile f(path);
+        f.open(QIODevice::ReadOnly);
+        return QString::fromUtf8(f.readAll());
+    };
 
     auto *srcPane = new FilePaneWidget(new LocalBackend());
     auto *dstPane = new FilePaneWidget(new LocalBackend());
@@ -74,15 +117,18 @@ int main(int argc, char *argv[])
         if (!condition) allPass = false;
     };
 
-    bool sawFolderStarted = false;
-    int folderFinishedFileCount = -1;
+    // Per-name tracking (not single scalars) — this test now drives THREE
+    // separate folder transfers (myfolder, then folderA+folderB together),
+    // so each signal needs to record which folder it fired for rather than
+    // assuming there's only ever one in flight.
+    QSet<QString> startedFolders;
+    QHash<QString, int> finishedFolderFileCounts;
     int itemsAdded = 0;
     int itemsDone = 0;
 
     QObject::connect(manager, &TransferManager::folderTransferStarted, &app,
                       [&](const QString &name) {
-        check("folderTransferStarted fired with the right folder name", name == "myfolder");
-        sawFolderStarted = true;
+        startedFolders.insert(name);
     });
     QObject::connect(manager, &TransferManager::folderTransferFailed, &app,
                       [&](const QString &name, const QString &reason) {
@@ -91,8 +137,7 @@ int main(int argc, char *argv[])
     });
     QObject::connect(manager, &TransferManager::folderTransferFinished, &app,
                       [&](const QString &name, int fileCount) {
-        check("folderTransferFinished fired with the right folder name", name == "myfolder");
-        folderFinishedFileCount = fileCount;
+        finishedFolderFileCounts.insert(name, fileCount);
     });
     QObject::connect(manager, &TransferManager::itemAdded, &app, [&](const TransferItem &) {
         itemsAdded++;
@@ -123,9 +168,9 @@ int main(int argc, char *argv[])
     // give it real time to walk the tree and for the (small, local, fast)
     // file transfers to actually complete.
     QTimer::singleShot(2000, &app, [&]() {
-        check("folderTransferStarted fired", sawFolderStarted);
+        check("folderTransferStarted fired", startedFolders.contains("myfolder"));
         check("folderTransferFinished reported exactly 4 files (a,b,c,d — not counting directories)",
-              folderFinishedFileCount == 4);
+              finishedFolderFileCounts.value("myfolder", -1) == 4);
         check("exactly 4 transfer queue items were actually added", itemsAdded == 4);
         check("all 4 queued items reached Done", itemsDone == 4);
 
@@ -141,11 +186,6 @@ int main(int argc, char *argv[])
               QDir(dst + "/emptydir").exists());
 
         // --- Files, with correct content (not just existence) ---
-        auto readFile = [](const QString &path) -> QString {
-            QFile f(path);
-            f.open(QIODevice::ReadOnly);
-            return QString::fromUtf8(f.readAll());
-        };
         check("a.txt transferred with correct content", readFile(dst + "/a.txt") == "hi from a");
         check("subdir1/b.txt transferred with correct content",
               readFile(dst + "/subdir1/b.txt") == "hi from b");
@@ -153,6 +193,34 @@ int main(int argc, char *argv[])
               readFile(dst + "/subdir1/c.txt") == "hi from c");
         check("subdir2/nested/d.txt transferred with correct content (deepest nesting level)",
               readFile(dst + "/subdir2/nested/d.txt") == "hi from d");
+    });
+
+    // ---------- Concurrent enqueueFolder() regression: two folders
+    // enqueued back to back, synchronously, with no event-loop turn in
+    // between — the exact pattern MainWindow's drop-handling loop
+    // produces for a multi-folder drag. See this file's header comment
+    // for the real bug this proves fixed. ----------
+    QTimer::singleShot(2200, &app, [&]() {
+        manager->enqueueFolder(srcPane, dstPane, "folderA");
+        manager->enqueueFolder(srcPane, dstPane, "folderB");
+    });
+
+    QTimer::singleShot(4200, &app, [&]() {
+        check("concurrent enqueueFolder: folderA's folderTransferStarted fired "
+              "(dropped entirely under the old bug — its checkExists() response "
+              "arrived after folderB's call had already overwritten the shared "
+              "pending-check state)",
+              startedFolders.contains("folderA"));
+        check("concurrent enqueueFolder: folderB's folderTransferStarted fired",
+              startedFolders.contains("folderB"));
+        check("concurrent enqueueFolder: folderA finished with its 1 file",
+              finishedFolderFileCounts.value("folderA", -1) == 1);
+        check("concurrent enqueueFolder: folderB finished with its 1 file",
+              finishedFolderFileCounts.value("folderB", -1) == 1);
+        check("concurrent enqueueFolder: folderA's file transferred with correct content",
+              readFile(dstBase + "/folderA/fileA.txt") == "hi from A");
+        check("concurrent enqueueFolder: folderB's file transferred with correct content",
+              readFile(dstBase + "/folderB/fileB.txt") == "hi from B");
 
         qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
         app.exit(allPass ? 0 : 1);

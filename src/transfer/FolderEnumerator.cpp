@@ -10,6 +10,10 @@ QString joinPath(const QString &dir, const QString &name)
 }
 }
 
+// See the header's own comment on s_nextRequestId for why this is a
+// static, class-wide counter rather than a per-instance one.
+int FolderEnumerator::s_nextRequestId = 1;
+
 FolderEnumerator::FolderEnumerator(RemoteBackend *backend, const QString &rootPath,
                                     const QString &rootName, QObject *parent)
     : QObject(parent)
@@ -43,7 +47,7 @@ void FolderEnumerator::enumerateNext()
     }
 
     m_activeDir = m_pending.takeFirst();
-    m_activeRequestId = m_nextRequestId++;
+    m_activeRequestId = s_nextRequestId++;
 
     QMetaObject::invokeMethod(m_backend, "listDirectoryForEnumeration", Qt::QueuedConnection,
                                Q_ARG(QString, m_activeDir.absolutePath), Q_ARG(int, m_activeRequestId));

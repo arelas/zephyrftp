@@ -33,6 +33,22 @@ public:
     QString selectedEntryName() const;
     QString currentDirectory() const { return m_backend->currentPath(); }
 
+    // True from the moment setBackend() queues a thread-owning backend's
+    // connectToHost() until that backend reports connected or
+    // connectionFailed. A real bug this exists to let callers guard
+    // against: setBackend() tears down the PREVIOUS backend with a
+    // blocking QThread::quit()+wait() (see setBackend()'s own comment),
+    // but quit() cannot interrupt a worker thread currently blocked
+    // inside a synchronous connect()/SSH-handshake syscall — calling
+    // setBackend() again on a pane that's still mid-connect (a second
+    // Connect click, or Disconnect, before the first attempt resolves)
+    // would freeze the whole GUI until that syscall times out on its
+    // own. MainWindow checks this before ever calling setBackend() again
+    // on the same pane, rather than fixing the underlying blocking I/O
+    // itself, which would be a much larger change to SftpBackend/
+    // FtpBackend's connection handling.
+    bool isConnecting() const { return m_connecting; }
+
     // Selected rows that are files (not directories). Public because
     // FileTreeView (a different class, not a subwidget with special
     // access) calls this directly when starting a drag — see
@@ -199,6 +215,7 @@ private:
 
     RemoteBackend *m_backend;
     QThread *m_backendThread = nullptr;   // null when backend has no thread of its own (e.g. LocalBackend)
+    bool m_connecting = false;   // see isConnecting()'s own doc comment
     FileTreeView *m_view;
     QToolButton *m_backButton;
     QToolButton *m_forwardButton;
