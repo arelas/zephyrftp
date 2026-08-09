@@ -8,6 +8,52 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Added
+
+- **Server-to-server transfers can now be paused and resumed, in either
+  half.** Previously cancel-only, on the theory that resuming a staged
+  two-phase transfer would need extra work to preserve which half was
+  active, the resume offset, and the temporary file across the pause.
+  That reasoning turned out to be stale: none of the three ever actually
+  needed special handling. Closed by adding the missing test coverage
+  (pausing and resuming during both the download and upload half) and
+  then enabling it.
+
+### Fixed
+
+- **A `RemoteToRemote` transfer's upload phase could silently redirect to
+  the wrong destination if the destination pane's connection changed
+  while the download phase was still running.** Introduced the moment
+  "either pane can connect independently" made a mid-transfer pane swap
+  possible for the first time — the upload phase re-fetched the
+  destination pane's *current* backend instead of the one active when
+  the transfer started; swapping to a different server (or back to
+  `LocalBackend`) mid-download would silently upload there instead,
+  reported as a normal success. Fixed by capturing the destination
+  backend once, at the start of the transfer; if that connection is
+  gone by the time the upload phase would start, the transfer now fails
+  with a clear explanation instead of silently redirecting.
+- **A cancel or pause requested right as an SFTP transfer reached EOF
+  could be silently lost**, letting the transfer complete instead —
+  low-stakes on its own, but meant a lost cancel on a `RemoteToRemote`
+  item's download phase would also let an entire unwanted upload phase
+  run afterward. `FtpBackend`'s equivalent loop already checked
+  correctly; `SftpBackend`'s now matches it.
+- The transfer queue's progress bar stayed green for the entire
+  duration of a `RemoteToRemote` transfer, contradicting its own
+  phase-aware status icon and text (blue while downloading, green while
+  uploading) — now consistent.
+
+### Changed (developer-facing only, no shipped behavior)
+
+- `remote-to-remote-test` restored 10 individually-named assertions that
+  an earlier CI-flakiness fix had collapsed into implicit,
+  timeout-backed stage gates — same event-driven design, precise
+  PASS/FAIL diagnostics back to what they were — plus 10 new ones for
+  the pause/resume scenario above (31 checks total, up from 11).
+- Deduplicated the staging-directory path expression, previously
+  repeated verbatim in two places.
+
 ## [0.5.2] — Fix two real Move bugs found by code review
 
 ### Fixed

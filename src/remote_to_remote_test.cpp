@@ -1,7 +1,9 @@
 // Tests TransferManager's remote-to-remote staged-transfer ORCHESTRATION —
 // direction/phase assignment, the phase-1 (download-to-temp) -> phase-2
 // (upload-from-temp) transition, temp-file allocation/cleanup on every exit
-// path, and retryItem()'s phase reset.
+// path, retryItem()'s phase reset, and — added after a code review found
+// this exact path untested (see FakeRemoteBackend::requestPause()'s own
+// comment) — pausing and resuming during BOTH phases.
 //
 // Uses TWO independent fake backends representing two different "remote"
 // servers — a legitimate test-double technique (TransferManager only ever
@@ -13,9 +15,9 @@
 // afterward — not just an in-memory status check.
 //
 // Does NOT test SftpBackend/FtpBackend's real downloadFile()/uploadFile()
-// against a live server, or a live two-server remote-to-remote transfer —
-// see ARCHITECTURE.md's Known Gaps for what remains unverified even after
-// this.
+// against a live server — see ARCHITECTURE.md's Known Gaps for what remains
+// unverified even after this. A live two-server remote-to-remote transfer
+// IS now covered separately, by verify-remote-to-remote-live.
 #include <QApplication>
 #include <QTimer>
 #include <QDebug>
@@ -55,11 +57,15 @@ public:
     // a trap for a future test that reused this fake.
     QString connectionIdentity() const override { return m_identity; }
     void requestCancel() override { m_cancelRequested = true; }
-    // RemoteToRemote is cancel-only for v1 — pause is never offered for
-    // this direction (see TransferQueueWidget's pauseCapableDirection), so
-    // this is never actually called in this test; present only to satisfy
-    // the interface.
-    void requestPause() override {}
+    // Genuinely simulates pausing now — RemoteToRemote used to be
+    // cancel-only in the UI on the theory that resuming a staged
+    // two-phase transfer would need extra work to preserve phase/
+    // tempFilePath/the resume offset across the pause. A code review
+    // found that reasoning was never actually verified: TransferManager's
+    // pauseItem()/resumeItem() are already direction-agnostic and don't
+    // reset any of those three, so nothing extra was ever needed — this
+    // was just never tested. Scenario E below is that test.
+    void requestPause() override { m_pauseRequested = true; }
 
     // Test hooks — the specific local path this fake was last asked to
     // read from/write to, so the test can confirm phase 1 and phase 2
@@ -98,7 +104,15 @@ public slots:
         Q_UNUSED(remotePath);
         lastDownloadLocalPath = localPath;
         m_writeTargetPath = localPath;
-        QFile(localPath).open(QIODevice::WriteOnly);   // creates a real, empty file up front
+        // Only truncate on a FRESH start — a resumed download (scenario
+        // E) must leave the bytes already on disk from before the pause
+        // alone, matching real backends' own resume contract (trust
+        // what's actually there), since tick()'s own QIODevice::Append
+        // opens below just keep appending onto it either way.
+        if (resumeOffset <= 0) {
+            QFile f(localPath);
+            f.open(QIODevice::WriteOnly | QIODevice::Truncate);   // creates a real, empty file up front
+        }
         beginTransfer(resumeOffset);
     }
     void uploadFile(const QString &localPath, const QString &remotePath, qint64 resumeOffset = 0) override {
@@ -145,6 +159,12 @@ private slots:
             emit transferFailed(QStringLiteral("fakefile.bin"), QStringLiteral("Cancelled"));
             return;
         }
+        if (m_pauseRequested) {
+            m_finished = true;   // same "genuinely ended" guard cancel uses — see simulateFailure()'s comment
+            m_timer.stop();
+            emit transferPaused(QStringLiteral("fakefile.bin"), m_done);
+            return;
+        }
         m_done = qMin(m_done + 100, m_total);
         if (!m_writeTargetPath.isEmpty()) {
             QFile f(m_writeTargetPath);
@@ -162,6 +182,7 @@ private slots:
 private:
     void beginTransfer(qint64 resumeOffset) {
         m_cancelRequested = false;
+        m_pauseRequested = false;
         m_finished = false;
         m_done = resumeOffset;
         m_total = 1000;
@@ -174,6 +195,7 @@ private:
     qint64 m_done = 0;
     qint64 m_total = 0;
     bool m_cancelRequested = false;
+    bool m_pauseRequested = false;
     // Set once this transfer has genuinely ended (cancelled, finished, or
     // simulateFailure()'d) — see tick()'s and simulateFailure()'s own
     // comments for the specific race this closes.
@@ -218,6 +240,8 @@ int main(int argc, char *argv[])
         B_WaitDownloadStarted, B_WaitCancelled,
         C_WaitUploadStarted, C_WaitCancelled,
         D_WaitUploadStarted, D_WaitFailed, D_WaitRetryDownloadStarted, D_WaitDone,
+        E_WaitDownloadStarted, E_WaitPausedPhase1, E_WaitResumedPhase1,
+        E_WaitUploadStarted, E_WaitPausedPhase2, E_WaitResumedPhase2, E_WaitDone,
         AllDone
     };
     Stage stage = Stage::A_WaitDownloadStarted;
@@ -225,6 +249,9 @@ int main(int argc, char *argv[])
     int currentItemId = -1;
     QString capturedTempPath;   // last known non-empty tempFilePath for the current item
     QString oldTempPathD;       // scenario D's temp path, captured just before the simulated failure
+    qint64 pausedBytesDoneE1 = -1;   // scenario E's paused offset, phase 1
+    qint64 pausedBytesDoneE2 = -1;   // scenario E's paused offset, phase 2
+    QString pausedTempPathE;        // scenario E's temp path, captured at the phase-1 pause
 
     QObject::connect(manager, &TransferManager::itemAdded, &app, [&](const TransferItem &item) {
         currentItemId = item.id;
@@ -264,6 +291,7 @@ int main(int argc, char *argv[])
             break;
         case Stage::A_WaitUploadStarted:
             if (realProgressTick && item.phase == TransferPhase::Uploading) {
+                check("scenario A: phase 1 completion transitions to Uploading", item.phase == TransferPhase::Uploading);
                 check("scenario A: phase 2 dispatched against the DESTINATION fake with the SAME temp path",
                       destFake->lastUploadLocalPath == capturedTempPath);
                 check("scenario A: the temp file existed when phase 2 started (real content from phase 1)",
@@ -273,6 +301,7 @@ int main(int argc, char *argv[])
             break;
         case Stage::A_WaitDone:
             if (item.status == TransferStatus::Done) {
+                check("scenario A: item reaches Done", item.status == TransferStatus::Done);
                 check("scenario A: temp file deleted after phase 2 completes", !QFile::exists(capturedTempPath));
                 stage = Stage::B_WaitDownloadStarted;
                 manager->enqueue(sourcePane, destPane, "fakefile.bin");
@@ -288,6 +317,8 @@ int main(int argc, char *argv[])
             break;
         case Stage::B_WaitCancelled:
             if (item.status == TransferStatus::Cancelled) {
+                check("scenario B: still in phase 1 when cancelled", item.phase == TransferPhase::Downloading);
+                check("scenario B: cancel mid-phase-1 produces Cancelled", item.status == TransferStatus::Cancelled);
                 check("scenario B: the (partially-written) temp file is cleaned up", !QFile::exists(capturedTempPath));
                 stage = Stage::C_WaitUploadStarted;
                 manager->enqueue(sourcePane, destPane, "fakefile.bin");
@@ -311,6 +342,9 @@ int main(int argc, char *argv[])
             break;
         case Stage::C_WaitCancelled:
             if (item.status == TransferStatus::Cancelled) {
+                check("scenario C: phase 1 completed, now in phase 2 when cancelled",
+                      item.phase == TransferPhase::Uploading);
+                check("scenario C: cancel mid-phase-2 produces Cancelled", item.status == TransferStatus::Cancelled);
                 check("scenario C: the already-downloaded temp file is cleaned up too",
                       !QFile::exists(capturedTempPath));
                 stage = Stage::D_WaitUploadStarted;
@@ -324,6 +358,8 @@ int main(int argc, char *argv[])
         // to reuse the one cleanupTempFile() already deleted ----------
         case Stage::D_WaitUploadStarted:
             if (realProgressTick && item.phase == TransferPhase::Uploading) {
+                check("scenario D: phase 1 completed, now in phase 2 before the simulated failure",
+                      item.phase == TransferPhase::Uploading);
                 oldTempPathD = capturedTempPath;
                 // simulateFailure() emits transferFailed() SYNCHRONOUSLY
                 // (a direct, same-thread connection to onBackendFailed()),
@@ -342,6 +378,8 @@ int main(int argc, char *argv[])
             break;
         case Stage::D_WaitFailed:
             if (item.status == TransferStatus::Failed) {
+                check("scenario D: a genuine phase-2 failure produces Failed, not Cancelled",
+                      item.status == TransferStatus::Failed);
                 check("scenario D: the failed phase's temp file was cleaned up",
                       !oldTempPathD.isEmpty() && !QFile::exists(oldTempPathD));
                 stage = Stage::D_WaitRetryDownloadStarted;
@@ -364,6 +402,7 @@ int main(int argc, char *argv[])
                 // pointing at the now-deleted file, which is what would
                 // happen without the fix (phase would still read
                 // Uploading).
+                check("scenario D: retry resets phase back to Downloading", item.phase == TransferPhase::Downloading);
                 check("scenario D: retry allocates a valid (re-creatable) temp path",
                       !capturedTempPath.isEmpty());
                 check("scenario D: retry re-dispatches against the SOURCE fake (not stuck trying to re-upload)",
@@ -373,6 +412,76 @@ int main(int argc, char *argv[])
             break;
         case Stage::D_WaitDone:
             if (item.status == TransferStatus::Done) {
+                check("scenario D: after retry, the item still completes normally end to end",
+                      item.status == TransferStatus::Done);
+                stage = Stage::E_WaitDownloadStarted;
+                manager->enqueue(sourcePane, destPane, "fakefile.bin");
+            }
+            break;
+
+        // ---------- Scenario E: pause + resume during BOTH phases — the
+        // specific path a code review found untested, contradicting a
+        // stale comment that claimed RemoteToRemote pause/resume needed
+        // more work first (see FakeRemoteBackend::requestPause()'s own
+        // comment). Confirms phase/tempFilePath/bytesDone all correctly
+        // survive a pause/resume cycle with no RemoteToRemote-specific
+        // handling, in both the download and the upload half. ----------
+        case Stage::E_WaitDownloadStarted:
+            if (realProgressTick && item.phase == TransferPhase::Downloading) {
+                pausedTempPathE = capturedTempPath;
+                stage = Stage::E_WaitPausedPhase1;   // set BEFORE pauseItem() — same discipline as B/C's cancelItem() calls
+                manager->pauseItem(currentItemId);
+            }
+            break;
+        case Stage::E_WaitPausedPhase1:
+            if (item.status == TransferStatus::Paused) {
+                check("scenario E: paused while still in phase 1 (Downloading)",
+                      item.phase == TransferPhase::Downloading);
+                check("scenario E: paused with a real nonzero bytesDone", item.bytesDone > 0);
+                check("scenario E: the temp file survives the pause (not cleaned up)",
+                      QFile::exists(capturedTempPath));
+                pausedBytesDoneE1 = item.bytesDone;
+                stage = Stage::E_WaitResumedPhase1;   // set BEFORE resumeItem() — it synchronously emits itemUpdated(Queued) before its own async re-dispatch, same reentrancy shape as scenario D's retryItem()
+                manager->resumeItem(currentItemId);
+            }
+            break;
+        case Stage::E_WaitResumedPhase1:
+            if (realProgressTick && item.phase == TransferPhase::Downloading) {
+                check("scenario E: resume continues phase 1 from the paused offset, not from zero",
+                      item.bytesDone >= pausedBytesDoneE1);
+                check("scenario E: resume reuses the SAME temp file (not a freshly allocated one)",
+                      capturedTempPath == pausedTempPathE);
+                stage = Stage::E_WaitUploadStarted;
+            }
+            break;
+        case Stage::E_WaitUploadStarted:
+            if (realProgressTick && item.phase == TransferPhase::Uploading) {
+                check("scenario E: phase 1 -> phase 2 transition still works after a phase-1 pause/resume",
+                      item.phase == TransferPhase::Uploading);
+                stage = Stage::E_WaitPausedPhase2;
+                manager->pauseItem(currentItemId);
+            }
+            break;
+        case Stage::E_WaitPausedPhase2:
+            if (item.status == TransferStatus::Paused) {
+                check("scenario E: paused while in phase 2 (Uploading)", item.phase == TransferPhase::Uploading);
+                check("scenario E: paused with a real nonzero bytesDone (phase 2)", item.bytesDone > 0);
+                pausedBytesDoneE2 = item.bytesDone;
+                stage = Stage::E_WaitResumedPhase2;
+                manager->resumeItem(currentItemId);
+            }
+            break;
+        case Stage::E_WaitResumedPhase2:
+            if (realProgressTick && item.phase == TransferPhase::Uploading) {
+                check("scenario E: resume continues phase 2 from the paused offset, not from zero",
+                      item.bytesDone >= pausedBytesDoneE2);
+                stage = Stage::E_WaitDone;
+            }
+            break;
+        case Stage::E_WaitDone:
+            if (item.status == TransferStatus::Done) {
+                check("scenario E: after pausing/resuming BOTH phases, the item still completes normally end to end",
+                      item.status == TransferStatus::Done);
                 stage = Stage::AllDone;
                 qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
                 app.exit(allPass ? 0 : 1);

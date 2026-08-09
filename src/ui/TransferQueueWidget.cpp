@@ -100,7 +100,17 @@ QString TransferQueueWidget::statusText(const TransferItem &item)
                 ? tr("Uploading (2/2)") : tr("Downloading (1/2)");
         }
         return tr("Transferring");
-    case TransferStatus::Paused:      return tr("Paused");
+    case TransferStatus::Paused:
+        // Same phase-aware suffix as InProgress above, and for the same
+        // reason — a RemoteToRemote item paused mid-upload still shows
+        // bytesDone/bytesTotal from that (reset-to-0) phase, so "Paused"
+        // alone would read as "paused right at the very start" even when
+        // it's actually well into the upload half.
+        if (item.direction == TransferDirection::RemoteToRemote) {
+            return item.phase == TransferPhase::Uploading
+                ? tr("Paused - Uploading (2/2)") : tr("Paused - Downloading (1/2)");
+        }
+        return tr("Paused");
     case TransferStatus::Done:        return tr("Done");
     case TransferStatus::Failed:      return item.errorMessage.isEmpty()
                                               ? tr("Failed")
@@ -303,8 +313,17 @@ void TransferQueueWidget::onItemUpdated(const TransferItem &item)
     case TransferStatus::Cancelled: chunkColor = IconTheme::GrayMuted; break;
     case TransferStatus::Paused:    chunkColor = IconTheme::Amber; break;
     case TransferStatus::InProgress:
-        chunkColor = (item.direction == TransferDirection::RemoteToLocal)
-            ? IconTheme::Blue : IconTheme::Green;
+        // RemoteToRemote is phase-aware here too, matching statusIcon()'s
+        // own Blue-while-downloading/Green-while-uploading — this used to
+        // fall into the plain `: Green` default below and stay green for
+        // the entire transfer, visibly contradicting the row's own icon
+        // and "Downloading (1/2)"/"Uploading (2/2)" status text during
+        // the first half.
+        if (item.direction == TransferDirection::RemoteToRemote)
+            chunkColor = item.phase == TransferPhase::Uploading ? IconTheme::Green : IconTheme::Blue;
+        else
+            chunkColor = (item.direction == TransferDirection::RemoteToLocal)
+                ? IconTheme::Blue : IconTheme::Green;
         break;
     case TransferStatus::Queued:
         chunkColor = IconTheme::Gray;
@@ -351,15 +370,19 @@ void TransferQueueWidget::showContextMenu(const QPoint &pos)
     // no-op (QFile::copy() is atomic, there's no partial progress to
     // preserve), so offering Pause for a local-to-local transfer would
     // show an action that silently does nothing. Rather than that, it's
-    // just not offered. RemoteToRemote is deliberately excluded here too,
-    // for a different reason: cancel-only for v1 — resuming a staged
-    // two-phase transfer would need to preserve which phase was active,
-    // the resume offset within it, AND the temp file itself across the
-    // pause, meaningfully more than this pass attempts. Not an oversight;
-    // don't "fix" this into pause-capable without adding that support
-    // first (see ARCHITECTURE.md's TransferManager entry).
-    const bool pauseCapableDirection =
-        direction == TransferDirection::LocalToRemote || direction == TransferDirection::RemoteToLocal;
+    // just not offered.
+    // RemoteToRemote is now pause-capable too — it used to be excluded on
+    // the theory that resuming a staged two-phase transfer would need
+    // extra work to preserve phase/tempFilePath/the resume offset across
+    // the pause. Code review found that reasoning had never actually been
+    // verified: TransferManager's pauseItem()/resumeItem() are already
+    // direction-agnostic and don't reset any of those three, so nothing
+    // extra was ever needed — it just hadn't been tested. Now covered by
+    // remote-to-remote-test's scenario E (pause + resume during BOTH
+    // phases, confirming the resume offset, temp file, and phase all
+    // survive correctly, in both the download and upload half).
+    const bool pauseCapableDirection = direction == TransferDirection::LocalToRemote
+        || direction == TransferDirection::RemoteToLocal || direction == TransferDirection::RemoteToRemote;
 
     // A Move item is never TransferManager's "active item" (see
     // TransferManager::moveEntry()'s doc comment) — it's dispatched

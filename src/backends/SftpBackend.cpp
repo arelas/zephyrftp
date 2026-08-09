@@ -631,6 +631,30 @@ void SftpBackend::downloadFile(const QString &remotePath, const QString &localPa
         char buf[480000];
 
         for (;;) {
+            // Checked at the TOP of every iteration, not after a
+            // successful read — matches FtpBackend::downloadFile()'s own
+            // loop, which already does this. The previous ordering here
+            // (check only after n > 0) had a real, narrow race: a cancel
+            // requested in the exact window before the read that happens
+            // to land on EOF (n == 0) would break out straight to
+            // "finished" below without either flag ever being consulted,
+            // silently losing the cancel. That used to be low-stakes for
+            // a single-phase download (the transfer just finished
+            // instead of cancelling, moments before it would have
+            // anyway) — it's worse now that
+            // TransferManager::onBackendFinished() reacts to a
+            // RemoteToRemote item's phase-1 "finished" by immediately
+            // starting phase 2's upload, so a lost cancel here also
+            // means an entire unwanted upload phase runs.
+            if (m_cancelRequested.loadRelaxed()) {
+                cancelled = true;
+                break;
+            }
+            if (m_pauseRequested.loadRelaxed()) {
+                paused = true;
+                break;
+            }
+
             n = libssh2_sftp_read(handle, buf, sizeof(buf));
 
             if (n == LIBSSH2_ERROR_EAGAIN) {
@@ -643,15 +667,6 @@ void SftpBackend::downloadFile(const QString &remotePath, const QString &localPa
             out.write(buf, n);
             done += n;
             emit transferProgress(remotePath, done, totalSize);
-
-            if (m_cancelRequested.loadRelaxed()) {
-                cancelled = true;
-                break;
-            }
-            if (m_pauseRequested.loadRelaxed()) {
-                paused = true;
-                break;
-            }
         }
     }   // ScopedNonBlocking's destructor restores blocking mode here, before sftp_close below
 
@@ -733,6 +748,20 @@ void SftpBackend::uploadFile(const QString &localPath, const QString &remotePath
         char buf[480000];
 
         while (!in.atEnd()) {
+            // Same reordering, same reasoning, as downloadFile()'s own
+            // loop above — checked at the top of every iteration rather
+            // than only after a successful read, so a cancel/pause
+            // requested right as the local file reaches EOF can't be
+            // silently lost.
+            if (m_cancelRequested.loadRelaxed()) {
+                cancelled = true;
+                break;
+            }
+            if (m_pauseRequested.loadRelaxed()) {
+                paused = true;
+                break;
+            }
+
             qint64 n = in.read(buf, sizeof(buf));
             if (n <= 0)
                 break;
@@ -753,15 +782,6 @@ void SftpBackend::uploadFile(const QString &localPath, const QString &remotePath
             }
             done += n;
             emit transferProgress(localPath, done, totalSize);
-
-            if (m_cancelRequested.loadRelaxed()) {
-                cancelled = true;
-                break;
-            }
-            if (m_pauseRequested.loadRelaxed()) {
-                paused = true;
-                break;
-            }
         }
     }   // ScopedNonBlocking's destructor restores blocking mode here, before sftp_close below
 

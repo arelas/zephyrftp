@@ -209,16 +209,11 @@ rather than being half-implemented:
   choose to write into an existing folder for a Move, it fails with a
   clear explanation instead. Move a folder to a new name, or use the
   ordinary Transfer/drag copy if you need a real merge.
-- **Pause only works for transfers involving a server, and not for
-  server-to-server transfers either.** You can pause an upload or
-  download directly to/from a server and pick it back up later, but a
-  purely local copy (between two folders on your own computer) can only
-  be cancelled and retried, not paused, since there's nothing meaningful
-  to interrupt mid-copy on a local transfer — and a server-to-server
-  transfer is cancel-only for a different reason: resuming it correctly
-  would mean preserving which half (download or upload) was active, the
-  resume offset within it, and the temporary file itself across the
-  pause, which isn't implemented yet.
+- **Pause only works for transfers involving a server.** You can pause an
+  upload, a download, or a server-to-server transfer (either half) and
+  pick it back up later. A purely local copy (between two folders on your
+  own computer) can only be cancelled and retried, not paused, since
+  there's nothing meaningful to interrupt mid-copy on a local transfer.
 
 ## For developers and tinkerers
 

@@ -1146,37 +1146,91 @@ to drive FileZilla itself for a same-desktop comparison.
   *before* its normal "mark Done" logic, and if that's what just finished,
   resets `bytesDone`/`bytesTotal` to 0 (a fresh 0-100% for the upload half,
   not a continuation of the download half's numbers — `TransferQueueWidget`
-  reflects this with "Downloading (1/2)"/"Uploading (2/2)" status text so
-  the reset doesn't read as a bug), calls `connectToBackend()` a **second
-  time** for the same active item to re-point `m_currentBackend` at the
-  destination, and re-enters `dispatchActiveItem()` directly rather than
-  going through `startNext()`/a fresh conflict check (already done once
-  for this item). This second `connectToBackend()` call is also *why*
-  `cancelItem()` needs no special-casing for this direction — it already
-  only ever acts through whatever `m_currentBackend` currently is, and
-  that's kept correctly re-pointed across the phase boundary.
+  reflects this with "Downloading (1/2)"/"Uploading (2/2)" status text, and
+  a phase-aware progress-bar chunk color (Blue/Green, matching the status
+  icon), so the reset doesn't read as a bug), then re-enters
+  `dispatchActiveItem()` directly rather than going through `startNext()`/a
+  fresh conflict check (already done once for this item).
+  **The destination backend for phase 2 is captured once, at phase 1's own
+  first dispatch (`TransferItem::capturedDestBackend`, a `QPointer`), NOT
+  re-fetched from `item.destPane->backend()` at phase-2 dispatch time —
+  fixed after a code review found the live re-fetch as a real bug.**
+  Before this fix, both `onBackendFinished()`'s `connectToBackend()` call
+  and `dispatchActiveItem()`'s own `dstBackend` lookup read
+  `item.destPane->backend()` fresh every time — harmless when nothing
+  about a pane's connection can change mid-transfer, but "either pane can
+  connect independently" (this same feature) made that untrue: swapping
+  the destination pane's backend (via its own path-bar Connect/Disconnect
+  menu) while phase 1 was still downloading would silently redirect the
+  eventual upload to whatever backend happened to be attached once phase 2
+  started — e.g. a swap to `LocalBackend` would write the file to the
+  *original remote absolute path* taken literally as a local path. Now:
+  if the captured backend has gone null (the pane's old backend was
+  torn down), `dispatchActiveItem()`'s existing "no backend to execute
+  this transfer" fallback catches it, with a specific, honest message
+  for this exact case rather than a generic internal-error string, and
+  `cleanupTempFile()` still runs so the already-downloaded temp file
+  doesn't leak. This also incidentally fixed the same live-re-fetch risk
+  for **resuming** a `Paused` upload-phase item, which goes through this
+  same `dispatchActiveItem()` path.
   `cleanupTempFile()` deletes the staging file (a no-op for every other
   direction) from three call sites: `onBackendFinished()`'s success path
-  (only after the *upload* half completes), and `onBackendFailed()`
-  (covers a phase-1 failure, a phase-2 failure — including the
-  already-downloaded temp file — and cancellation during either phase,
-  since cancellation surfaces through this same path). `retryItem()`
-  additionally resets `phase` back to `Downloading` and clears
-  `tempFilePath` for this direction specifically — without that, retrying
-  an item that failed during the upload half would stay at
-  `phase == Uploading` and try to re-upload a temp file `cleanupTempFile()`
-  already deleted, instead of correctly restarting from the download half.
-  **Cancel-only for v1** — `TransferQueueWidget`'s `pauseCapableDirection`
-  deliberately excludes `RemoteToRemote`; supporting pause would mean
-  preserving which phase was active, the resume offset within it, and the
-  temp file itself across the pause, which this pass doesn't attempt (see
-  Known gaps). Verified by `remote-to-remote-test`
-  (`src/remote_to_remote_test.cpp`) against two independent fake backends —
-  direction/phase assignment, the phase transition and `m_currentBackend`
-  re-pointing, temp-file cleanup on success and on cancellation during
-  either phase, and the `retryItem()` phase-reset all covered — plus a
-  manual run against two real local SFTP servers (see Known gaps for
-  exactly what that did and didn't confirm).
+  (only after the *upload* half completes), `onBackendFailed()` (covers a
+  phase-1 failure, a phase-2 failure — including the already-downloaded
+  temp file — and cancellation during either phase, since cancellation
+  surfaces through this same path), and the capturedDestBackend-null
+  failure path above. `retryItem()` additionally resets `phase` back to
+  `Downloading` and clears `tempFilePath` for this direction specifically
+  — without that, retrying an item that failed during the upload half
+  would stay at `phase == Uploading` and try to re-upload a temp file
+  `cleanupTempFile()` already deleted, instead of correctly restarting
+  from the download half.
+  **Pause/resume now work for this direction too, in both phases** — a
+  capability gap closed the same day it was found. `TransferQueueWidget`'s
+  `pauseCapableDirection` used to exclude `RemoteToRemote`; an earlier
+  version of that exclusion's own comment claimed resuming would need to
+  preserve which phase was active, the resume offset, and the temp file
+  across the pause. Code review found that reasoning had never actually
+  been verified: neither `pauseItem()` nor `resumeItem()` touches `phase`
+  or `tempFilePath` at all, and `resumeItem()` already deliberately
+  preserves `bytesDone` (the resume offset) the same way it does for every
+  other direction, so all three already survived a pause/resume cycle with
+  zero `RemoteToRemote`-specific handling needed — including correctly
+  resuming against the captured destination backend for the upload-phase
+  case. The only real gap was test coverage, not model-layer behavior —
+  closed by `remote-to-remote-test`'s scenario E (pausing and resuming
+  during BOTH phases, confirming the resume offset, the same temp file,
+  and the phase all survive correctly in each half), after which
+  `pauseCapableDirection` was updated to include `RemoteToRemote`.
+  `statusText()`/the progress-bar chunk color are phase-aware for a
+  `Paused` `RemoteToRemote` item too now, matching the existing
+  `InProgress` treatment — "Paused - Downloading (1/2)"/"Paused -
+  Uploading (2/2)", not just "Paused" with no indication of which half.
+  **Known, accepted gap, not attempted here:** the destination conflict
+  check (`checkExists()`) only ever runs once, before phase 1 begins —
+  phase 2's upload is never re-checked. A file created at the destination
+  during a long-running phase-1 download would be silently overwritten by
+  phase 2 instead of triggering the usual Overwrite/Skip prompt. Re-adding
+  a second conflict check mid-flight would mean handling a live
+  `askConflict()` dialog appearing partway through an already-InProgress
+  item, real added complexity for a narrow TOCTOU window; not attempted
+  here.
+  Verified by `remote-to-remote-test` (`src/remote_to_remote_test.cpp`)
+  against two independent fake backends — direction/phase assignment, the
+  phase transition, temp-file cleanup on success and on cancellation
+  during either phase, the `retryItem()` phase-reset, and (scenario E)
+  pause/resume during either phase, all covered, each with its own
+  individually-named assertion (31 total — 21 restored/confirmed by one
+  code review pass after the event-driven rewrite that fixed this test's
+  real CI flakiness had collapsed several explicit, immediately-diagnostic
+  assertions into implicit stage-transition gates backed only by a single
+  generic 20-second timeout [reverting that specific trade cost nothing in
+  robustness, since every restored `check()` just re-states a condition
+  the surrounding `if` already required true, purely for diagnostic
+  completeness in a PASS/FAIL log], plus 10 new ones for scenario E from a
+  follow-up pass) — plus a manual run against two real local SFTP servers,
+  and (since closed for good) `verify-remote-to-remote-live` (see Known
+  gaps for exactly what each did and didn't confirm).
   `cancelItem()`/`retryItem()` (right-click in
   `TransferQueueWidget`) round out the queue: cancelling a not-yet-started
   item just marks it `Cancelled` directly; cancelling the active one calls
@@ -2273,6 +2327,25 @@ along the way — worth knowing about if it ever needs touching again.
   pause/resume surviving a full app restart (the resume offset is only
   ever kept in memory between pause and resume within a single run, in
   both the real app and this harness).
+  **A real bug found by code review in exactly that flagged-as-uncovered
+  race, fixed, not yet independently re-verified against a live server.**
+  `SftpBackend::downloadFile()`'s/`uploadFile()`'s read/write loops only
+  checked `m_cancelRequested`/`m_pauseRequested` AFTER a successful chunk
+  transfer, not on the loop's EOF-triggered `break` — so a cancel/pause
+  requested in the exact narrow window right as the transfer legitimately
+  finishes could be silently lost, with `transferFinished` firing instead
+  of `transferFailed("Cancelled")`/`transferPaused`. Low-stakes for a
+  single-phase transfer on its own (it just finished a moment before it
+  would have anyway) but worse now that a `RemoteToRemote` item's
+  `onBackendFinished()` reacts to phase-1 "finished" by immediately
+  starting phase 2's upload — a lost cancel there means an entire unwanted
+  upload phase runs too. Fixed by moving both checks to the top of each
+  loop iteration, matching `FtpBackend`'s own equivalent loops, which
+  already did this correctly (discovered while fixing `SftpBackend`'s
+  version — a real, useful asymmetry to have noticed). Compiles and
+  matches the established pattern; this specific narrow-window race
+  hasn't been re-exercised against a real server the way the broader
+  mid-transfer cancel/pause claims above have been.
 - **The remaining ~1.6-1.8x gap to the ~40MB/s comparison
   (FileZilla/Termius/SMB) is now confirmed closed against a real,
   non-loopback server, not just unverified.** Three rounds of

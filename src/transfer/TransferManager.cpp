@@ -17,6 +17,21 @@ QString joinPath(const QString &dir, const QString &name)
 {
     return dir.endsWith('/') ? dir + name : dir + '/' + name;
 }
+
+// Shared by the constructor's startup sweep and allocateTempFilePath()
+// below — previously duplicated verbatim in both places, a real risk if
+// this ever needs to change (easy to update one call site and miss the
+// other, silently breaking either the cleanup sweep or the staging path
+// itself). NOT per-instance or lock-guarded: two app instances running
+// at once would both sweep and allocate into this same directory, and
+// the second instance's startup sweep would delete the first instance's
+// in-flight staging files out from under it. A documented, accepted gap
+// — this app has no other multi-instance support either (e.g. sites.json
+// writes aren't coordinated across instances) — not attempted here.
+QString stagingDirPath()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::TempLocation) + QStringLiteral("/zephyrftp-staging");
+}
 }
 
 TransferManager::TransferManager(QObject *parent)
@@ -33,10 +48,13 @@ TransferManager::TransferManager(QObject *parent)
     // instance hasn't allocated anything into it yet. Does NOT address a
     // leak within the SAME run (closing mid-transfer still loses that run's
     // temp file until the next launch) — a documented, accepted gap, not
-    // attempted here; see ARCHITECTURE.md's Known Gaps.
-    const QString stagingDir =
-        QStandardPaths::writableLocation(QStandardPaths::TempLocation) + QStringLiteral("/zephyrftp-staging");
-    QDir(stagingDir).removeRecursively();
+    // attempted here; see ARCHITECTURE.md's Known Gaps. Synchronous, on
+    // the GUI thread, before the main window ever paints — fine in the
+    // common case (an empty or small leftover directory), but a genuinely
+    // large leftover (e.g. a crash mid-transfer of a huge file) would
+    // stall startup for as long as the delete takes; not addressed here
+    // either, see ARCHITECTURE.md's Known Gaps.
+    QDir(stagingDirPath()).removeRecursively();
 }
 
 void TransferManager::enqueue(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
@@ -344,15 +362,24 @@ void TransferManager::dispatchActiveItem()
         // phase transition. Downloading: source -> temp. Uploading:
         // temp -> destination (dispatched again from onBackendFinished()
         // once phase 1 completes, not from here a second time).
-        if (item.tempFilePath.isEmpty())
+        if (item.tempFilePath.isEmpty()) {
             item.tempFilePath = allocateTempFilePath(item);
+            // Captured once, here, at phase 1's own first dispatch — NOT
+            // re-fetched from item.destPane->backend() at phase 2's
+            // dispatch below. See TransferItem::capturedDestBackend's own
+            // doc comment for why: a live re-fetch would silently
+            // redirect an already-running upload if the destination
+            // pane's backend is swapped while phase 1 is still
+            // downloading.
+            item.capturedDestBackend = dstBackend;
+        }
         if (item.phase == TransferPhase::Downloading) {
             executor = srcBackend;
             methodName = "downloadFile";
             argA = item.sourcePath;
             argB = item.tempFilePath;
         } else {   // Uploading
-            executor = dstBackend;
+            executor = item.capturedDestBackend;
             methodName = "uploadFile";
             argA = item.tempFilePath;
             argB = item.destPath;
@@ -368,7 +395,18 @@ void TransferManager::dispatchActiveItem()
 
     if (!executor) {
         item.status = TransferStatus::Failed;
-        item.errorMessage = tr("Internal error: no backend to execute this transfer");
+        // A specific, honest message for the one case this is actually
+        // expected to happen in practice: item.capturedDestBackend went
+        // null because the destination pane's connection changed while
+        // phase 1 was still downloading (see TransferItem's own doc
+        // comment) — everything else reaching here would be a genuine
+        // internal bug.
+        item.errorMessage = (item.direction == TransferDirection::RemoteToRemote
+                              && item.phase == TransferPhase::Uploading)
+            ? tr("The destination pane's connection changed while this transfer was staging — "
+                 "cancelled rather than uploading to the wrong place.")
+            : tr("Internal error: no backend to execute this transfer");
+        cleanupTempFile(item);   // no-op unless phase 1 already downloaded to a temp file (the RemoteToRemote case above)
         emit itemUpdated(item);
         m_activeIndex = -1;
         startNext();   // try the next queued item instead of getting stuck
@@ -391,8 +429,7 @@ QString TransferManager::allocateTempFilePath(const TransferItem &item) const
     // into the OS temp dir — keeps this app's own staging files visually
     // grouped (useful for debugging a stuck/crashed transfer) and easy to
     // sweep as a unit. Disposable: nothing here needs to survive a restart.
-    const QString stagingDir =
-        QStandardPaths::writableLocation(QStandardPaths::TempLocation) + QStringLiteral("/zephyrftp-staging");
+    const QString stagingDir = stagingDirPath();
     QDir().mkpath(stagingDir);
 
     // The item's own unique id prevents any collision between concurrently-
@@ -799,7 +836,15 @@ void TransferManager::onBackendFinished(const QString &fileName)
         item.speedBytesPerSec = 0;
         emit itemUpdated(item);   // lets the UI show "Uploading" before phase 2's first progress tick
 
-        connectToBackend(item.destPane->backend());
+        // item.capturedDestBackend, NOT item.destPane->backend() —
+        // see TransferItem's own doc comment on why. If it's gone null
+        // (the destination pane's backend was swapped mid-download),
+        // skip connecting to anything: dispatchActiveItem()'s own
+        // executor-null check below reports it as a clear failure
+        // instead of connecting signals to a backend that's about to be
+        // silently wrong.
+        if (item.capturedDestBackend)
+            connectToBackend(item.capturedDestBackend);
         dispatchActiveItem();
         return;
     }

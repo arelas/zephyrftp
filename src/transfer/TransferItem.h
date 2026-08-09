@@ -1,8 +1,10 @@
 #pragma once
 
 #include <QString>
+#include <QPointer>
 
 class FilePaneWidget;
+class RemoteBackend;
 
 enum class TransferDirection {
     LocalToRemote,
@@ -94,6 +96,21 @@ struct TransferItem {
     // direction.
     TransferPhase phase = TransferPhase::None;
     QString tempFilePath;
+
+    // Only meaningful for direction == RemoteToRemote — captured ONCE, at
+    // phase 1's own first dispatch (same moment tempFilePath is
+    // allocated), and used as-is for phase 2's upload rather than
+    // re-fetching destPane->backend() live at that later point. A
+    // QPointer, not a raw pointer, specifically so a pane's backend being
+    // swapped (Connect/Disconnect via that pane's own path-bar menu, or
+    // the toolbar) mid-transfer is something this can detect (the
+    // pointer goes null) rather than something that silently redirects
+    // an already-running upload to whichever backend happens to be
+    // attached by the time phase 2 starts — a real gap only possible
+    // once either pane could connect independently mid-session. See
+    // TransferManager::dispatchActiveItem()'s RemoteToRemote case and
+    // onBackendFinished()'s phase transition.
+    QPointer<RemoteBackend> capturedDestBackend;
 
     FilePaneWidget *sourcePane = nullptr;
     FilePaneWidget *destPane = nullptr;
