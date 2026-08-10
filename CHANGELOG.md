@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.6.12] — Fix four real issues found by code review of ConnectionDialog
+
 ### Fixed
 
 - **Typing a port that happened to match FTP/FTPS's default (21) while
@@ -1171,7 +1173,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.11...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.12...HEAD
+[0.6.12]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.12
 [0.6.11]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.11
 [0.6.10]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.10
 [0.6.9]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.9
