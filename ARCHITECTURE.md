@@ -687,6 +687,26 @@ to drive FileZilla itself for a same-desktop comparison.
      Windows NTFS symlinks/junctions are still correctly detected by
      Qt's `isSymLink()` there, only `QFile::link()`'s own simulation
      technique doesn't produce one.
+  **`file-operations-test` itself had a flaky-timing bug, unrelated to
+  any of the three fixes above, that only surfaced under real CI load:**
+  three of its check phases (the rename-conflict-rejection check, the
+  download-rollback check, and the move-rollback check) each assumed a
+  flat 200ms window was always enough time for a `Qt::QueuedConnection`
+  dispatch plus real disk I/O to complete before reading the result —
+  the same class of assumption this project's own `navigation-test`
+  header comment already flags as unsafe under real load. Confirmed via
+  wall-clock timing analysis that this — not the ConnectionDialog change
+  actually being released at the time — was the true cause of a real
+  `build-linux-rpm` CI failure blocking v0.6.12: local podman-container
+  reproduction of the exact same `fedora:44` image passed cleanly, but
+  20-plus-iteration local stress testing (`for i in $(seq 1 20); do rm
+  -rf /tmp/file_ops_test; ./file-operations-test; done`) reproduced
+  intermittent failures on these same three phases. Fixed by replacing
+  the fixed delay with a polling `waitUntil()` helper (matching
+  `navigation-test`'s and `move_entry_test`'s own established pattern)
+  that waits on the actual signal-driven state change instead of a
+  guessed wall-clock window; confirmed with 30/30 clean stress-test runs
+  afterward.
 - `SftpBackend` — wraps libssh2's synchronous API directly. Runs on a
   dedicated `QThread`, confirmed by the smoke test above. Its four
   operations (`connectToHost`, `listDirectory`, `downloadFile`,

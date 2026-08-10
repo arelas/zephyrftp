@@ -8,6 +8,19 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Changed (developer-facing only, no shipped behavior)
+
+- **`file-operations-test` had a flaky-timing bug that surfaced as a real
+  `build-linux-rpm` CI failure blocking the v0.6.12 release**, unrelated
+  to that release's actual code changes. Three check phases (the
+  rename-conflict-rejection, download-rollback, and move-rollback
+  checks) each assumed a flat 200ms window was always enough time for a
+  queued backend dispatch plus real disk I/O to finish before reading
+  the result. Fixed by polling for the actual signal-driven state change
+  instead, matching `navigation-test`'s and `move_entry_test`'s own
+  established pattern; confirmed with 30/30 clean stress-test runs
+  afterward.
+
 ## [0.6.12] — Fix four real issues found by code review of ConnectionDialog
 
 ### Fixed

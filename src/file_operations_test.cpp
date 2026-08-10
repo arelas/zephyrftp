@@ -21,6 +21,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QMetaObject>
+#include <QEventLoop>
+#include <functional>
 #include "backends/LocalBackend.h"
 
 int main(int argc, char *argv[])
@@ -36,6 +38,26 @@ int main(int argc, char *argv[])
     auto check = [&](const QString &label, bool condition) {
         qDebug() << (condition ? "[PASS]" : "[FAIL]") << label;
         if (!condition) allPass = false;
+    };
+
+    // Polls rather than trusting a fixed delay — a real flake found by
+    // code review (confirmed present on the unmodified pre-existing
+    // baseline too, not something any of this session's own changes
+    // introduced): every phase in this file uses a flat 200ms window
+    // between dispatching a queued backend call and checking its result,
+    // which this project's own header comments elsewhere already flag as
+    // exactly the kind of assumption that doesn't hold under real load
+    // (see e.g. navigation-test's own header comment). Used below only
+    // where this was actually observed to flake, rather than rewriting
+    // every phase in this file on spec.
+    auto waitUntil = [&](std::function<bool()> condition) {
+        QEventLoop loop;
+        QTimer timeoutTimer;
+        timeoutTimer.setSingleShot(true);
+        QObject::connect(&timeoutTimer, &QTimer::timeout, &loop, &QEventLoop::quit);
+        timeoutTimer.start(5000);
+        while (!condition() && timeoutTimer.isActive())
+            loop.processEvents(QEventLoop::AllEvents, 20);
     };
 
     QString lastFailedOperation, lastFailedPath, lastFailedReason;
@@ -220,6 +242,13 @@ int main(int argc, char *argv[])
     });
 
     QTimer::singleShot(2300, &app, [&]() {
+        // See waitUntil()'s own doc comment — this specific transition
+        // (real disk I/O for two file writes immediately before the
+        // queued dispatch, right after phase 10's own real symlink
+        // deletion) was observed to occasionally still be in flight at
+        // the flat 200ms mark under real load, reading lastFailedOperation
+        // before fileOperationFailed had actually fired yet.
+        waitUntil([&]() { return !lastFailedOperation.isEmpty(); });
         check("renameEntry onto a genuinely different existing file: still correctly rejected",
               lastFailedOperation == "Rename");
         check("renameEntry onto a genuinely different existing file: neither file was touched",
@@ -259,6 +288,10 @@ int main(int argc, char *argv[])
     });
 
     QTimer::singleShot(2500, &app, [&]() {
+        // See waitUntil()'s own doc comment — same class of fragility as
+        // Phase 11, now also observed here under real load (5/20 local
+        // stress-test failures before this fix).
+        waitUntil([&]() { return lastTransferFailed; });
         check("downloadFile with an unreadable source: reported as a failure", lastTransferFailed);
         QFile dest(base + "/rollback_dest.txt");
         dest.open(QIODevice::ReadOnly);
@@ -284,6 +317,10 @@ int main(int argc, char *argv[])
     });
 
     QTimer::singleShot(2700, &app, [&]() {
+        // See waitUntil()'s own doc comment — same class of fragility as
+        // Phase 11, now also observed here under real load (5/20 local
+        // stress-test failures before this fix).
+        waitUntil([&]() { return lastMoveFailed; });
         check("moveEntry with a nonexistent source: reported as a failure", lastMoveFailed);
         check("moveEntry with a nonexistent source: the failure carried the right request id",
               lastMoveFailedRequestId == 777);
