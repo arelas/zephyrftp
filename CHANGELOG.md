@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.6.9] — Fix nine real bugs found by a dedicated code review of FilePaneWidget
+
 ### Fixed
 
 - **A background operation's own directory refresh (delete/rename/new
@@ -1137,7 +1139,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.8...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.9...HEAD
+[0.6.9]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.9
 [0.6.8]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.8
 [0.6.7]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.7
 [0.6.6]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.6
