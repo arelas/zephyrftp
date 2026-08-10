@@ -213,23 +213,30 @@ int main(int argc, char *argv[])
         // a real bug: the old code deleted any existing destination
         // FIRST, then attempted the copy — if the copy then failed, the
         // original content was already gone, permanently. Forces a real,
-        // deterministic copy failure (source made unreadable via chmod)
-        // against a real pre-existing destination file. ---
-        QFile::setPermissions(base + "/rollback_src.txt",   // in case a previous interrupted run left this chmod'd
-                               QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+        // deterministic copy failure against a real pre-existing
+        // destination file.
+        //
+        // The source is a DIRECTORY, not a chmod-000 regular file — a
+        // real bug in this test itself, caught by CI: chmod 000 only
+        // blocks reads for a non-root user, and this project's own
+        // container-based CI jobs (build-linux-appimage, build-linux-rpm,
+        // build-windows) run their test suite as root inside a Docker
+        // container, where root bypasses Unix permission bits entirely
+        // and the "unreadable" file was actually still readable —
+        // confirmed empirically inside a real `fedora:44` container:
+        // QFile::copy() on a chmod-000 file succeeds as root but still
+        // correctly fails (QFile refuses to open a directory as a
+        // regular file) regardless of privilege, verified both as a
+        // normal user and as root the same way. ---
+        QDir().mkpath(base + "/rollback_src_dir");
         QFile dest(base + "/rollback_dest.txt");
         dest.open(QIODevice::WriteOnly);
         dest.write("original destination content — must survive a failed copy");
         dest.close();
-        QFile src(base + "/rollback_src.txt");
-        src.open(QIODevice::WriteOnly);
-        src.write("new content that will never actually arrive");
-        src.close();
-        QFile::setPermissions(base + "/rollback_src.txt", QFileDevice::Permissions());   // chmod 000: genuinely unreadable
 
         lastTransferFailed = false;
         QMetaObject::invokeMethod(backend, "downloadFile", Qt::QueuedConnection,
-                                   Q_ARG(QString, base + "/rollback_src.txt"),
+                                   Q_ARG(QString, base + "/rollback_src_dir"),
                                    Q_ARG(QString, base + "/rollback_dest.txt"),
                                    Q_ARG(qint64, 0));
     });
@@ -241,8 +248,6 @@ int main(int argc, char *argv[])
         check("downloadFile with an unreadable source: the ORIGINAL destination content survived "
               "(not deleted before the copy was known to succeed)",
               dest.readAll() == "original destination content — must survive a failed copy");
-        QFile::setPermissions(base + "/rollback_src.txt",   // restore, so a re-run of this test can clean up normally
-                               QFileDevice::ReadOwner | QFileDevice::WriteOwner);
 
         // --- Phase 13: same bug, same fix, for moveEntry() — a failed
         // move must roll back an overwritten destination too. oldPath

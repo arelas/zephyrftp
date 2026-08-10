@@ -617,9 +617,27 @@ to drive FileZilla itself for a same-desktop comparison.
      same-filesystem rename, not a delete) instead, and every failure
      path rolls it back into place — confirmed directly with a
      regression scenario that forces a real, deterministic copy/move
-     failure (the source made genuinely unreadable via `chmod`, or made
-     to simply not exist) against a real pre-existing destination, and
-     checks the original content survived intact.
+     failure (the source made to simply not exist, or — for the copy
+     case — the source itself made to be a directory, so
+     `QFile::copy()` refuses to open it) against a real pre-existing
+     destination, and checks the original content survived intact.
+     **The copy-failure scenario originally simulated "unreadable" via
+     `chmod 000` on a regular file — a bug in the test itself, caught by
+     this project's own container-based CI jobs
+     (`build-linux-appimage`/`build-linux-rpm`/`build-windows`, all of
+     which run their test suite as root inside a Docker container):
+     root bypasses Unix permission bits entirely, so the "unreadable"
+     source was actually still readable there, and the regression
+     silently stopped testing anything on exactly the CI jobs meant to
+     catch a real regression — while passing everywhere non-root**,
+     including this project's own local dev sandbox and the bare
+     (non-container) `build-linux` CI job, which is why it went
+     unnoticed until a real release run failed. Confirmed with the same
+     `git stash`-based before/after methodology used throughout this
+     project, run inside a real `fedora:44` container as `root` (via
+     `podman`) to match CI exactly: the `chmod 000` version reproducibly
+     failed as root, the directory-as-source version reproducibly
+     passed as both root and a normal user.
   2. **`renameEntry()` used a plain `QFileInfo::exists(newPath)` check to
      detect a naming conflict, which false-positives on a case-ONLY
      rename** (e.g. `"readme.txt"` -> `"README.txt"`) **on a
