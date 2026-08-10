@@ -428,7 +428,7 @@ QT_QPA_PLATFORM=offscreen ./build/transfer-queue-test
 
 ```
 cmake --build build --target site-store-test
-XDG_CONFIG_HOME=/tmp/zephyrftp_test_config QT_QPA_PLATFORM=offscreen ./build/site-store-test
+QT_QPA_PLATFORM=offscreen ./build/site-store-test
 ```
 
 ```
@@ -463,7 +463,7 @@ QT_QPA_PLATFORM=offscreen ./build/ftp-parsing-test
 
 ```
 cmake --build build --target protocol-selection-test
-XDG_CONFIG_HOME=/tmp/zephyrftp_proto_config QT_QPA_PLATFORM=offscreen ./build/protocol-selection-test
+QT_QPA_PLATFORM=offscreen ./build/protocol-selection-test
 ```
 
 `transfer-queue-test` and `folder-transfer-test` both wipe and
@@ -478,10 +478,17 @@ code regression and isn't one. Fixed 2026-08-02 by making each test
 generate and clean its own fixtures instead of depending on the operator
 remembering a shell incantation first.
 
-The `XDG_CONFIG_HOME` override on `site-store-test` isn't optional —
-without it, `SiteStore` writes to your actual config directory, and the
-test's own cleanup phase will delete whatever `sites.json` it finds
-there. `navigation-test` creates its own scratch directory tree under
+`site-store-test` calls `QStandardPaths::setTestModeEnabled(true)` at
+the top of `main()` — not optional, and no longer an `XDG_CONFIG_HOME`
+environment-variable override either. That override used to be how this
+worked, and it was a real bug: `XDG_CONFIG_HOME` is a Linux/XDG-only
+convention, so it silently did nothing to isolate this test on native
+Windows (only masked by CI's Windows job running under wine, not native
+Windows) — `SiteStore` would write to, and the test's own cleanup phase
+would delete, whatever `sites.json` a real developer actually had saved
+there. `setTestModeEnabled()` is Qt's own cross-platform mechanism for
+this exact problem, so it isolates `AppConfigLocation` identically on
+every platform. `navigation-test` creates its own scratch directory tree under
 `/tmp/nav_test` and doesn't touch anything outside it. `transfer-pause-test`
 uses a fake in-process backend (no real server, no real files) — see its
 own header comment for exactly what it does and doesn't prove.
@@ -507,9 +514,9 @@ The rest of FTP/FTPS (and SFTP public-key auth) genuinely can be
 verified locally now, just not through this ten-target suite — see
 "Live-server verification" below. See this test's header comment and
 ARCHITECTURE.md's Known gaps for what's still unproven even after that.
-`protocol-selection-test` needs the same `XDG_CONFIG_HOME` isolation
-`site-store-test` does, and for the same reason: it exercises SiteStore
-against real files, so without the override it writes — and its
+`protocol-selection-test` needs the same `setTestModeEnabled()`
+isolation `site-store-test` does, and for the same reason: it exercises
+SiteStore against real files, so without it, it writes — and its
 migration phase deliberately overwrites — whatever `sites.json` is in
 your actual config directory. It constructs a real `ConnectionDialog`
 and drives its protocol combo, so it needs a `QApplication` and the

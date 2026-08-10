@@ -38,6 +38,16 @@
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
+    // Redirects AppConfigLocation to a throwaway `qttest` subdirectory so
+    // the SavedSite persistence checks below can never touch a real
+    // user's actual sites.json — Qt's own cross-platform mechanism for
+    // this, not the XDG_CONFIG_HOME env var this used to rely on. A real
+    // bug found running on native Windows (not just CI's wine
+    // emulation): XDG_CONFIG_HOME is Linux/XDG-only and Qt's native
+    // Win32 QStandardPaths implementation never consults it, so that
+    // "isolation" silently did nothing there — see site-store-test's own
+    // header comment for the full detail.
+    QStandardPaths::setTestModeEnabled(true);
 
     bool allPass = true;
     auto check = [&](const QString &label, bool condition) {

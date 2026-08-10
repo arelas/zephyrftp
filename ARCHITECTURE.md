@@ -122,9 +122,11 @@ that way, it's flagged explicitly rather than left implied.
 - **Site Manager persists correctly, and the security property that
   matters most about it (no password ever hits disk) is verified, not
   assumed.** `src/site_store_test.cpp` (built via the `site-store-test`
-  CMake target, isolated from any real saved sites via `XDG_CONFIG_HOME`
-  — see its own header comment) round-trips a password-auth and a
-  key-auth site through `SiteStore::save()`/`load()` and confirms every
+  CMake target, isolated from any real saved sites via
+  `QStandardPaths::setTestModeEnabled(true)` — see its own header
+  comment for the real cross-platform isolation bug this fixed)
+  round-trips a password-auth and a key-auth site through
+  `SiteStore::save()`/`load()` and confirms every
   field survives — including `useHomeDirectory`/`startingDirectory`,
   deliberately set to non-default values on the test sites so the
   round-trip check actually exercises them, not just the fields that
@@ -170,9 +172,9 @@ that way, it's flagged explicitly rather than left implied.
   separate one); and unchecking the box removes the stored secret
   immediately, no Connect click needed. Separately confirmed by
   inspecting the raw `sites.json` content directly after the full
-  save/update flow (isolated via `XDG_CONFIG_HOME`, same as
-  `site-store-test`): still zero `password`/`passphrase` keys, exactly
-  as before this feature existed. **The Windows side is now confirmed
+  save/update flow (isolated via `QStandardPaths::setTestModeEnabled()`,
+  same as `site-store-test`): still zero `password`/`passphrase` keys,
+  exactly as before this feature existed. **The Windows side is now confirmed
   too, on real hardware, not just compiled/linked under `wine`.**
   `CredentialStore`'s `wincred.h` backend (`CredWriteW`/`CredReadW`/
   `CredDeleteW`) has been manually confirmed saving and reloading a real
@@ -1168,9 +1170,9 @@ to drive FileZilla itself for a same-desktop comparison.
   **Not covered by an automated test**: none of the five fixes above
   have regression coverage — `CredentialStore` writes to the real OS
   credential store with no test-friendly override the way `SiteStore`
-  has `XDG_CONFIG_HOME`, so an automated test would leave real test
-  secrets in whoever's keyring runs it, the same category of risk this
-  project avoids elsewhere (e.g. `site-store-test`'s own config
+  has `QStandardPaths::setTestModeEnabled()`, so an automated test would
+  leave real test secrets in whoever's keyring runs it, the same
+  category of risk this project avoids elsewhere (e.g. `site-store-test`'s own config
   isolation). Verified by direct code reading and reasoning through each
   call path instead, consistent with this project's "say so explicitly
   rather than letting it read as verified" standard where a real test

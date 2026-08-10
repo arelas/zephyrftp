@@ -1,12 +1,24 @@
 // Verifies SiteStore's save/load round-trip for real — not just that it
-// compiles. Run with XDG_CONFIG_HOME pointed at a throwaway directory
-// (see the run command below) so this can never touch a real user's
-// actual sites.json; SiteStore has no test-only constructor seam to
-// redirect it otherwise, since QStandardPaths::AppConfigLocation is the
-// right thing for it to use in production.
+// compiles. QStandardPaths::setTestModeEnabled(true) redirects
+// AppConfigLocation (and friends) to a throwaway `qttest` subdirectory
+// so this can never touch a real user's actual sites.json; SiteStore has
+// no test-only constructor seam to redirect it otherwise, since
+// QStandardPaths::AppConfigLocation is the right thing for it to use in
+// production.
+//
+// A real bug found running this on native Windows (not just under CI's
+// wine emulation): this used to rely on XDG_CONFIG_HOME pointed at a
+// throwaway directory instead — an XDG/Linux-only convention Qt's native
+// Win32 QStandardPaths implementation never consults at all, so the
+// "isolation" silently did nothing on real Windows, and this test would
+// read/overwrite/delete whatever developer's ACTUAL saved sites.json
+// happened to be sitting in the real per-user config location.
+// setTestModeEnabled() is Qt's own cross-platform mechanism for exactly
+// this — no environment variable, no platform-specific behavior to get
+// wrong.
 //
 // Run with:
-//   XDG_CONFIG_HOME=/tmp/zephyrftp_test_config QT_QPA_PLATFORM=offscreen ./build/site-store-test
+//   QT_QPA_PLATFORM=offscreen ./build/site-store-test
 #include <QCoreApplication>
 #include <QDebug>
 #include <QFile>
@@ -19,6 +31,7 @@
 int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);   // QStandardPaths needs an application instance
+    QStandardPaths::setTestModeEnabled(true);
 
     bool allPass = true;
 

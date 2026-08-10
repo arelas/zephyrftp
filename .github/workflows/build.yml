@@ -112,9 +112,13 @@ jobs:
       # assumed from how it happened to behave on a desktop machine with
       # a real X/Wayland session already available.
       #
-      # Fixture setup and env vars below mirror CONTRIBUTING.md's Linux
-      # commands exactly — same tests, same isolation reasoning
-      # (XDG_CONFIG_HOME, the rm -rf teardowns), just run under wine.
+      # Fixture setup below mirrors CONTRIBUTING.md's Linux commands
+      # exactly — same tests, same isolation reasoning (site-store-test/
+      # protocol-selection-test isolate themselves internally via
+      # QStandardPaths::setTestModeEnabled(), no environment variable
+      # needed — see site-store-test's own header comment for why this
+      # used to be an XDG_CONFIG_HOME override that silently failed to
+      # isolate anything on real native Windows), just run under wine.
       - name: Run test suite under wine
         run: |
           set -e
@@ -141,8 +145,7 @@ jobs:
           head -c 500000 /dev/urandom > /tmp/transfer_test/src_dir/testfile.bin
           xvfb-run -a wine ./transfer-queue-test.exe
 
-          rm -rf /tmp/zephyrftp_test_config
-          XDG_CONFIG_HOME=/tmp/zephyrftp_test_config xvfb-run -a wine ./site-store-test.exe
+          xvfb-run -a wine ./site-store-test.exe
 
           xvfb-run -a wine ./navigation-test.exe
           xvfb-run -a wine ./transfer-pause-test.exe
@@ -162,8 +165,7 @@ jobs:
           xvfb-run -a wine ./conflict-resolution-test.exe
           xvfb-run -a wine ./ftp-parsing-test.exe
 
-          rm -rf /tmp/zephyrftp_proto_config
-          XDG_CONFIG_HOME=/tmp/zephyrftp_proto_config xvfb-run -a wine ./protocol-selection-test.exe
+          xvfb-run -a wine ./protocol-selection-test.exe
 
           xvfb-run -a wine ./sort-and-commands-test.exe
           xvfb-run -a wine ./remote-to-remote-test.exe
@@ -251,8 +253,7 @@ jobs:
           head -c 500000 /dev/urandom > /tmp/transfer_test/src_dir/testfile.bin
           ./transfer-queue-test
 
-          rm -rf /tmp/zephyrftp_test_config
-          XDG_CONFIG_HOME=/tmp/zephyrftp_test_config ./site-store-test
+          ./site-store-test
 
           ./navigation-test
           ./transfer-pause-test
@@ -272,8 +273,7 @@ jobs:
           ./conflict-resolution-test
           ./ftp-parsing-test
 
-          rm -rf /tmp/zephyrftp_proto_config
-          XDG_CONFIG_HOME=/tmp/zephyrftp_proto_config ./protocol-selection-test
+          ./protocol-selection-test
 
           ./sort-and-commands-test
           ./remote-to-remote-test
@@ -382,8 +382,7 @@ jobs:
           head -c 500000 /dev/urandom > /tmp/transfer_test/src_dir/testfile.bin
           ./transfer-queue-test
 
-          rm -rf /tmp/zephyrftp_test_config
-          XDG_CONFIG_HOME=/tmp/zephyrftp_test_config ./site-store-test
+          ./site-store-test
 
           ./navigation-test
           ./transfer-pause-test
@@ -403,8 +402,7 @@ jobs:
           ./conflict-resolution-test
           ./ftp-parsing-test
 
-          rm -rf /tmp/zephyrftp_proto_config
-          XDG_CONFIG_HOME=/tmp/zephyrftp_proto_config ./protocol-selection-test
+          ./protocol-selection-test
 
           ./sort-and-commands-test
           ./remote-to-remote-test
@@ -488,8 +486,7 @@ jobs:
           head -c 500000 /dev/urandom > /tmp/transfer_test/src_dir/testfile.bin
           ./transfer-queue-test
 
-          rm -rf /tmp/zephyrftp_test_config
-          XDG_CONFIG_HOME=/tmp/zephyrftp_test_config ./site-store-test
+          ./site-store-test
 
           ./navigation-test
           ./transfer-pause-test
@@ -509,8 +506,7 @@ jobs:
           ./conflict-resolution-test
           ./ftp-parsing-test
 
-          rm -rf /tmp/zephyrftp_proto_config
-          XDG_CONFIG_HOME=/tmp/zephyrftp_proto_config ./protocol-selection-test
+          ./protocol-selection-test
 
           ./sort-and-commands-test
           ./remote-to-remote-test
