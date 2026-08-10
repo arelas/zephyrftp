@@ -8,6 +8,22 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.6.8] — Fix a second CI-only test bug that also broke the v0.6.7 release build
+
+### Changed (developer-facing only, no shipped behavior)
+
+- **`file-operations-test`'s directory-symlink-deletion regression
+  relied on `QFile::link()` to simulate a real directory symlink —
+  which only creates one on Unix.** On Windows, `QFile::link()` writes
+  a small Shell-Shortcut-style file instead, which `QFileInfo` reports
+  as neither a directory nor a symlink — confirmed with a standalone
+  probe built and run under `wine`, mirroring CI's own `build-windows`
+  container. The test's hardcoded "this is a directory" assumption then
+  made `deleteEntry()` wrongly attempt to remove that plain file as a
+  folder and fail, which is what kept `build-windows` failing even
+  after the v0.6.7 fix above. Fixed by skipping this Unix-only phase on
+  Windows rather than asserting something false there.
+
 ## [0.6.7] — Fix a CI-only test bug that broke the v0.6.6 release build
 
 ### Changed (developer-facing only, no shipped behavior)
@@ -1090,7 +1106,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.7...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.8...HEAD
+[0.6.8]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.8
 [0.6.7]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.7
 [0.6.6]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.6
 [0.6.5]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.5
