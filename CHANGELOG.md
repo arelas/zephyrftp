@@ -8,6 +8,25 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A failed "Save password" could leave you thinking your password was
+  saved when it wasn't.** If your system's credential store rejected the
+  save (locked, unreachable, or — on Windows — a very long saved
+  password/passphrase exceeding a hard OS size limit), the checkbox
+  stayed checked with no indication anything had gone wrong; you'd only
+  find out on your next visit to Site Manager, when the checkbox quietly
+  unchecked itself. You're now told right away if a save didn't work.
+
+### Changed (developer-facing only, no shipped behavior)
+
+- `CredentialStore.cpp` — the one file this project's own contributor
+  guidelines single out as security-critical — got its first-ever
+  dedicated code review, and its first-ever automated test coverage
+  (`verify-credential-store`, exercised against a real OS credential
+  store). A minor internal encoding inconsistency was also cleaned up
+  for clarity, and a Linux-only compiler warning was fixed.
+
 ## [0.6.13] — Fix a real CI-only test bug that blocked the v0.6.12 release
 
 ### Changed (developer-facing only, no shipped behavior)

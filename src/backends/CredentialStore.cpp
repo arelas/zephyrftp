@@ -15,17 +15,19 @@
 
 namespace {
 
+#ifdef _WIN32
 // A stable, namespaced key so this app's entries are identifiable and
-// don't collide with anything else using the same store — matters more
-// on Windows, where Credential Manager is a single flat namespace
-// shared by every app on the system, than on libsecret, which already
-// scopes by schema+attributes, but used consistently either way.
+// don't collide with anything else using the same store — Credential
+// Manager is a single flat namespace shared by every app on the
+// system, unlike libsecret, which already scopes by schema+attributes
+// (only used on the Windows side; defining it outside this #ifdef
+// left it unused, and so a -Wunused-function warning, on every
+// non-Windows build — a real bug found by code review).
 QString targetName(const QString &siteId)
 {
     return QStringLiteral("ZephyrFTP/site/%1").arg(siteId);
 }
-
-#ifndef _WIN32
+#else
 // SECRET_SCHEMA_NONE (not SECRET_SCHEMA_DONT_MATCH_NAME) — this schema
 // is exclusively this app's own, so there's no reason to relax
 // matching. site_id is the one attribute that identifies which saved
@@ -107,21 +109,37 @@ bool save(const QString &siteId, const QString &secret)
     // secret service (GNOME Keyring, KWallet's Secret Service
     // compatibility layer, etc.) treats as default — not this app's
     // call to make.
-    // secret specifically (unlike siteId, always one of this app's own
-    // ASCII UUIDs, and the label, this app's own ASCII text) can be
-    // arbitrary user-typed text — encoded here as UTF-8 explicitly,
-    // matching load()'s QString::fromUtf8() decode below. qPrintable()
-    // would use the LOCAL 8-bit encoding instead, which is identical to
-    // UTF-8 on the common case (a UTF-8 locale) but silently corrupts a
-    // non-ASCII password/passphrase on any system that isn't — a real
-    // bug found by code review, not exercised by any test in an
-    // environment that's always been UTF-8.
+    // secret can be arbitrary user-typed text — encoded here as UTF-8
+    // explicitly, matching load()'s QString::fromUtf8() decode below,
+    // rather than via qPrintable() (QString::toLocal8Bit()). Verified
+    // directly (a standalone probe, not assumed): under Qt6,
+    // toLocal8Bit() unconditionally uses UTF-8 regardless of the
+    // process's C-library locale — Qt6 dropped the old locale-dependent
+    // "local 8-bit" behavior entirely — so qPrintable() and toUtf8()
+    // are provably identical here on any platform/locale this app
+    // actually runs under. An earlier round of code review flagged this
+    // as fixing a live locale-corruption bug; that specific claim was
+    // wrong, corrected here rather than left to stand uninvestigated
+    // (see CLAUDE.md's "verify rather than assume"). Kept anyway,
+    // demoted to a clarity/robustness improvement: expressing the
+    // encoding explicitly doesn't depend on that Qt6 behavior staying
+    // true forever, and costs nothing.
+    //
+    // site_id gets the same treatment for the same non-bug reason. It's
+    // normally one of this app's own ASCII UUIDs (SiteManagerDialog
+    // always generates it that way) — SavedSite's JSON loader does
+    // accept whatever string a hand-edited or migrated sites.json
+    // supplies with no format validation, so a non-ASCII id is at least
+    // possible, but qPrintable()/toUtf8() would encode it identically
+    // either way under Qt6, so there's no actual save/load mismatch
+    // risk to guard against — this is consistency/clarity only.
     const QByteArray secretUtf8 = secret.toUtf8();
+    const QByteArray siteIdUtf8 = siteId.toUtf8();
     const bool ok = secret_password_store_sync(
         credentialSchema(), SECRET_COLLECTION_DEFAULT,
         qPrintable(QStringLiteral("ZephyrFTP: saved site %1").arg(siteId)),
         secretUtf8.constData(), nullptr, &error,
-        "site_id", qPrintable(siteId), nullptr);
+        "site_id", siteIdUtf8.constData(), nullptr);
 
     if (error) {
         g_error_free(error);
@@ -133,9 +151,10 @@ bool save(const QString &siteId, const QString &secret)
 bool load(const QString &siteId, QString *secret)
 {
     GError *error = nullptr;
+    const QByteArray siteIdUtf8 = siteId.toUtf8();
     gchar *result = secret_password_lookup_sync(
         credentialSchema(), nullptr, &error,
-        "site_id", qPrintable(siteId), nullptr);
+        "site_id", siteIdUtf8.constData(), nullptr);
 
     if (error) {
         g_error_free(error);
@@ -152,9 +171,10 @@ bool load(const QString &siteId, QString *secret)
 bool remove(const QString &siteId)
 {
     GError *error = nullptr;
+    const QByteArray siteIdUtf8 = siteId.toUtf8();
     const bool removed = secret_password_clear_sync(
         credentialSchema(), nullptr, &error,
-        "site_id", qPrintable(siteId), nullptr);
+        "site_id", siteIdUtf8.constData(), nullptr);
 
     if (error) {
         g_error_free(error);

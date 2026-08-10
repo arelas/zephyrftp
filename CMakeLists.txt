@@ -670,3 +670,16 @@ qt_add_executable(verify-ftp-vendors EXCLUDE_FROM_ALL
 )
 target_include_directories(verify-ftp-vendors PRIVATE src)
 target_link_libraries(verify-ftp-vendors PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
+
+# --- CredentialStore against the REAL OS credential store — see
+# src/verify_credential_store.cpp's own header comment. Unlike every
+# other verify-* target above, its "external precondition" is a real,
+# already-in-use OS credential store rather than a disposable local
+# server, which is also why it isn't one of the ten self-contained
+# EXCLUDE_FROM_ALL targets despite needing no other setup to run. ---
+qt_add_executable(verify-credential-store EXCLUDE_FROM_ALL
+    src/verify_credential_store.cpp
+    src/backends/CredentialStore.cpp
+)
+target_include_directories(verify-credential-store PRIVATE src)
+target_link_libraries(verify-credential-store PRIVATE Qt6::Core ${CREDENTIAL_STORE_TARGET})

@@ -1244,6 +1244,53 @@ to drive FileZilla itself for a same-desktop comparison.
   confirmed saving and reloading a real password through the actual
   Windows Credential Manager, closing what had been the same category of
   gap already flagged for other Windows-specific code in this project.
+  **Three issues found by a dedicated code review of this file — its
+  first, despite being the one file this project's own CLAUDE.md singles
+  out as security-critical:**
+  1. **`SiteManagerDialog::onConnectClicked()` discarded `save()`'s bool
+     return value entirely.** A failed save (a locked/unreachable Secret
+     Service on Linux, or Windows's documented 2560-byte
+     `CredentialBlob` size cap) went silently unnoticed — the checkbox
+     stayed checked and the user believed the secret was saved, only
+     discovering otherwise on next launch when `hasSecret()` correctly,
+     but unexplainedly, unchecked it. Fixed with a `QMessageBox::warning`
+     on a failed save, explaining what happened rather than staying
+     silent.
+  2. **The Linux implementation encoded `site_id` (the libsecret schema
+     attribute used to find a secret again) via `qPrintable()`
+     (`QString::toLocal8Bit()`) instead of explicit `toUtf8()`,
+     inconsistently with `secret` (already `toUtf8()`, from an earlier
+     review round).** The concern raised: a hand-edited or migrated
+     `sites.json` supplying a non-ASCII id (`SavedSite`'s JSON loader
+     does no format validation beyond empty/duplicate checks) could
+     encode differently between a `save()` and a later `load()`/
+     `remove()`, breaking the match. **Investigated and found NOT
+     actually reachable, verified directly rather than assumed**: a
+     standalone probe confirmed `QString::toLocal8Bit()` and `toUtf8()`
+     produce byte-identical output under Qt6 regardless of the process's
+     C-library locale (`LC_ALL=C`, `en_US.ISO-8859-1`, and
+     `en_US.UTF-8` all tested) — Qt6 dropped the old locale-dependent
+     "local 8-bit" behavior entirely, so `qPrintable()` and `toUtf8()`
+     are provably identical on this codebase's Qt6 baseline. The switch
+     to explicit `toUtf8()` for `site_id` was kept anyway (a
+     clarity/robustness improvement that doesn't depend on that Qt6
+     behavior staying true forever) but is NOT a live-bug fix, unlike
+     item 1 above — corrected here rather than left as an overclaimed
+     "real bug," per this project's own "verify rather than assume"
+     rule (see CONTRIBUTING.md).
+  3. `targetName()` (Windows-only) was defined unconditionally in the
+     anonymous namespace, triggering a `-Wunused-function` warning on
+     every Linux/non-Windows build. Fixed by moving its definition
+     inside the existing `#ifdef _WIN32` block.
+  **First-ever test coverage for this file**, added alongside: a new
+  `verify-credential-store` target (in the `verify-*` live-service
+  family, not one of the ten self-contained `EXCLUDE_FROM_ALL` targets —
+  its "external precondition" is a real, already-in-use OS credential
+  store rather than a disposable local server) exercises a full
+  save/load/hasSecret/remove round trip, including non-ASCII id and
+  secret content, against the real Secret Service. Writes and
+  unconditionally removes its own clearly-namespaced test entries, safe
+  to run against a real, in-use keyring.
 - `SiteManagerDialog` — the saved-sites UI: a grouped tree on the left,
   a details form on the right, matching the design package's
   site-manager.html mockup, plus a starting-directory radio choice

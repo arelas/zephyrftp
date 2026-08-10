@@ -732,10 +732,23 @@ void SiteManagerDialog::onConnectClicked()
             (request.protocol == Protocol::Sftp && request.sftp.authMethod == SftpAuthMethod::PublicKey)
                 ? request.sftp.passphrase
                 : (request.protocol == Protocol::Sftp ? request.sftp.password : request.ftp.password);
-        if (m_savePasswordCheck->isChecked())
-            CredentialStore::save(site->id, enteredSecret);
-        else
+        if (m_savePasswordCheck->isChecked()) {
+            // Return value checked, not discarded — a real bug found by
+            // code review: a failed save (locked/unreachable Secret
+            // Service on Linux, or Windows's documented 2560-byte
+            // CredentialBlob size cap) went silently unnoticed, leaving
+            // the checkbox checked while nothing was actually saved —
+            // the user would only discover this on next launch, when
+            // hasSecret() correctly (but unexplainedly) unchecks it.
+            if (!CredentialStore::save(site->id, enteredSecret)) {
+                QMessageBox::warning(this, tr("Save Password"),
+                    tr("The password could not be saved to your system's "
+                       "credential store. You'll be asked for it again "
+                       "next time you connect."));
+            }
+        } else {
             CredentialStore::remove(site->id);
+        }
     }
 
     m_pendingRequest = request;

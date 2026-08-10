@@ -736,6 +736,19 @@ ZEPHYR_THROUGHPUT_HOST=<host> ZEPHYR_THROUGHPUT_USER=<user> \
     QT_QPA_PLATFORM=offscreen ./build/verify-sftp-throughput
 ```
 
+One more harness needs no external server or script at all, just a real
+local OS credential store — `verify-credential-store` exercises
+`CredentialStore` (save/load/hasSecret/remove, including non-ASCII
+content) against whatever Secret Service or Credential Manager is
+already running on your machine. Writes and unconditionally removes its
+own clearly-namespaced test entries, so it's safe to run against a real,
+in-use keyring:
+
+```
+cmake --build build --target verify-credential-store
+QT_QPA_PLATFORM=offscreen ./build/verify-credential-store
+```
+
 See `tools/local-test-servers/README.md` for the full picture (including
 the real containerization gotchas — PAM/GDBM/foreground-mode quirks —
 hit and fixed while building the vsftpd/proftpd/Dropbear containers) and
