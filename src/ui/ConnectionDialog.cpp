@@ -1,4 +1,5 @@
 #include "ConnectionDialog.h"
+#include "FileDialogs.h"
 
 #include <QFormLayout>
 #include <QVBoxLayout>
@@ -15,6 +16,7 @@
 #include <QWidget>
 #include <QComboBox>
 #include <QLabel>
+#include <QSignalBlocker>
 
 ConnectionDialog::ConnectionDialog(QWidget *parent)
     : QDialog(parent)
@@ -62,6 +64,14 @@ ConnectionDialog::ConnectionDialog(QWidget *parent)
     m_portSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
     m_portSpin->setRange(1, 65535);
     m_portSpin->setValue(defaultPortFor(Protocol::Sftp));
+    // See m_portManuallyEdited's own doc comment. Connected AFTER the
+    // setValue() above (which has no subscriber yet regardless) so this
+    // never fires for that one; every LATER programmatic setValue() call
+    // (onProtocolChanged()'s own) is wrapped in a QSignalBlocker
+    // specifically so only genuine user edits ever reach here.
+    connect(m_portSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this]() {
+        m_portManuallyEdited = true;
+    });
     m_passwordEdit->setEchoMode(QLineEdit::Password);
     m_passphraseEdit->setEchoMode(QLineEdit::Password);
     m_passphraseEdit->setPlaceholderText(tr("(leave blank if the key has no passphrase)"));
@@ -104,14 +114,14 @@ ConnectionDialog::ConnectionDialog(QWidget *parent)
     m_authFieldsStack->addWidget(passwordPage);   // index 0
     m_authFieldsStack->addWidget(keyPage);         // index 1
 
-    auto *form = new QFormLayout;
-    form->addRow(tr("Protocol:"), m_protocolCombo);
-    form->addRow(tr("Host:"), m_hostEdit);
-    form->addRow(tr("Port:"), m_portSpin);
-    form->addRow(tr("Username:"), m_usernameEdit);
+    m_form = new QFormLayout;
+    m_form->addRow(tr("Protocol:"), m_protocolCombo);
+    m_form->addRow(tr("Host:"), m_hostEdit);
+    m_form->addRow(tr("Port:"), m_portSpin);
+    m_form->addRow(tr("Username:"), m_usernameEdit);
 
     m_authRowLabel = new QLabel(tr("Authentication:"), this);
-    form->addRow(m_authRowLabel, m_authRowWidget);
+    m_form->addRow(m_authRowLabel, m_authRowWidget);
 
     connect(m_protocolCombo, &QComboBox::currentIndexChanged,
             this, &ConnectionDialog::onProtocolChanged);
@@ -121,25 +131,12 @@ ConnectionDialog::ConnectionDialog(QWidget *parent)
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
     auto *layout = new QVBoxLayout(this);
-    layout->addLayout(form);
+    layout->addLayout(m_form);
     layout->addWidget(m_authFieldsStack);
     layout->addWidget(buttons);
 
     onProtocolChanged();   // establishes the initial (SFTP) field visibility
     m_hostEdit->setFocus();
-}
-
-bool ConnectionDialog::portIsUntouchedDefault() const
-{
-    // "Untouched" means the current value is the default for *any* of the
-    // protocols, not just the currently selected one. Checking only the
-    // current protocol's default would mean switching SFTP->FTP->SFTP
-    // leaves the port stuck at 21, since 21 isn't 22 and would look
-    // deliberately chosen on the way back.
-    const int current = m_portSpin->value();
-    return current == defaultPortFor(Protocol::Sftp)
-        || current == defaultPortFor(Protocol::Ftp)
-        || current == defaultPortFor(Protocol::Ftps);
 }
 
 Protocol ConnectionDialog::protocol() const
@@ -159,9 +156,12 @@ void ConnectionDialog::onProtocolChanged()
     const Protocol selected = protocol();
 
     // Only adjust a port the user hasn't deliberately set — see
-    // portIsUntouchedDefault().
-    if (portIsUntouchedDefault())
+    // m_portManuallyEdited's own doc comment. Blocked so this own
+    // programmatic change can't be mistaken for a user edit.
+    if (!m_portManuallyEdited) {
+        const QSignalBlocker blocker(m_portSpin);
         m_portSpin->setValue(defaultPortFor(selected));
+    }
 
     // FTP/FTPS have no key auth, so the choice is hidden rather than
     // shown-and-ignored. Force the selection back to Password on the way
@@ -169,24 +169,44 @@ void ConnectionDialog::onProtocolChanged()
     // protocol that has no such concept, even if the user had picked
     // "Private key" under SFTP a moment earlier.
     const bool keyAuthAvailable = supportsKeyAuth(selected);
-    if (!keyAuthAvailable)
+    if (!keyAuthAvailable) {
+        // Blocked, matching SiteManagerDialog's identical forced-Password
+        // reset — a real inconsistency found by code review. Harmless
+        // today (updateAuthFieldsVisibility() below is idempotent), but
+        // without this, setChecked(true) here actually changing state
+        // synchronously emits toggled(true) and runs that slot a second
+        // time via the signal, on top of the explicit call three lines
+        // down — silent double-firing waiting to matter the moment either
+        // slot stops being idempotent.
+        const QSignalBlocker blocker(m_passwordAuthRadio);
         m_passwordAuthRadio->setChecked(true);
+    }
 
-    m_authRowWidget->setVisible(keyAuthAvailable);
-    m_authRowLabel->setVisible(keyAuthAvailable);
+    // A real simplification found by code review: this used to hide
+    // m_authRowWidget/m_authRowLabel individually via plain setVisible(),
+    // which doesn't shrink the row's own reserved space in the
+    // surrounding QFormLayout — fixed at the time (see the coming
+    // isVisible()/adjustSize() block's history) with a manual
+    // layout()->activate() to force synchronous recomputation before
+    // adjustSize() could read a stale size hint. QFormLayout::
+    // setRowVisible() (Qt 5.15+, and this project requires Qt6) hides
+    // BOTH the row's label and field as a unit and — confirmed directly
+    // with a standalone probe — already updates the layout's size hint
+    // synchronously, correctly resizing on the very first switch with
+    // just an adjustSize() after it, no manual activate() needed.
+    m_form->setRowVisible(m_authRowWidget, keyAuthAvailable);
 
     updateAuthFieldsVisibility();
 
     // Real bug, found during a systematic dialog-consistency screenshot
-    // pass (not user-reported): hiding a QFormLayout row's widgets doesn't
-    // shrink the row's own reserved space — a dialog that starts in
-    // FTP/FTPS mode looks correctly compact, but switching the Protocol
-    // combo on an ALREADY-OPEN dialog (the actual common case: it always
-    // opens on SFTP first) left dead space where the Authentication row
-    // used to be, with no resize. adjustSize() re-fits the window to its
-    // layout's current sizeHint — smaller when switching away from SFTP,
-    // larger when switching back — matching what a freshly-opened dialog
-    // in that same protocol already looked like.
+    // pass (not user-reported): a dialog that starts in FTP/FTPS mode
+    // looks correctly compact, but switching the Protocol combo on an
+    // ALREADY-OPEN dialog (the actual common case: it always opens on
+    // SFTP first) left dead space where the Authentication row used to
+    // be, with no resize. adjustSize() re-fits the window to its layout's
+    // current sizeHint — smaller when switching away from SFTP, larger
+    // when switching back — matching what a freshly-opened dialog in
+    // that same protocol already looked like.
     //
     // Guarded on isVisible(): this same slot can also run before the
     // dialog's first show() (setProtocol() called by a caller up front,
@@ -197,20 +217,8 @@ void ConnectionDialog::onProtocolChanged()
     // window as already explicitly sized and skips Qt's normal
     // auto-size-on-first-show. Letting the first real show() do that
     // initial sizing itself, untouched, avoids that.
-    if (isVisible()) {
-        // layout()->activate() forces the outer layout to recompute its
-        // cached size hint immediately. Without it, the setVisible() calls
-        // above only *invalidate* the layout and post a deferred
-        // LayoutRequest event to actually recompute it — so adjustSize()
-        // right after, in the same call, would read a stale (pre-hide)
-        // size hint. Confirmed directly: the first live protocol switch
-        // after opening the dialog silently used the previous size, and
-        // only the *next* switch (now reading a hint stale by one step)
-        // resized — layout()->activate() makes the very first switch
-        // correct too, not just eventually-consistent.
-        layout()->activate();
+    if (isVisible())
         adjustSize();
-    }
 }
 
 void ConnectionDialog::updateAuthFieldsVisibility()
@@ -220,7 +228,7 @@ void ConnectionDialog::updateAuthFieldsVisibility()
 
 void ConnectionDialog::browseForPrivateKey()
 {
-    const QString path = QFileDialog::getOpenFileName(this, tr("Select Private Key File"));
+    const QString path = FileDialogs::pickPrivateKeyFile(this);
     if (!path.isEmpty())
         m_privateKeyPathEdit->setText(path);
 }
@@ -234,7 +242,13 @@ ConnectionRequest ConnectionDialog::connectionRequest() const
         SftpCredentials &creds = request.sftp;
         creds.host = m_hostEdit->text().trimmed();
         creds.port = m_portSpin->value();
-        creds.username = m_usernameEdit->text();
+        // Trimmed like host above — a real bug found by code review:
+        // pasting a username with invisible leading/trailing whitespace
+        // (common when copying from a credentials email or spreadsheet)
+        // used to connect fine (host was already trimmed) but fail auth
+        // with a generic wrong-username/password error, nothing hinting
+        // the username field itself carried the stray whitespace.
+        creds.username = m_usernameEdit->text().trimmed();
 
         if (m_passwordAuthRadio->isChecked()) {
             creds.authMethod = SftpAuthMethod::Password;
@@ -248,7 +262,13 @@ ConnectionRequest ConnectionDialog::connectionRequest() const
         FtpCredentials &creds = request.ftp;
         creds.host = m_hostEdit->text().trimmed();
         creds.port = m_portSpin->value();
-        creds.username = m_usernameEdit->text();
+        // Trimmed like host above — a real bug found by code review:
+        // pasting a username with invisible leading/trailing whitespace
+        // (common when copying from a credentials email or spreadsheet)
+        // used to connect fine (host was already trimmed) but fail auth
+        // with a generic wrong-username/password error, nothing hinting
+        // the username field itself carried the stray whitespace.
+        creds.username = m_usernameEdit->text().trimmed();
         creds.password = m_passwordEdit->text();
         creds.ftpsMode = protocolToFtpsMode(request.protocol);
     }

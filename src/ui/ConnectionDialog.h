@@ -10,6 +10,7 @@ class QStackedWidget;
 class QComboBox;
 class QLabel;
 class QWidget;
+class QFormLayout;
 
 // Minimal modal dialog collecting connection parameters for any of the
 // three supported protocols (SFTP, FTP, FTPS). Deliberately dumb — no
@@ -45,23 +46,21 @@ private slots:
     void onProtocolChanged();
 
 private:
-    // True when the port box still holds the default for the protocol
-    // that was selected a moment ago — i.e. the user hasn't typed their
-    // own port. Only then is it safe to auto-update the port on a
-    // protocol switch; overwriting a deliberately-chosen port would be a
-    // small but real data-loss bug.
-    bool portIsUntouchedDefault() const;
-
     QComboBox *m_protocolCombo;
     QLineEdit *m_hostEdit;
     QSpinBox *m_portSpin;
     QLineEdit *m_usernameEdit;
 
+    // Kept as a member (rather than a local in the constructor) so
+    // onProtocolChanged() can call setRowVisible() on it directly — see
+    // that method's own comment.
+    QFormLayout *m_form = nullptr;
+
     QRadioButton *m_passwordAuthRadio;
     QRadioButton *m_keyAuthRadio;
     // The whole "Authentication:" form row, kept as members so it can be
-    // hidden wholesale for FTP/FTPS. Hiding the radios alone would leave
-    // a stranded label behind.
+    // hidden wholesale for FTP/FTPS via m_form->setRowVisible() — hiding
+    // the radios alone would leave a stranded label behind.
     QWidget *m_authRowWidget;
     QLabel *m_authRowLabel;
 
@@ -69,4 +68,21 @@ private:
     QLineEdit *m_passwordEdit;                 // page 0
     QLineEdit *m_privateKeyPathEdit;            // page 1
     QLineEdit *m_passphraseEdit;                // page 1
+
+    // True once the user has genuinely typed their own port — only then
+    // does onProtocolChanged() leave the port box alone on a protocol
+    // switch; overwriting a deliberately-chosen port would be a small but
+    // real data-loss bug. A real bug found by code review: this used to
+    // be inferred after the fact via portIsUntouchedDefault() — "is the
+    // current value equal to ANY of the three protocols' defaults?" —
+    // which can't tell a deliberately-typed 21 (a real, valid port choice
+    // under SFTP) apart from an auto-set 21 (FTP/FTPS's shared default),
+    // since both look identical once typed. Switching SFTP -> FTP (both
+    // land on 21, no visible change) -> SFTP then silently reset the
+    // deliberately-typed 21 back to 22. Tracking the real user action
+    // directly, via QSpinBox::valueChanged connected here (see the .cpp),
+    // removes the ambiguity entirely — every OWN programmatic setValue()
+    // call is wrapped in a QSignalBlocker specifically so it can't be
+    // mistaken for one.
+    bool m_portManuallyEdited = false;
 };

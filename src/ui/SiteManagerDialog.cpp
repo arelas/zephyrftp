@@ -1,5 +1,6 @@
 #include "SiteManagerDialog.h"
 #include "IconTheme.h"
+#include "FileDialogs.h"
 #include "../backends/CredentialStore.h"
 
 #include <QTreeWidget>
@@ -165,7 +166,7 @@ void SiteManagerDialog::buildUi()
     connect(m_privateKeyPathEdit, &QLineEdit::editingFinished, this, &SiteManagerDialog::onFieldEdited);
     auto *browseButton = new QPushButton(tr("Browse..."), keyPage);
     connect(browseButton, &QPushButton::clicked, this, [this]() {
-        const QString path = QFileDialog::getOpenFileName(this, tr("Select Private Key File"));
+        const QString path = FileDialogs::pickPrivateKeyFile(this);
         if (!path.isEmpty()) {
             m_privateKeyPathEdit->setText(path);
             onFieldEdited();
@@ -464,7 +465,12 @@ void SiteManagerDialog::commitFormToSelectedSite()
     site->protocol = Protocol(m_protocolCombo->currentData().toInt());
     site->host = m_hostEdit->text().trimmed();
     site->port = m_portSpin->value();
-    site->username = m_usernameEdit->text();
+    // Trimmed like host above — same real bug ConnectionDialog's
+    // identical field had, found by the same code review: invisible
+    // leading/trailing whitespace (common when pasting from a
+    // credentials email or spreadsheet) used to connect fine but fail
+    // auth with a generic wrong-username/password error.
+    site->username = m_usernameEdit->text().trimmed();
     site->authMethod = m_keyAuthRadio->isChecked() ? SftpAuthMethod::PublicKey : SftpAuthMethod::Password;
     site->privateKeyPath = m_privateKeyPathEdit->text().trimmed();
     site->useHomeDirectory = m_homeDirRadio->isChecked();
@@ -641,7 +647,7 @@ void SiteManagerDialog::onConnectClicked()
         scratch.protocol = Protocol(m_protocolCombo->currentData().toInt());
         scratch.host = m_hostEdit->text().trimmed();
         scratch.port = m_portSpin->value();
-        scratch.username = m_usernameEdit->text();
+        scratch.username = m_usernameEdit->text().trimmed();
         scratch.authMethod = m_keyAuthRadio->isChecked() ? SftpAuthMethod::PublicKey : SftpAuthMethod::Password;
         scratch.privateKeyPath = m_privateKeyPathEdit->text().trimmed();
         scratch.useHomeDirectory = m_homeDirRadio->isChecked();

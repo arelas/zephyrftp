@@ -8,6 +8,18 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Typing a port that happened to match FTP/FTPS's default (21) while
+  connecting via SFTP could get silently discarded** if you then
+  switched the protocol dropdown away and back — your deliberately
+  chosen port reset to SFTP's default (22) with no warning.
+- **A username with accidental leading/trailing whitespace (common when
+  pasting from a credentials email or spreadsheet) would fail to
+  authenticate** with a generic error, giving no hint the whitespace was
+  the actual problem — usernames are now trimmed the same way the host
+  field already was.
+
 ## [0.6.11] — Fix five real issues found by code review of TransferQueueWidget
 
 ### Fixed

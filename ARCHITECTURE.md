@@ -1062,6 +1062,19 @@ to drive FileZilla itself for a same-desktop comparison.
   old size, and only the *next* switch (now reading a hint stale by one
   step) resized, which would have shipped as "fixed" against a test that
   only checked a single before/after pair instead of a full sequence.
+  **Later simplified, by a dedicated code review of this file, to
+  `QFormLayout::setRowVisible()`** (Qt 5.15+, and this project requires
+  Qt6) in place of the manual `setVisible()` + `layout()->activate()` +
+  `adjustSize()` dance above — confirmed with a standalone probe before
+  relying on it that `setRowVisible()` alone already updates the row's
+  contribution to the layout's size hint synchronously, so `adjustSize()`
+  right after it (still guarded on `isVisible()`, for the exact reason
+  above — that part of the original fix's reasoning is unaffected by
+  this) resizes correctly on the very first live switch, same as the
+  two-iteration fix above needed `layout()->activate()` for. Re-verified
+  directly with the same three-transition sequence this bug was
+  originally caught with, now automated in `protocol-selection-test`
+  rather than only ever checked by screenshot.
   **Confirmed on a real Windows build, not just Linux — the actual point
   of this pass, not an afterthought:** cross-compiled via MinGW and run
   under `wine` against a real KDE desktop already available in this
@@ -1094,6 +1107,47 @@ to drive FileZilla itself for a same-desktop comparison.
   project's own rule: say so explicitly when something genuinely can't
   be verified in the environment at hand, rather than letting silence
   read as a claim of correctness.
+  **Four more real issues found by a dedicated code review of this
+  file, all fixed:**
+  1. **`portIsUntouchedDefault()` could silently discard a deliberately-
+     typed port, a real data-loss bug.** It inferred "the user hasn't
+     typed their own port" by checking the current value against ALL
+     THREE protocols' defaults (22 for SFTP, 21 for both FTP and FTPS) —
+     but FTP and FTPS share 21 with a value a user might genuinely type
+     under SFTP, and the heuristic can't tell the two apart. Concretely:
+     SFTP (22) -> type 21 (a real, deliberate choice) -> switch to FTP
+     (still 21, no visible change, "confirmed" untouched) -> switch back
+     to SFTP silently reset it to 22. Fixed by replacing the heuristic
+     entirely with a real dirty flag (`m_portManuallyEdited`) set only by
+     a genuine `QSpinBox::valueChanged` from user interaction — every one
+     of `onProtocolChanged()`'s own programmatic `setValue()` calls is
+     wrapped in a `QSignalBlocker` specifically so it can never be
+     mistaken for one. Covered by `protocol-selection-test`'s own
+     SFTP -> FTP -> SFTP round trip with a deliberately-typed 21.
+  2. `browseForPrivateKey()` duplicated the identical
+     `QFileDialog::getOpenFileName()` "Browse..." logic already in
+     `SiteManagerDialog.cpp`. Extracted to
+     `FileDialogs::pickPrivateKeyFile()` (`src/ui/FileDialogs.h`) — a
+     small header-only shared helper, returning the picked path rather
+     than taking a target `QLineEdit*` directly, since the two callers'
+     follow-up behavior had already drifted (`SiteManagerDialog` also
+     calls its own `onFieldEdited()` afterward, which `ConnectionDialog`
+     has no equivalent of) — this unifies only the part that was
+     genuinely identical.
+  3. `onProtocolChanged()`'s forced-Password `setChecked(true)` (for
+     FTP/FTPS, which have no key auth) had no `QSignalBlocker`, unlike
+     `SiteManagerDialog`'s identical reset. Harmless today
+     (`updateAuthFieldsVisibility()` is idempotent), but guarded to match
+     — a silent double-fire waiting to matter the moment either slot
+     stops being idempotent.
+  4. Username was read via plain `.text()` in both `ConnectionDialog`
+     and `SiteManagerDialog`, while host is always `.trimmed()` — pasting
+     a username with invisible whitespace (common when copying from a
+     credentials email or spreadsheet) connected fine but failed auth
+     with a generic wrong-username/password error, no hint the
+     whitespace was the actual cause. Trimmed in both files' credential-
+     building code paths (four call sites total) to match host's
+     existing convention.
 - `SavedSite` / `SiteStore` (`src/backends/SavedSite.h/.cpp`) — a saved
   connection profile (host/port/username/auth method/key path, optional
   starting directory, optionally grouped into a folder) and its JSON

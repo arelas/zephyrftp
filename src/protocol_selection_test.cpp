@@ -24,6 +24,7 @@
 #include <QRadioButton>
 #include <QLineEdit>
 #include <QWidget>
+#include <QSize>
 #include <QFile>
 #include <QDir>
 #include <QStandardPaths>
@@ -138,6 +139,65 @@ int main(int argc, char *argv[])
             check("a user-typed port (2222) is NOT overwritten by a protocol switch",
                   portSpin->value() == 2222);
         }
+    }
+
+    // ===================================================================
+    // Regression: a deliberately-typed port that happens to ALIAS with
+    // FTP/FTPS's shared default (21) must also survive a round-trip
+    // switch — a real data-loss bug found by code review.
+    // portIsUntouchedDefault() used to infer "the user hasn't typed
+    // their own port" by checking the current value against ALL THREE
+    // protocols' defaults (22/21/21), so a genuinely user-typed 21 under
+    // SFTP was indistinguishable from FTP/FTPS's own auto-set 21:
+    // SFTP(22) -> type 21 -> switch to FTP (still 21, no visible change,
+    // "confirmed" as untouched) -> switch back to SFTP silently reset it
+    // to 22, discarding the deliberate choice. Fixed by tracking real
+    // user edits directly via a dirty flag instead of guessing from the
+    // value alone.
+    // ===================================================================
+    {
+        ConnectionDialog dialog;
+        auto *portSpin = dialog.findChild<QSpinBox *>(QStringLiteral("portSpin"));
+        if (portSpin) {
+            check("starts on SFTP's default port (22), matching FTP/FTPS's later aliasing setup",
+                  portSpin->value() == 22);
+            portSpin->setValue(21);   // deliberately typed — happens to equal FTP/FTPS's own default
+            dialog.setProtocol(Protocol::Ftp);
+            check("still 21 after switching to FTP (no visible change either way at this step)",
+                  portSpin->value() == 21);
+            dialog.setProtocol(Protocol::Sftp);
+            check("a deliberately-typed port that ALIASES with FTP/FTPS's shared default (21) "
+                  "still survives switching back to SFTP, not silently reset to 22",
+                  portSpin->value() == 21);
+        }
+    }
+
+    // ===================================================================
+    // Regression: switching Protocol on an ALREADY-SHOWN dialog must
+    // actually resize the window when the Authentication row appears/
+    // disappears, not just correctly hide the fields while leaving dead
+    // space behind — the original real bug (found via a screenshot pass,
+    // not caught by any automated test before this). Re-verified here
+    // since code review replaced the fix's mechanism (QFormLayout::
+    // setRowVisible() instead of the original manual setVisible() +
+    // layout()->activate() + adjustSize() dance) — this confirms the
+    // simplification didn't quietly regress what it replaced.
+    // ===================================================================
+    {
+        ConnectionDialog dialog;
+        dialog.show();
+        const QSize sftpSize = dialog.size();
+
+        dialog.setProtocol(Protocol::Ftp);
+        const QSize ftpSize = dialog.size();
+        check("switching to FTP on an already-shown dialog actually shrinks it "
+              "(the Authentication row disappears) on the very first switch",
+              ftpSize.height() < sftpSize.height());
+
+        dialog.setProtocol(Protocol::Sftp);
+        const QSize backToSftpSize = dialog.size();
+        check("switching back to SFTP restores the original (taller) size",
+              backToSftpSize.height() == sftpSize.height());
     }
 
     // ===================================================================
