@@ -7,7 +7,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Network Concurrent Svg)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Network Concurrent Svg Test)
 
 # libssh2 discovery differs by toolchain, not just by OS: MSVC+vcpkg
 # (this repo's current CI) ships a CMake config package instead of a .pc
@@ -320,7 +320,7 @@ qt_add_executable(navigation-test EXCLUDE_FROM_ALL
     resources/theme.qrc
 )
 target_include_directories(navigation-test PRIVATE src)
-target_link_libraries(navigation-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
+target_link_libraries(navigation-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg Qt6::Test)
 
 # --- Transfer pause/resume orchestration test (fake backend, no real server needed) ---
 qt_add_executable(transfer-pause-test EXCLUDE_FROM_ALL

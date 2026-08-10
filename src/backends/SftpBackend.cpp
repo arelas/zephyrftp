@@ -519,6 +519,7 @@ bool SftpBackend::ensureSession()
         char realPathBuf[1024];
         const int realPathLen = libssh2_sftp_realpath(m_sftp, ".", realPathBuf, sizeof(realPathBuf) - 1);
         if (realPathLen > 0) {
+            QMutexLocker locker(&m_currentPathMutex);
             m_currentPath = QString::fromUtf8(realPathBuf, realPathLen);
         }
         // Not fatal if this fails — m_currentPath's default member
@@ -529,6 +530,7 @@ bool SftpBackend::ensureSession()
         // normal listDirectory()/connectionFailed error path on the
         // first directory listing, same as typing a bad path into the
         // path bar manually.
+        QMutexLocker locker(&m_currentPathMutex);
         m_currentPath = m_credentials.startingDirectory;
     }
 
@@ -573,8 +575,11 @@ void SftpBackend::listDirectory(const QString &path)
     }
     libssh2_sftp_closedir(handle);
 
-    m_currentPath = target;
-    emit directoryListed(m_currentPath, entries);
+    {
+        QMutexLocker locker(&m_currentPathMutex);
+        m_currentPath = target;
+    }
+    emit directoryListed(target, entries);
 }
 
 void SftpBackend::listDirectoryForEnumeration(const QString &path, int requestId)
@@ -904,6 +909,7 @@ void SftpBackend::requestCancel()
 
 QString SftpBackend::currentPath() const
 {
+    QMutexLocker locker(&m_currentPathMutex);
     return m_currentPath;
 }
 

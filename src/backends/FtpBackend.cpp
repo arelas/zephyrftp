@@ -158,6 +158,7 @@ void FtpBackend::teardown()
 
 QString FtpBackend::currentPath() const
 {
+    QMutexLocker locker(&m_currentPathMutex);
     return m_currentPath;
 }
 
@@ -523,12 +524,17 @@ bool FtpBackend::ensureConnected()
             if (firstQuote >= 0 && lastQuote > firstQuote) {
                 QString path = pwdReply.text.mid(firstQuote + 1, lastQuote - firstQuote - 1);
                 path.replace(QStringLiteral("\"\""), QStringLiteral("\""));   // RFC 959: embedded quotes are doubled
+                QMutexLocker locker(&m_currentPathMutex);
                 m_currentPath = path;
             }
         }
-        if (m_currentPath.isEmpty())
-            m_currentPath = QStringLiteral("/");
+        {
+            QMutexLocker locker(&m_currentPathMutex);
+            if (m_currentPath.isEmpty())
+                m_currentPath = QStringLiteral("/");
+        }
     } else {
+        QMutexLocker locker(&m_currentPathMutex);
         m_currentPath = m_credentials.startingDirectory;
     }
 
@@ -1016,8 +1022,11 @@ void FtpBackend::listDirectory(const QString &path)
         return;
     }
 
-    m_currentPath = target;
-    emit directoryListed(m_currentPath, entries);
+    {
+        QMutexLocker locker(&m_currentPathMutex);
+        m_currentPath = target;
+    }
+    emit directoryListed(target, entries);
 }
 
 void FtpBackend::listDirectoryForEnumeration(const QString &path, int requestId)

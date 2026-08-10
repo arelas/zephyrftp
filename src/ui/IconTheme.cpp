@@ -3,6 +3,7 @@
 #include <QSvgRenderer>
 #include <QPixmap>
 #include <QPainter>
+#include <QHash>
 
 namespace IconTheme {
 
@@ -34,6 +35,24 @@ QPixmap renderTinted(const QString &resourcePath, const QColor &color, int pixel
 
 QIcon tintedIcon(const QString &resourcePath, const QColor &color, int size)
 {
+    // A real efficiency issue found by code review: every call re-parsed
+    // the SVG and re-painted both the base and @2x pixmaps from scratch,
+    // including from rebuildModel()'s per-row iconForEntry() call — a
+    // directory listing of a few hundred entries re-renders the same
+    // handful of distinct (path, color, size) icons hundreds of times
+    // over on every navigation and every "Show hidden files" toggle.
+    // GUI-thread only (every caller — FilePaneWidget, MainWindow's
+    // toolbar, etc. — runs on the GUI thread; nothing in the backend/
+    // worker-thread layer touches icons), so a plain QHash needs no
+    // locking. Keyed on the resource path, color, and size together —
+    // the only three inputs renderTinted() actually depends on.
+    static QHash<QString, QIcon> cache;
+    const QString key = resourcePath + QLatin1Char(':') + color.name(QColor::HexArgb)
+                       + QLatin1Char(':') + QString::number(size);
+    const auto cached = cache.constFind(key);
+    if (cached != cache.constEnd())
+        return cached.value();
+
     const QPixmap base = renderTinted(resourcePath, color, size);
     if (base.isNull())
         return QIcon();
@@ -51,6 +70,7 @@ QIcon tintedIcon(const QString &resourcePath, const QColor &color, int size)
         icon.addPixmap(hidpi);
     }
 
+    cache.insert(key, icon);
     return icon;
 }
 

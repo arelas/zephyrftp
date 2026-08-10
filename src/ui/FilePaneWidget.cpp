@@ -33,19 +33,53 @@ constexpr int ColPermissions = 3;
 // byte count as a real qint64 for numeric sorting (see SizeItem below).
 constexpr int SortDataRole = Qt::UserRole + 1;
 
+// ColName only — whether the row is a directory, for NameItem's own
+// folders-first comparator below. A separate role from SortDataRole
+// since that one already holds the real name (a QString), needed for
+// entryForRow()'s lookup regardless of whether NameItem also uses it.
+constexpr int SortIsDirRole = Qt::UserRole + 2;
+
 // Size is displayed as a plain, unpadded byte count (QString::number()),
 // which sorts wrong lexicographically ("10" < "9"). Modified's ISO-8601
 // text sorts correctly as a plain string (fixed-width, so lexicographic
-// order already matches chronological order) and Name/Permissions are
-// meant to sort as the text shown, so only Size needs a real numeric key
-// — stashed in SortDataRole since QStandardItem's default operator<
-// compares DisplayRole text.
+// order already matches chronological order) and Permissions is meant
+// to sort as the text shown, so only Size and Name need a real sort key
+// of their own — stashed in SortDataRole since QStandardItem's default
+// operator< compares DisplayRole text.
 class SizeItem : public QStandardItem {
 public:
     using QStandardItem::QStandardItem;
     bool operator<(const QStandardItem &other) const override
     {
         return data(SortDataRole).toLongLong() < other.data(SortDataRole).toLongLong();
+    }
+};
+
+// A real bug found by code review: clicking the Name header used to sort
+// on QStandardItem's default comparator — DisplayRole text, i.e. the
+// bracketed "[Folder]" display string, not the real name, and with no
+// folders-first grouping and no locale awareness (QString::operator<'s
+// plain code-point order). Both real problems: '[' sits between
+// uppercase and lowercase ASCII, so folders interleaved inconsistently
+// with files instead of staying grouped; and code-point order doesn't
+// match what QLocale-aware comparison (what rebuildModel()'s own default
+// listing order already uses) would produce for anything outside plain
+// ASCII. Same folders-first-via-sort-key convention as SizeItem above
+// (a directory just sorts as "smaller" and flips to the end on a
+// descending click, exactly like SizeItem's own dirs-first-ascending
+// behavior) rather than pinning folders first unconditionally — matching
+// what a header click's usual ascending/descending toggle should do.
+class NameItem : public QStandardItem {
+public:
+    using QStandardItem::QStandardItem;
+    bool operator<(const QStandardItem &other) const override
+    {
+        const bool thisIsDir = data(SortIsDirRole).toBool();
+        const bool otherIsDir = other.data(SortIsDirRole).toBool();
+        if (thisIsDir != otherIsDir)
+            return thisIsDir;
+        return data(SortDataRole).toString().localeAwareCompare(
+                   other.data(SortDataRole).toString()) < 0;
     }
 };
 
@@ -133,6 +167,16 @@ void FilePaneWidget::setBackend(RemoteBackend *backend, QThread *thread)
         // true forever, silently refusing every navigation attempt after
         // the first bad path.
         m_navigationInFlight = false;
+        // A real bug found by code review: a failed goBack()/goForward()
+        // left m_navigatingHistory stuck true too — only onDirectoryListed()
+        // ever reset it (on a CONFIRMED successful listing), and a failed
+        // navigation never reaches that. The next successful fresh
+        // navigation (path bar, double-click, Up) would then wrongly take
+        // onDirectoryListed()'s "this was Back/Forward" branch and skip
+        // pushing itself onto history at all, desyncing m_history/
+        // m_historyIndex from what's actually displayed for the rest of
+        // the pane's session.
+        m_navigatingHistory = false;
         m_statusLabel->setText(QStringLiteral("Error: %1").arg(reason));
     });
     connect(m_backend, &RemoteBackend::connected, this, [this]() {
@@ -295,6 +339,20 @@ void FilePaneWidget::navigateTo(const QString &path)
 
 void FilePaneWidget::onPathBarReturnPressed()
 {
+    // A real bug found by code review: unlike goBack()/goForward(), which
+    // check m_navigationInFlight THEMSELVES before doing anything, this
+    // used to just call navigateTo() unconditionally and rely entirely on
+    // its own internal guard — safe (never corrupts state), but silent.
+    // Pressing Enter on a freshly typed path while a prior navigation is
+    // still resolving got dropped with zero feedback, and looked actively
+    // broken once that earlier navigation's response arrived:
+    // onDirectoryListed() overwrites the path bar with ITS path,
+    // silently erasing whatever the person had just typed with nothing
+    // to explain why.
+    if (m_navigationInFlight) {
+        m_statusLabel->setText(tr("A navigation is already in progress — try again once it finishes."));
+        return;
+    }
     navigateTo(m_pathBar->text());
 }
 
@@ -308,17 +366,21 @@ void FilePaneWidget::rebuildModel()
     // target set of a pending Transfer/Move with no indication why.
     // Captured by NAME rather than row/index, since sorting and filtering
     // below both change row positions and this needs to survive either.
-    // This is also naturally correct for a genuine navigation to a
-    // DIFFERENT directory (the other caller of rebuildModel(), via
-    // onDirectoryListed()): the old selection's names essentially never
-    // match anything in an unrelated directory's listing, so nothing gets
-    // selected there, exactly as it should — no separate "is this the
-    // same directory" check needed.
+    // A second real bug found by code review, in this same restore: it
+    // used to also fire for a genuine navigation to a DIFFERENT
+    // directory, on the assumption that an old name "essentially never"
+    // matches an unrelated directory's listing — false for common names
+    // (README.md, .gitignore, index.js, __init__.py), which silently
+    // auto-selected a same-named file with no user action. Captured here
+    // (before m_entriesDirectory is updated below) so it can be compared
+    // against the new directory once rebuildModel() knows what that is.
     QStringList previouslySelectedNames;
     for (const QModelIndex &index : m_view->selectionModel()->selectedRows(ColName)) {
         if (const RemoteEntry *entry = entryForRow(index.row()))
             previouslySelectedNames.append(entry->name);
     }
+    const bool sameDirectoryAsBefore = (m_entriesDirectory == currentDirectory());
+    m_entriesDirectory = currentDirectory();
 
     // Real, existing inconsistency this filter also fixes: LocalBackend
     // has always excluded dotfiles outright (its QDir::entryInfoList()
@@ -355,12 +417,15 @@ void FilePaneWidget::rebuildModel()
     m_model->removeRows(0, m_model->rowCount());
     for (const RemoteEntry &e : filtered) {
         m_currentEntries.append(e);
-        auto *nameItem = new QStandardItem(e.isDir ? QStringLiteral("[%1]").arg(e.name) : e.name);
+        auto *nameItem = new NameItem(e.isDir ? QStringLiteral("[%1]").arg(e.name) : e.name);
         nameItem->setIcon(iconForEntry(e));
         // entryForRow() looks entries up by this rather than row position —
         // sorting physically reorders m_model's rows, so row index alone
-        // no longer identifies which RemoteEntry a row belongs to.
+        // no longer identifies which RemoteEntry a row belongs to. Also
+        // NameItem's own sort key (see its class doc comment) — the real
+        // name, not the bracketed "[Folder]" display text above.
         nameItem->setData(e.name, SortDataRole);
+        nameItem->setData(e.isDir, SortIsDirRole);
         auto *sizeItem = new SizeItem(e.isDir ? QString() : QString::number(e.size));
         sizeItem->setData(e.isDir ? qint64(-1) : e.size, SortDataRole);
         auto *modItem = new QStandardItem(e.modified.toString(Qt::ISODate));
@@ -369,7 +434,7 @@ void FilePaneWidget::rebuildModel()
     }
     m_statusLabel->setText(tr("%1 items").arg(m_currentEntries.size()));
 
-    if (!previouslySelectedNames.isEmpty()) {
+    if (sameDirectoryAsBefore && !previouslySelectedNames.isEmpty()) {
         QItemSelection restoredSelection;
         for (int row = 0; row < m_model->rowCount(); ++row) {
             const RemoteEntry *entry = entryForRow(row);
@@ -387,6 +452,17 @@ void FilePaneWidget::rebuildModel()
 
 void FilePaneWidget::onDirectoryListed(const QString &path, const QList<RemoteEntry> &entries)
 {
+    // See m_pendingFileOpRefreshes's own doc comment: this directoryListed
+    // is a delete/rename/create's own "fire and refresh", not a response
+    // to navigateTo() — update the display but leave m_navigationInFlight
+    // and history untouched, since neither belongs to this dispatch.
+    if (m_pendingFileOpRefreshes > 0) {
+        --m_pendingFileOpRefreshes;
+        m_lastRawEntries = entries;
+        rebuildModel();
+        return;
+    }
+
     m_navigationInFlight = false;
     m_lastRawEntries = entries;
     m_pathBar->setText(path);
@@ -482,6 +558,22 @@ QList<RemoteEntry> FilePaneWidget::selectedEntries() const
 void FilePaneWidget::showContextMenu(const QPoint &pos)
 {
     const QList<RemoteEntry> selected = selectedEntries();  // files + folders
+    // A real bug found by code review: promptAndRename()/confirmAndDelete()
+    // etc. used to call currentDirectory() themselves, AFTER their own
+    // modal QInputDialog/QMessageBox had already closed — but menu.exec()
+    // just below is ALSO a nested event loop, and either one still pumps
+    // the queued, cross-thread directoryListed signal a genuinely
+    // in-flight navigation (started just before this right-click) can
+    // deliver while the menu or dialog is still open. currentDirectory()
+    // read AFTER any of that could then return a DIFFERENT directory than
+    // the one `selected` above was actually drawn from, silently
+    // dispatching a create/rename/delete against the wrong location.
+    // Captured once, here, at the same moment as `selected` — both are a
+    // consistent snapshot of "what was actually on screen when this menu
+    // was invoked" — and threaded through to every action below instead
+    // of each calling currentDirectory() again later. Refresh is the one
+    // deliberate exception: it wants whatever's CURRENT, not this snapshot.
+    const QString directory = currentDirectory();
 
     QMenu menu(this);
 
@@ -527,15 +619,15 @@ void FilePaneWidget::showContextMenu(const QPoint &pos)
     else if (chosen == moveAction)
         emit moveRequested(selected);
     else if (chosen == newFileAction)
-        promptAndCreateFile();
+        promptAndCreateFile(directory);
     else if (chosen == newFolderAction)
-        promptAndCreateFolder();
+        promptAndCreateFolder(directory);
     else if (chosen == renameAction)
-        promptAndRename(selected.first());
+        promptAndRename(selected.first(), directory);
     else if (chosen == deleteAction)
-        confirmAndDelete(selected);
+        confirmAndDelete(selected, directory);
     else if (chosen == refreshAction)
-        navigateTo(currentDirectory());
+        navigateTo(currentDirectory());   // deliberately fresh — see this function's own doc comment
 }
 
 void FilePaneWidget::onPathBarIconClicked()
@@ -570,7 +662,7 @@ void FilePaneWidget::onPathBarIconClicked()
         emit disconnectRequested(this);
 }
 
-void FilePaneWidget::promptAndCreateFile()
+void FilePaneWidget::promptAndCreateFile(const QString &directory)
 {
     bool ok = false;
     const QString name = QInputDialog::getText(this, tr("New File"), tr("File name:"),
@@ -578,11 +670,12 @@ void FilePaneWidget::promptAndCreateFile()
     if (!ok || name.trimmed().isEmpty())
         return;
 
-    const QString path = joinPath(currentDirectory(), name.trimmed());
+    const QString path = joinPath(directory, name.trimmed());
+    ++m_pendingFileOpRefreshes;   // see its own doc comment
     QMetaObject::invokeMethod(m_backend, "createFile", Qt::QueuedConnection, Q_ARG(QString, path));
 }
 
-void FilePaneWidget::promptAndCreateFolder()
+void FilePaneWidget::promptAndCreateFolder(const QString &directory)
 {
     bool ok = false;
     const QString name = QInputDialog::getText(this, tr("New Folder"), tr("Folder name:"),
@@ -590,11 +683,12 @@ void FilePaneWidget::promptAndCreateFolder()
     if (!ok || name.trimmed().isEmpty())
         return;
 
-    const QString path = joinPath(currentDirectory(), name.trimmed());
+    const QString path = joinPath(directory, name.trimmed());
+    ++m_pendingFileOpRefreshes;   // see its own doc comment
     QMetaObject::invokeMethod(m_backend, "createDirectory", Qt::QueuedConnection, Q_ARG(QString, path));
 }
 
-void FilePaneWidget::promptAndRename(const RemoteEntry &entry)
+void FilePaneWidget::promptAndRename(const RemoteEntry &entry, const QString &directory)
 {
     bool ok = false;
     const QString newName = QInputDialog::getText(this, tr("Rename"), tr("New name:"),
@@ -602,13 +696,14 @@ void FilePaneWidget::promptAndRename(const RemoteEntry &entry)
     if (!ok || newName.trimmed().isEmpty() || newName.trimmed() == entry.name)
         return;
 
-    const QString oldPath = joinPath(currentDirectory(), entry.name);
-    const QString newPath = joinPath(currentDirectory(), newName.trimmed());
+    const QString oldPath = joinPath(directory, entry.name);
+    const QString newPath = joinPath(directory, newName.trimmed());
+    ++m_pendingFileOpRefreshes;   // see its own doc comment
     QMetaObject::invokeMethod(m_backend, "renameEntry", Qt::QueuedConnection,
                                Q_ARG(QString, oldPath), Q_ARG(QString, newPath));
 }
 
-void FilePaneWidget::confirmAndDelete(const QList<RemoteEntry> &entries)
+void FilePaneWidget::confirmAndDelete(const QList<RemoteEntry> &entries, const QString &directory)
 {
     if (entries.isEmpty())
         return;
@@ -627,7 +722,8 @@ void FilePaneWidget::confirmAndDelete(const QList<RemoteEntry> &entries)
     // (see RemoteBackend::deleteEntry()'s doc comment) completes before
     // the next deletion starts. No race between them.
     for (const RemoteEntry &entry : entries) {
-        const QString path = joinPath(currentDirectory(), entry.name);
+        const QString path = joinPath(directory, entry.name);
+        ++m_pendingFileOpRefreshes;   // see its own doc comment — one per entry, each gets its own refresh
         QMetaObject::invokeMethod(m_backend, "deleteEntry", Qt::QueuedConnection,
                                    Q_ARG(QString, path), Q_ARG(bool, entry.isDir));
     }
@@ -635,6 +731,12 @@ void FilePaneWidget::confirmAndDelete(const QList<RemoteEntry> &entries)
 
 void FilePaneWidget::onFileOperationFailed(const QString &operation, const QString &path, const QString &reason)
 {
+    // A failed dispatch never produces the directoryListed refresh
+    // onDirectoryListed() would otherwise consume — decrement here so
+    // m_pendingFileOpRefreshes doesn't stay permanently inflated and start
+    // misclassifying a later, unrelated navigation response as a refresh.
+    if (m_pendingFileOpRefreshes > 0)
+        --m_pendingFileOpRefreshes;
     QMessageBox::warning(this, operation,
                           tr("%1 failed for \"%2\":\n%3")
                               .arg(operation, QFileInfo(path).fileName(), reason));
@@ -723,6 +825,12 @@ void FilePaneWidget::resetHistory()
     // in-flight at swap time would permanently block the new backend's
     // very first navigateTo() call too.
     m_navigationInFlight = false;
+    // Same reasoning as m_navigationInFlight just above — any file op
+    // dispatched against the OLD backend can never deliver its refresh or
+    // failure signal once it's been torn down (setBackend() disconnects
+    // it first), so the count would otherwise survive the swap and
+    // misclassify the new backend's first real navigation response.
+    m_pendingFileOpRefreshes = 0;
     // Buttons may not exist yet the very first time this runs (called
     // from setBackend() during the constructor, before buildUi() —
     // actually after, since buildUi() runs first in the constructor, but

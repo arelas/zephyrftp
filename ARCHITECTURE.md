@@ -1524,6 +1524,107 @@ to drive FileZilla itself for a same-desktop comparison.
   backend changes — `updatePathBarIcon()` already deletes and recreates
   the leading `QAction` on every backend swap, which tears down its
   connections along with it.
+  **Nine real bugs found by a dedicated code review of this file — the
+  largest source file in the project never previously reviewed on its
+  own — all fixed, each now covered by a dedicated regression scenario
+  in `navigation-test` or `sort-and-commands-test`:**
+  1. **`onDirectoryListed()` couldn't tell a file operation's own "fire
+     and refresh" `directoryListed` apart from a genuine `navigateTo()`
+     response.** `deleteEntry()`/`renameEntry()`/`createFile()`/
+     `createDirectory()` all reuse the same signal on success (see
+     `RemoteBackend`'s own doc comment); with no per-request id, a file
+     op's refresh arriving while a real navigation was still in flight
+     (queued and processed first, since the backend handles queued calls
+     strictly in order) got misread as that navigation's own response —
+     clearing `m_navigationInFlight` early and opening a window where a
+     second action (Back, another navigation) could fire, corrupting
+     `m_history`/`m_historyIndex`. Fixed with `m_pendingFileOpRefreshes`,
+     a count (not a bool — several deletes can be dispatched at once)
+     incremented right before each of the four dispatches and decremented
+     when consumed by its own refresh or by the matching
+     `fileOperationFailed`; `onDirectoryListed()` only treats an arrival
+     as a real navigation response once that count is back to zero.
+  2. **`currentPath()` on `SftpBackend`/`FtpBackend` was a genuine
+     unsynchronized cross-thread `QString` race.** `FilePaneWidget::
+     currentDirectory()` reads it from the GUI thread while
+     `ensureSession()`/`listDirectory()` write it from the backend's own
+     worker thread, with no equivalent to `m_cancelRequested`/
+     `m_pauseRequested`'s `QAtomicInteger` protection — `QString` has no
+     atomic form, so a `QMutex` (`m_currentPathMutex`) now guards every
+     write site and the read in `currentPath()`; same-thread reads
+     elsewhere in each backend don't need it.
+  3. **A failed `goBack()`/`goForward()` left `m_navigatingHistory` stuck
+     true.** Only `onDirectoryListed()` (a confirmed successful listing)
+     ever reset it; a failed navigation reports via `connectionFailed`
+     instead (same reason `m_navigationInFlight` is reset there too — see
+     above), which never reached it. The next successful fresh navigation
+     would then wrongly take the "this was Back/Forward" branch and skip
+     pushing itself onto history at all. Fixed by resetting
+     `m_navigatingHistory` alongside `m_navigationInFlight` in the same
+     `connectionFailed` handler.
+  4. **The selection-restore-by-name in `rebuildModel()` (see its own
+     entry above) fired across a genuine navigation to a DIFFERENT
+     directory, not just a same-directory refresh** — its own comment's
+     assumption that an old name "essentially never" matches an unrelated
+     directory's listing is false for common names (`README.md`,
+     `.gitignore`, `index.js`, `__init__.py`), silently auto-selecting a
+     same-named file with no user action, dangerous if the next action is
+     Delete or Move. Fixed with `m_entriesDirectory`, tracking which
+     directory `m_lastRawEntries` actually represents, compared against
+     `currentDirectory()` on each call — restore now requires the
+     directory to be unchanged since the previous rebuild.
+  5. **`promptAndRename()`/`confirmAndDelete()`/`promptAndCreateFile()`/
+     `promptAndCreateFolder()` all read `currentDirectory()` themselves,
+     AFTER their own modal `QInputDialog`/`QMessageBox` had already
+     closed** — but `showContextMenu()`'s `menu.exec()` just before them
+     is ALSO a nested event loop, and either one still pumps a genuinely
+     in-flight navigation's queued, cross-thread `directoryListed`
+     response while open. A navigation completing before Rename was even
+     clicked could silently retarget the eventual rename to the NEW
+     directory instead of the one the entry was actually selected from.
+     Fixed by having `showContextMenu()` capture `directory =
+     currentDirectory()` once, at the same moment as `selected`, before
+     `menu.exec()` — threaded through to all four as a parameter instead
+     of each calling `currentDirectory()` again later. Refresh is the one
+     deliberate exception, since it wants whatever's current, not a
+     snapshot.
+  6. **`onPathBarReturnPressed()` had no `m_navigationInFlight` guard or
+     feedback, unlike `goBack()`/`goForward()`.** `navigateTo()`'s own
+     internal guard already made this safe (never corrupted state), but
+     pressing Enter on a freshly typed path while a prior navigation was
+     still resolving got silently dropped, and looked actively broken
+     once that earlier navigation's response arrived —
+     `onDirectoryListed()` overwrites the path bar with ITS path,
+     erasing what had just been typed with nothing to explain why. Fixed
+     by checking the flag first and showing a status message when
+     refused.
+  7. **Clicking the Name column header sorted on `QStandardItem`'s
+     default comparator — the bracketed `"[Folder]"` DISPLAY text via
+     plain ASCII code-point order, not the real name, and with no
+     folders-first grouping or locale awareness** — `'['` sits between
+     uppercase and lowercase ASCII, so folders interleaved inconsistently
+     with files instead of staying grouped, in an order that also ignored
+     locale rules entirely. Fixed with a `NameItem` comparator (same
+     `SortDataRole`/folders-first-as-part-of-the-key convention `SizeItem`
+     already uses, so a descending click flips folders to the end exactly
+     like Size's dirs already do) using the real name and
+     `QString::localeAwareCompare()`.
+  8. A stale doc comment on `selectedFileNames()` claiming
+     `FileTreeView::startDrag()` and the context menu's Transfer action
+     call it — both were switched to `selectedEntries()` once folder
+     drag/transfer needed `isDir`, and it's had zero production callers
+     since (kept only because test code still exercises it directly).
+     Corrected so a future maintainer doesn't rely on the stale claim.
+  9. **`iconForEntry()` re-rendered every icon from scratch — SVG parse
+     plus `QPainter` composite, twice for the @2x HiDPI variant — via
+     `IconTheme::tintedIcon()`, which had no caching, on every row of
+     every `rebuildModel()` call.** A directory listing of a few hundred
+     entries re-rendered the same handful of distinct (path, color, size)
+     icons hundreds of times over on every navigation and every "Show
+     hidden files" toggle. Fixed with a `(resourcePath, color, size) ->
+     QIcon` cache in `IconTheme::tintedIcon()` itself (GUI-thread only,
+     so a plain `QHash` needs no locking) — measured ~144x faster for
+     repeated cache hits vs. forced misses in `sort-and-commands-test`.
 - `FileTreeView` — thin `QTreeView` subclass adding cross-pane
   drag-and-drop. Qt's built-in item-view DnD pulls its `QMimeData` from
   the *model* (`QAbstractItemView::startDrag()` calls

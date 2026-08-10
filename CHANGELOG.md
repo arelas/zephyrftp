@@ -8,6 +8,37 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A background operation's own directory refresh (delete/rename/new
+  file/new folder) could be mistaken for the response to a navigation
+  still in progress**, opening a brief window where a second action
+  (Back, another navigation) silently corrupted the pane's history.
+- **A failed Back/Forward navigation could permanently break Back/Forward
+  for the rest of that pane's session** — the next successful navigation
+  silently stopped updating history.
+- **Selecting a file, then navigating to a different folder that happens
+  to contain a same-named file (e.g. `README.md`, `.gitignore`), could
+  silently auto-select that unrelated file** with no user action —
+  dangerous if the next action is Delete or Move.
+- **Rename could silently target the wrong directory** if a navigation
+  completed while the Rename dialog was still open.
+- **Pressing Enter in the path bar while a navigation was still in
+  progress silently did nothing**, with no indication why, and the
+  freshly typed path could be overwritten moments later.
+- **Sorting by the Name column no longer keeps folders grouped together
+  and no longer compares names correctly** for anything outside plain
+  ASCII — fixed to match every other sort order in the app.
+- A remote (SFTP/FTP) pane's current directory could theoretically race
+  between the UI and the connection's own background thread. Fixed with
+  proper synchronization.
+
+### Changed (developer-facing only, no shipped behavior)
+
+- File and folder icons are now cached instead of being re-rendered from
+  their source SVG on every row of every directory listing — noticeably
+  less redundant work when browsing a large directory.
+
 ## [0.6.8] — Fix a second CI-only test bug that also broke the v0.6.7 release build
 
 ### Changed (developer-facing only, no shipped behavior)

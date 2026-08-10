@@ -5,6 +5,7 @@
 #include <libssh2.h>
 #include <libssh2_sftp.h>
 #include <QAtomicInteger>
+#include <QMutex>
 
 class QTcpSocket;
 class HostKeyVerifier;
@@ -123,6 +124,22 @@ private:
 
     SftpCredentials m_credentials;
     HostKeyVerifier *m_hostKeyVerifier = nullptr;   // GUI-thread object, not owned
+
+    // A real bug found by code review: currentPath() is called from the
+    // GUI thread (FilePaneWidget::currentDirectory() has no thread
+    // affinity restriction, unlike listDirectory() et al., which are only
+    // ever invoked via QMetaObject::invokeMethod onto this backend's own
+    // worker thread) while ensureSession()/listDirectory() write
+    // m_currentPath from that worker thread — an unsynchronized concurrent
+    // read/write of a QString from two threads, unlike
+    // m_cancelRequested/m_pauseRequested below, which are exactly this
+    // kind of cross-thread state but were already made safe with
+    // QAtomicInteger. QString has no atomic equivalent, so a QMutex
+    // guards it instead — every write site takes it for just the
+    // assignment; reads from listDirectory() etc. that run on the SAME
+    // (worker) thread as the writes don't need it, only currentPath()'s
+    // cross-thread read does.
+    mutable QMutex m_currentPathMutex;
     QString m_currentPath = QStringLiteral("/");
 
     QTcpSocket *m_socket = nullptr;

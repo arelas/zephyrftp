@@ -4,6 +4,7 @@
 #include "FtpCredentials.h"
 #include <QAtomicInteger>
 #include <QByteArray>
+#include <QMutex>
 
 class QSslSocket;
 class QTcpSocket;
@@ -235,6 +236,16 @@ private:
     QSslSocket *m_controlSocket = nullptr;
     bool m_connected = false;
     bool m_dataProtected = false;   // true once PROT P has succeeded (FTPS data-channel encryption)
+
+    // Same real bug, same fix as SftpBackend's identical member: read
+    // cross-thread by currentPath() (called from the GUI thread via
+    // FilePaneWidget::currentDirectory()) while written from this
+    // backend's own worker thread inside listDirectory() — see
+    // SftpBackend.h's m_currentPathMutex doc comment for the full
+    // reasoning. Same-thread reads elsewhere in this file (e.g.
+    // listDirectory()'s own `path.isEmpty() ? m_currentPath : path`)
+    // don't need it, only currentPath()'s cross-thread read does.
+    mutable QMutex m_currentPathMutex;
     QString m_currentPath;
 
     // The control connection's own accepted certificate fingerprint

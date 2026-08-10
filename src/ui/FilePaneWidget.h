@@ -49,11 +49,15 @@ public:
     // FtpBackend's connection handling.
     bool isConnecting() const { return m_connecting; }
 
-    // Selected rows that are files (not directories). Public because
-    // FileTreeView (a different class, not a subwidget with special
-    // access) calls this directly when starting a drag — see
-    // FileTreeView::startDrag(). Also used internally by the context
-    // menu's "Transfer Selected" action.
+    // Selected rows that are files (not directories). A stale doc
+    // comment here was a real bug found by code review: this used to be
+    // what FileTreeView::startDrag() and the context menu's "Transfer
+    // Selected" action called, but both were switched to
+    // selectedEntries() below (to carry isDir, needed once folder drag/
+    // transfer shipped) — this method has had zero production callers
+    // since, and is kept only because test code still exercises it
+    // directly. Still public for that reason, not because anything else
+    // needs it live.
     QStringList selectedFileNames() const;
 
     // Selected rows regardless of type (files AND directories) — unlike
@@ -207,11 +211,15 @@ private:
     // backend via QMetaObject::invokeMethod(..., Qt::QueuedConnection) —
     // same pattern as every other cross-thread-safe backend call in this
     // class. All four are no-ops if the person cancels the prompt/dialog,
-    // or (rename/delete) if nothing appropriate is selected.
-    void promptAndCreateFile();
-    void promptAndCreateFolder();
-    void promptAndRename(const RemoteEntry &entry);
-    void confirmAndDelete(const QList<RemoteEntry> &entries);
+    // or (rename/delete) if nothing appropriate is selected. `directory`
+    // is always showContextMenu()'s own snapshot, taken before its
+    // menu.exec() — see that function's own doc comment for why these
+    // must NOT call currentDirectory() themselves after their own modal
+    // dialog closes.
+    void promptAndCreateFile(const QString &directory);
+    void promptAndCreateFolder(const QString &directory);
+    void promptAndRename(const RemoteEntry &entry, const QString &directory);
+    void confirmAndDelete(const QList<RemoteEntry> &entries, const QString &directory);
 
     RemoteBackend *m_backend;
     QThread *m_backendThread = nullptr;   // null when backend has no thread of its own (e.g. LocalBackend)
@@ -235,6 +243,23 @@ private:
     // toggle can re-filter and redraw instantly via rebuildModel(),
     // without a fresh (and pointless) round-trip back to the backend.
     QList<RemoteEntry> m_lastRawEntries;
+
+    // Which directory m_lastRawEntries/m_currentEntries currently
+    // represent — set in rebuildModel() itself, compared against
+    // currentDirectory() each time it runs. A real bug found by code
+    // review: rebuildModel()'s selection-restore-by-name (see its own
+    // doc comment on why that's needed at all) matched purely by name
+    // with no directory check, on the assumption that an old name
+    // "essentially never" matches an unrelated directory's listing — but
+    // common filenames (README.md, .gitignore, index.js, __init__.py)
+    // genuinely do, silently auto-selecting a same-named file in a
+    // directory the user just navigated into, with no user action.
+    // Restoring the selection now requires the directory to be
+    // unchanged since the previous rebuild (a settings toggle, a
+    // file-op's own refresh, or a Refresh/re-navigation to the SAME
+    // path all correctly still restore it — only landing on a
+    // DIFFERENT directory doesn't).
+    QString m_entriesDirectory;
 
     // Navigation history. m_historyIndex points at the currently-displayed
     // entry; entries after it are "forward" history, cleared whenever a
@@ -263,6 +288,26 @@ private:
     // setBackend() — listDirectory() reports a bad path that way, not via
     // directoryListed()) or a backend swap (resetHistory()) resolves it.
     bool m_navigationInFlight = false;
+
+    // A real bug found by code review: deleteEntry()/renameEntry()/
+    // createFile()/createDirectory() are all "fire and refresh" (see
+    // RemoteBackend.h's doc comment) — they reuse the exact same
+    // directoryListed signal a genuine navigateTo() response uses, with
+    // no per-request id to tell the two apart. onDirectoryListed() used
+    // to treat every arrival as THE outstanding navigation's response,
+    // so an unrelated file operation's refresh (queued and processed
+    // before a concurrently in-flight navigateTo()'s own response, since
+    // the backend's worker thread processes queued calls strictly in
+    // order) could clear m_navigationInFlight and run history bookkeeping
+    // for the wrong request while the real navigation was still pending.
+    // Incremented right before each of the four dispatches (one entry in
+    // confirmAndDelete()'s loop counts as one), decremented in
+    // onDirectoryListed() when consumed by a refresh, or in
+    // onFileOperationFailed() when that dispatch fails instead (no
+    // directoryListed ever arrives for it in that case). A count rather
+    // than a bool since confirmAndDelete() can dispatch several deletes
+    // at once, each producing its own refresh.
+    int m_pendingFileOpRefreshes = 0;
 
     // Non-owning — outlives this pane (MainWindow owns it for the app's
     // whole lifetime). Null in every test that constructs a pane directly.
