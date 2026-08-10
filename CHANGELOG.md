@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.6.13] — Fix a real CI-only test bug that blocked the v0.6.12 release
+
 ### Changed (developer-facing only, no shipped behavior)
 
 - **`file-operations-test` had a flaky-timing bug that surfaced as a real
@@ -1186,7 +1188,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.12...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.13...HEAD
+[0.6.13]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.13
 [0.6.12]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.12
 [0.6.11]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.11
 [0.6.10]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.10
