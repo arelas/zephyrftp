@@ -168,21 +168,38 @@ int main(int argc, char *argv[])
         // path component. A directory symlink could therefore never
         // actually be deleted, always failing with the same misleading
         // "may not be empty" message no matter how removable it (or its
-        // target) genuinely was. ---
+        // target) genuinely was.
+        //
+        // Unix-only: on Windows, QFile::link() does NOT create a real
+        // filesystem symlink the way it does on Unix — confirmed
+        // empirically (a standalone probe run under wine, matching this
+        // project's own CI): it writes a small Shell-Shortcut-style file
+        // instead, which QFileInfo correctly reports as neither a
+        // directory nor a symlink. Forcing isDirectory=true against that
+        // (as this phase's hardcoded Q_ARG(bool, true) does, mirroring
+        // what a REAL directory symlink's QFileInfo::isDir() would report
+        // on Unix) would make deleteEntry() wrongly attempt QDir::rmdir()
+        // on a plain file and fail — not a bug in the app, just this
+        // phase's simulation technique having no Windows equivalent, so
+        // it's skipped there rather than asserting something false. ---
+#ifndef Q_OS_WIN
         QDir().mkpath(base + "/symlink_target");
         QFile::link(base + "/symlink_target", base + "/symlink_to_dir");
         lastFailedOperation.clear();
         QMetaObject::invokeMethod(backend, "deleteEntry", Qt::QueuedConnection,
                                    Q_ARG(QString, base + "/symlink_to_dir"), Q_ARG(bool, true));
+#endif
     });
 
     QTimer::singleShot(2100, &app, [&]() {
+#ifndef Q_OS_WIN
         check("deleteEntry (directory symlink): no failure reported", lastFailedOperation.isEmpty());
         check("deleteEntry (directory symlink): the symlink itself is gone",
               !QFileInfo(base + "/symlink_to_dir").exists());
         check("deleteEntry (directory symlink): its TARGET directory survived untouched "
               "(only the link was removed, not the real directory)",
               QDir(base + "/symlink_target").exists());
+#endif
 
         // --- Phase 11: renameEntry() must still correctly reject a
         // GENUINE naming conflict (a real, different file already at

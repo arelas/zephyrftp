@@ -669,6 +669,24 @@ to drive FileZilla itself for a same-desktop comparison.
      target directory completely untouched. Fixed by routing a directory
      symlink through the same `QFile::remove()` path a plain file
      already uses, gated on `!QFileInfo(path).isSymLink()`.
+     **The regression test itself is Unix-only** — confirmed empirically
+     (a standalone probe run under `wine`, the same way this project's
+     own CI exercises the Windows build): `QFile::link()` does not
+     create a real filesystem symlink on Windows the way it does on
+     Unix; it writes a small Shell-Shortcut-style file instead, which
+     `QFileInfo` correctly reports as neither a directory nor a symlink.
+     The test's hardcoded `isDirectory=true` (mirroring what a REAL
+     directory symlink's `QFileInfo::isDir()` reports on Unix) would
+     then make `deleteEntry()` wrongly attempt `QDir::rmdir()` on that
+     plain file and fail — not an app bug, just this phase's simulation
+     technique having no Windows equivalent — so `file-operations-test`
+     guards this phase with `#ifndef Q_OS_WIN` rather than asserting
+     something false. This was the actual cause of `build-windows`'s CI
+     failure after the chmod/root fix above was applied on its own;
+     `deleteEntry()`'s own `isSymLink()` guard needed no change — real
+     Windows NTFS symlinks/junctions are still correctly detected by
+     Qt's `isSymLink()` there, only `QFile::link()`'s own simulation
+     technique doesn't produce one.
 - `SftpBackend` — wraps libssh2's synchronous API directly. Runs on a
   dedicated `QThread`, confirmed by the smoke test above. Its four
   operations (`connectToHost`, `listDirectory`, `downloadFile`,
