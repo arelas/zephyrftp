@@ -495,7 +495,13 @@ own header comment for exactly what it does and doesn't prove.
 `file-operations-test` creates its own scratch tree under
 `/tmp/file_ops_test` and tests `LocalBackend` directly (not through the
 UI, since its prompts can't be driven headlessly) — see its own header
-comment for what it does and doesn't cover. `folder-transfer-test` needs
+comment for what it does and doesn't cover. Two of its regression
+phases simulate a filesystem failure in ways that don't hold on every
+platform this test actually runs on in CI — see the "core discipline"
+section below for both (root bypassing `chmod 000` in the
+container-based CI jobs; `QFile::link()` not producing a real symlink
+under `build-windows`'s `wine` job) rather than repeating the detail
+here. `folder-transfer-test` needs
 its nested directory structure created by hand first (shown above) —
 unlike the other tests, it doesn't build its own fixture data, since the
 structure itself (multi-level nesting, a genuinely empty leaf directory)
@@ -780,6 +786,24 @@ history, worth internalizing before making changes:
   `:/icons/plug.svg`) was caught by a throwaway test that actually
   rendered every icon and counted opaque pixels, not by trusting that a
   clean compile meant the resource paths were right.
+- A regression test that simulated "an unreadable source file" via
+  `chmod 000` passed everywhere it was ever run locally, then broke
+  three of four release build jobs at once — because this project's own
+  container-based CI jobs run their test suite as **root**, and root
+  bypasses Unix permission bits entirely. Caught by reading the actual
+  CI failure logs and reproducing the exact container as root (`podman
+  run fedora:44`) rather than assuming "it passes locally" generalizes.
+  Fixed by simulating the failure with a directory as the copy source
+  instead — `QFile::copy()` refuses to open a directory regardless of
+  privilege, verified both as a normal user and as root.
+- `QFile::link()` does not create a real filesystem symlink on Windows
+  the way it does on Unix — it writes a small Shell-Shortcut-style file
+  instead, which `QFileInfo` reports as neither a directory nor a
+  symlink. A regression test that assumed otherwise passed on every
+  platform this project had actually run it on until `build-windows`'s
+  CI job (which runs its test suite under `wine`) caught it. Confirmed
+  with a standalone probe built and run under `wine` before touching
+  the real test, not assumed from the Qt docs alone.
 
 None of these were found by reasoning about the code in the abstract —
 they were found by building it, running it, and checking the actual
