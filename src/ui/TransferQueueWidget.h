@@ -18,6 +18,14 @@ class TransferQueueWidget : public QWidget {
 public:
     explicit TransferQueueWidget(TransferManager *manager, QWidget *parent = nullptr);
 
+    // The exact text shown in the Direction column's tooltip, and (since
+    // a code-review fix) what resortAndRebuild()'s Direction-column sort
+    // now compares — already effectively public information (anyone
+    // hovering a row sees it); public here mainly so transfer-queue-test
+    // can verify that sort's comparator basis directly, the same reason
+    // FilePaneWidget::parentOfPath() is public.
+    static QString directionText(TransferDirection direction);
+
 private slots:
     void onItemAdded(const TransferItem &item);
     void onItemUpdated(const TransferItem &item);
@@ -32,7 +40,6 @@ private slots:
 
 private:
     int rowForId(int id) const;
-    static QString directionText(TransferDirection direction);
     static QString statusText(const TransferItem &item);
 
     // 0-100, from bytesDone/bytesTotal — shared by onItemUpdated() (drives

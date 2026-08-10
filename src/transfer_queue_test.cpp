@@ -33,8 +33,12 @@
 #include <QRandomGenerator>
 #include <QTableWidget>
 #include <QHeaderView>
+#include <QLabel>
+#include <QProgressBar>
+#include <QEventLoop>
 #include "ui/FilePaneWidget.h"
 #include "ui/TransferQueueWidget.h"
+#include "ui/IconTheme.h"
 #include "backends/LocalBackend.h"
 #include "transfer/TransferManager.h"
 
@@ -269,8 +273,163 @@ int main(int argc, char *argv[])
 
         phase4Pass = sortedAfterHeaderClick && stillSortedAfterNewItem;
         qDebug() << (phase4Pass ? "[phase4] PASS" : "[phase4] FAIL");
+    });
 
-        const bool overallPass = phase1Pass && phase2SyncPass && phase2Pass && phase3Pass && phase4Pass;
+    // ---- Phase 5: TransferQueueWidget's per-row visual indicators must
+    // be internally consistent and reflect the real sort key shown on
+    // screen — four real bugs found by code review, fixed together since
+    // they're all in the same small handful of functions. Fresh
+    // TransferManager/TransferQueueWidget pair, isolated from phases 1-4. ----
+    bool phase5Pass = false;
+    QTimer::singleShot(4200, &app, [&]() {
+        auto *visManager = new TransferManager(&app);
+        auto *visWidget = new TransferQueueWidget(visManager);
+        auto *table = visWidget->findChild<QTableWidget *>();
+        auto *header = table->horizontalHeader();
+
+        // Regression: the sort-indicator arrow used to show (ascending,
+        // File column) from construction, even though nothing has been
+        // sorted yet (m_sortColumn stays -1 until a header is actually
+        // clicked) — falsely implying the queue was already alphabetized.
+        const bool noIndicatorBeforeClick = !header->isSortIndicatorShown();
+        qDebug() << "[phase5] no sort indicator shown before any header click:" << noIndicatorBeforeClick;
+
+        // Regression: resortAndRebuild()'s Direction-column sort compared
+        // raw TransferDirection enum ordinals instead of the visible
+        // directionText() — the same comparator basis ColStatus already
+        // uses for its own column. A live SFTP/FTP server would be
+        // needed to drive every direction through the real end-to-end UI
+        // sort (not available here — see this project's other documented
+        // live-server gaps), so this confirms the underlying comparator
+        // basis directly instead: text order and ordinal order genuinely
+        // DISAGREE for LocalToLocal ("local copy") vs RemoteToLocal
+        // ("remote -> local") — ordinal order puts RemoteToLocal first
+        // (declared before LocalToLocal), alphabetical order puts
+        // LocalToLocal first ('l' < 'r') — proving the fix's choice of
+        // comparator actually changes real-world behavior, not a no-op.
+        const bool textOrderDiffersFromOrdinalOrder =
+            TransferQueueWidget::directionText(TransferDirection::LocalToLocal)
+                .localeAwareCompare(TransferQueueWidget::directionText(TransferDirection::RemoteToLocal)) < 0;
+        qDebug() << "[phase5] directionText()'s ordering (what the fix now sorts Direction by) "
+                    "genuinely differs from raw enum-ordinal ordering for a real pair:"
+                  << textOrderDiffersFromOrdinalOrder;
+
+        // Capture each item's rendered state the FIRST time it's actually
+        // InProgress — connected AFTER visWidget's own constructor (which
+        // wires up manager->itemUpdated internally), so for the same
+        // emission this always runs SECOND and sees whatever the widget
+        // just rendered, same connection-order trick used elsewhere in
+        // this project's tests. Necessary because a tiny local copy or
+        // move can go Queued -> InProgress -> Done within a single
+        // event-loop turn — too fast to reliably catch by polling the
+        // table after a fixed delay, unlike phase 1's real 500KB file.
+        bool sawLocalCopyInProgress = false, sawMoveInProgress = false;
+        QImage localCopyIconAtInProgress, moveIconAtInProgress;
+        QString moveChunkStyleAtInProgress;
+        // Connected to BOTH itemAdded and itemUpdated: a Move item is
+        // created ALREADY InProgress (dispatchMoveEntry() sets that
+        // before its one and only itemAdded, unlike enqueue()'s items,
+        // which start Queued and only reach InProgress via a LATER
+        // itemUpdated) — missing itemAdded here would silently never see
+        // Move's InProgress state at all.
+        const auto captureIfInProgress = [&](const TransferItem &item) {
+            if (item.status != TransferStatus::InProgress)
+                return;
+            int row = -1;
+            for (int r = 0; r < table->rowCount(); ++r) {
+                if (table->item(r, 0) && table->item(r, 0)->data(Qt::UserRole).toInt() == item.id) {
+                    row = r;
+                    break;
+                }
+            }
+            if (row < 0)
+                return;
+            auto *dirLabel = qobject_cast<QLabel *>(table->cellWidget(row, 1));
+            if (item.direction == TransferDirection::LocalToLocal && !sawLocalCopyInProgress) {
+                sawLocalCopyInProgress = true;
+                if (dirLabel) localCopyIconAtInProgress = dirLabel->pixmap().toImage();
+            } else if (item.direction == TransferDirection::Move && !sawMoveInProgress) {
+                sawMoveInProgress = true;
+                if (dirLabel) moveIconAtInProgress = dirLabel->pixmap().toImage();
+                auto *progressContainer = table->cellWidget(row, 3);
+                auto *progressBar = progressContainer ? progressContainer->findChild<QProgressBar *>() : nullptr;
+                if (progressBar) moveChunkStyleAtInProgress = progressBar->styleSheet();
+            }
+        };
+        QObject::connect(visManager, &TransferManager::itemAdded, &app, captureIfInProgress);
+        QObject::connect(visManager, &TransferManager::itemUpdated, &app, captureIfInProgress);
+
+        // Move is the second direction achievable without a live server
+        // (moveEligible() only requires matching connectionIdentity(),
+        // which LocalBackend gives any two local panes) — exercises both
+        // the direction-icon-color bug and the progress-bar-chunk-color-
+        // vs-icon-color consistency bug. moveEntry() routes through an
+        // async checkExists() round trip first (unlike plain enqueue()),
+        // so drain briefly for both to fully settle — a fixed, generous
+        // margin over what local, in-process queued round trips actually
+        // need, same reasoning already established elsewhere in this
+        // project for local-only async waits.
+        visManager->enqueue(leftPane, rightPane, "vis_localcopy.bin");
+        visManager->moveEntry(leftPane, rightPane, "vis_moveme.bin");
+        QEventLoop drain;
+        QTimer::singleShot(400, &drain, &QEventLoop::quit);
+        drain.exec();
+
+        qDebug() << "[phase5] saw LocalToLocal actually InProgress at least once:" << sawLocalCopyInProgress;
+        const QImage expectedGreenIcon =
+            IconTheme::tintedIcon(":/icons/arrows-left-right.svg", IconTheme::Green, 20)
+                .pixmap(20, 20).toImage();
+        const bool localToLocalIsGreen =
+            sawLocalCopyInProgress && localCopyIconAtInProgress == expectedGreenIcon;
+        qDebug() << "[phase5] ...and its direction icon was Green then, not the Gray Queued "
+                    "default:" << localToLocalIsGreen;
+
+        qDebug() << "[phase5] saw Move actually InProgress at least once:" << sawMoveInProgress;
+        const QImage expectedBlueIcon =
+            IconTheme::tintedIcon(":/icons/arrow-right.svg", IconTheme::Blue, 20)
+                .pixmap(20, 20).toImage();
+        const bool moveIconIsBlue = sawMoveInProgress && moveIconAtInProgress == expectedBlueIcon;
+        qDebug() << "[phase5] ...and its direction icon was Blue then:" << moveIconIsBlue;
+        // NOT asserted as part of phase5Pass, deliberately: tracing this
+        // while writing this test found that onItemUpdated()'s chunk-
+        // color logic never actually runs for a Move item's InProgress
+        // state in current production code at all — dispatchMoveEntry()
+        // emits exactly one itemAdded (already InProgress, rendered by
+        // appendRow(), which never touches chunk color) and later exactly
+        // one itemUpdated when onEntryMoved()/onEntryMoveFailed() flips
+        // status straight to Done/Failed; nothing ever calls
+        // onItemUpdated() with the item still InProgress. The fix is
+        // still correct and worth keeping (a real inconsistency, and
+        // cheap insurance if Move ever gains progress reporting or
+        // pause/resume), but — unlike every other check in this phase —
+        // there's no genuine, non-contrived way to observe it happen
+        // through the real signal flow today, so this is logged for
+        // visibility only, not required to pass.
+        const bool moveChunkIsBlue =
+            moveChunkStyleAtInProgress.contains(IconTheme::Blue.name(), Qt::CaseInsensitive);
+        qDebug() << "[phase5] (informational, not required) in-flight Move's progress-bar chunk "
+                    "style captured:" << moveChunkStyleAtInProgress << "matches Blue:" << moveChunkIsBlue;
+
+        // Direction-column sort, end to end, with two real, different
+        // directions now genuinely in the table (LocalToLocal, Move) —
+        // both items have long since finished by now (regardless of
+        // status, `direction` never changes), so this just confirms the
+        // real header-click path reaches the fixed comparator correctly:
+        // ascending should put "local copy" before "move".
+        header->sectionClicked(1);   // ColDirection
+        const bool directionSortAscendingCorrect =
+            table->rowCount() == 2
+            && table->item(0, 0)->text() == "vis_localcopy.bin"
+            && table->item(1, 0)->text() == "vis_moveme.bin";
+        qDebug() << "[phase5] Direction column sorts ascending by directionText() end to end:"
+                  << directionSortAscendingCorrect;
+
+        phase5Pass = noIndicatorBeforeClick && textOrderDiffersFromOrdinalOrder
+            && localToLocalIsGreen && moveIconIsBlue && directionSortAscendingCorrect;
+        qDebug() << (phase5Pass ? "[phase5] PASS" : "[phase5] FAIL");
+
+        const bool overallPass = phase1Pass && phase2SyncPass && phase2Pass && phase3Pass
+            && phase4Pass && phase5Pass;
         qDebug() << (overallPass ? "[test] ALL PHASES PASS" : "[test] AT LEAST ONE PHASE FAILED");
         app.exit(overallPass ? 0 : 1);
     });

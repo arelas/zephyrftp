@@ -50,7 +50,15 @@ TransferQueueWidget::TransferQueueWidget(TransferManager *manager, QWidget *pare
     m_table->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_table, &QTableWidget::customContextMenuRequested,
             this, &TransferQueueWidget::showContextMenu);
-    m_table->horizontalHeader()->setSortIndicatorShown(true);
+    // A real bug found by code review: this used to be set true here,
+    // unconditionally, with setSortIndicator() only ever called later
+    // from onHeaderSectionClicked() — QHeaderView's own default indicator
+    // state (section 0, ascending) then showed on the File column from
+    // startup, misleadingly implying the queue was already sorted
+    // alphabetically when m_sortColumn is still -1 (plain insertion
+    // order) until a header is actually clicked. Left false here; turned
+    // on in onHeaderSectionClicked() instead, at the exact moment a real
+    // sort actually begins.
     connect(m_table->horizontalHeader(), &QHeaderView::sectionClicked,
             this, &TransferQueueWidget::onHeaderSectionClicked);
 
@@ -179,6 +187,14 @@ QIcon TransferQueueWidget::statusIcon(const TransferItem &item)
             color = item.phase == TransferPhase::Uploading ? IconTheme::Green : IconTheme::Blue;
             break;
         case TransferDirection::Move: color = IconTheme::Blue; break;   // brief; matches its icon's "in-flight" reading
+        // A real bug found by code review: LocalToLocal had no case here
+        // (unlike directionText()/the icon-path switch above, which both
+        // already handle it explicitly), so it silently fell into
+        // `default`, rendering the exact same Gray as a still-Queued
+        // item — an active local copy was indistinguishable from one
+        // that hadn't started. Green matches the same "active copy"
+        // reading LocalToRemote's upload already uses.
+        case TransferDirection::LocalToLocal: color = IconTheme::Green; break;
         default: color = IconTheme::Gray; break;
         }
     }
@@ -312,9 +328,15 @@ void TransferQueueWidget::onItemUpdated(const TransferItem &item)
         dirLabel->setToolTip(directionText(item.direction));
     }
 
-    auto *statusItem = m_table->item(row, ColStatus);
-    statusItem->setText(statusText(item));
-    statusItem->setForeground(statusTextColor(item.status));
+    // Guarded like the ColSpeed/ColProgress lookups just below — an
+    // inconsistency found by code review: this was the only one of the
+    // three left unguarded, a latent null-pointer deref if any future
+    // code path ever delivered itemUpdated for a row before ColStatus
+    // was populated.
+    if (auto *statusItem = m_table->item(row, ColStatus)) {
+        statusItem->setText(statusText(item));
+        statusItem->setForeground(statusTextColor(item.status));
+    }
 
     auto *progressContainer = m_table->cellWidget(row, ColProgress);
     auto *progressBar = progressContainer ? progressContainer->findChild<QProgressBar *>() : nullptr;
@@ -342,11 +364,20 @@ void TransferQueueWidget::onItemUpdated(const TransferItem &item)
         // the entire transfer, visibly contradicting the row's own icon
         // and "Downloading (1/2)"/"Uploading (2/2)" status text during
         // the first half.
-        if (item.direction == TransferDirection::RemoteToRemote)
+        if (item.direction == TransferDirection::RemoteToRemote) {
             chunkColor = item.phase == TransferPhase::Uploading ? IconTheme::Green : IconTheme::Blue;
-        else
+        } else if (item.direction == TransferDirection::Move) {
+            // A real bug found by code review: this fell into the plain
+            // RemoteToLocal-or-Green branch below, coloring an in-flight
+            // Move's progress bar Green while statusIcon() colors that
+            // exact same row's direction icon Blue — two status
+            // indicators on one row visibly disagreeing about what's
+            // happening. Matches statusIcon()'s own Move color.
+            chunkColor = IconTheme::Blue;
+        } else {
             chunkColor = (item.direction == TransferDirection::RemoteToLocal)
                 ? IconTheme::Blue : IconTheme::Green;
+        }
         break;
     case TransferStatus::Queued:
         chunkColor = IconTheme::Gray;
@@ -451,6 +482,10 @@ void TransferQueueWidget::showContextMenu(const QPoint &pos)
 
 void TransferQueueWidget::onHeaderSectionClicked(int column)
 {
+    // See the constructor's own comment: the indicator only starts being
+    // shown once a real sort actually begins, right here. Harmless to
+    // call again on every subsequent click — already true by then.
+    m_table->horizontalHeader()->setSortIndicatorShown(true);
     if (column == m_sortColumn)
         m_sortOrder = (m_sortOrder == Qt::AscendingOrder) ? Qt::DescendingOrder : Qt::AscendingOrder;
     else {
@@ -474,8 +509,17 @@ void TransferQueueWidget::resortAndRebuild()
         });
         break;
     case ColDirection:
+        // A real bug found by code review: this compared raw
+        // TransferDirection enum ordinals (declaration order), not
+        // anything visible on screen — the Direction cell shows only an
+        // icon and a tooltip, no sortable text, so the resulting order
+        // looked arbitrary with nothing to explain it. ColStatus just
+        // above sorts by its own displayed statusText(); this now does
+        // the same with directionText(), the tooltip text that column's
+        // icon already carries.
         std::stable_sort(items.begin(), items.end(), [ascending](const TransferItem &a, const TransferItem &b) {
-            return ascending ? a.direction < b.direction : a.direction > b.direction;
+            const int cmp = directionText(a.direction).localeAwareCompare(directionText(b.direction));
+            return ascending ? cmp < 0 : cmp > 0;
         });
         break;
     case ColStatus:

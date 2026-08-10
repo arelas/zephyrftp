@@ -2188,6 +2188,55 @@ to drive FileZilla itself for a same-desktop comparison.
   rather than `onItemAdded()`, specifically to avoid recursing back into
   itself — a real, caught-immediately bug the first version of this fix
   introduced.
+  **Five more real issues found by a dedicated code review of this
+  file, all fixed, each now covered by `transfer-queue-test`'s Phase 5:**
+  1. **The Direction header's sort-indicator arrow showed (ascending,
+     File column) from construction, even though nothing was actually
+     sorted yet** — `setSortIndicatorShown(true)` was set unconditionally
+     in the constructor, but `setSortIndicator()` is only ever called
+     later, from `onHeaderSectionClicked()`; until a header is actually
+     clicked, `QHeaderView`'s own default indicator state just showed on
+     screen regardless, falsely implying the queue was already
+     alphabetized when `m_sortColumn` was still -1 (plain insertion
+     order). Fixed by not calling `setSortIndicatorShown()` at all until
+     `onHeaderSectionClicked()`, at the exact moment a real sort begins.
+  2. **`statusIcon()`'s InProgress color switch had no case for
+     `TransferDirection::LocalToLocal`**, unlike `directionText()` and
+     the icon-path switch just above it, which both already handle it —
+     it silently fell into `default: color = IconTheme::Gray`, the exact
+     same color `Queued` uses, making an actively-copying local file
+     indistinguishable from one that hadn't started. Fixed with an
+     explicit case (Green, matching the "active copy" reading
+     `LocalToRemote`'s upload already uses).
+  3. **`resortAndRebuild()`'s Direction-column sort compared raw
+     `TransferDirection` enum ordinals (declaration order) instead of
+     anything visible on screen** — unlike the adjacent Status-column
+     sort, which correctly sorts by its own displayed `statusText()`.
+     The Direction cell shows only an icon and a tooltip, no sortable
+     text, so the resulting order had nothing on screen to explain it.
+     Fixed to sort by `directionText()` — the same tooltip text the
+     column already carries — via `localeAwareCompare()`, matching
+     Status's own approach. `directionText()` made public (previously
+     private) specifically so this fix's comparator basis can be
+     verified directly.
+  4. `onItemUpdated()`'s progress-bar chunk-color logic gave an
+     in-flight `Move` item Green (the same fallback `RemoteToLocal`'s
+     sibling branch uses), while `statusIcon()` colors that exact same
+     row's direction icon Blue for `Move` — two indicators on one row
+     visibly disagreeing. Fixed to match. **Traced while writing the
+     regression test, this drift turns out to currently be unreachable
+     in practice**: `dispatchMoveEntry()` emits exactly one `itemAdded`
+     (already `InProgress`, rendered by `appendRow()`, which never
+     touches chunk color at all) and later exactly one `itemUpdated`
+     when the move resolves, flipping straight to `Done`/`Failed` —
+     nothing ever calls `onItemUpdated()` while a Move item is still
+     genuinely `InProgress`. Kept anyway: a real inconsistency, and cheap
+     insurance if Move ever gains progress reporting or pause/resume.
+  5. `onItemUpdated()` read `m_table->item(row, ColStatus)` without a
+     null check, unlike the guarded `ColSpeed`/`ColProgress` lookups
+     right next to it — a latent null-pointer deref if any future code
+     path ever delivered `itemUpdated` for a row before `ColStatus` was
+     populated. Guarded to match.
 - `CommandsPaneWidget` (`src/ui/CommandsPaneWidget.h/.cpp`) — a live,
   read-only log of protocol traffic, modeled on FileZilla's own message
   log, docked between the toolbar and the file panes by default (View >

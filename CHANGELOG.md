@@ -8,6 +8,16 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The transfer queue's Direction column could show a misleading
+  "sorted" arrow before anything was actually sorted**, and clicking
+  that header sorted by an arbitrary internal order not tied to
+  anything visible on screen — both fixed to reflect the queue's real
+  state.
+- **An actively-copying local-to-local transfer looked identical to one
+  that hadn't started yet** in the queue's direction icon.
+
 ## [0.6.10] — Fix a real crash-on-close bug found by code review of MainWindow
 
 ### Fixed
