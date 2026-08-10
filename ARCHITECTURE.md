@@ -1555,6 +1555,57 @@ to drive FileZilla itself for a same-desktop comparison.
   synchronous host-key trust decision from a real person — the standard
   Qt pattern for a background thread needing a blocking answer from the
   UI, since popping a `QMessageBox` off the GUI thread isn't safe.
+  **Two real bugs found by a dedicated code review of this file, fixed
+  together with the identical pattern in its sibling `CertificateVerifier`:**
+  1. **The prompt showed only the host, never the port** — even though
+     the known-hosts store this decision feeds into is keyed on
+     `"[host]:port"` together (see `SftpBackend::verifyHostKey()`'s own
+     comment on why: two different SSH services can share a hostname on
+     different ports). Two saved sites on the same hostname but
+     different ports got an identical, indistinguishable "unknown/changed
+     host key" prompt, with no way to tell which service was actually
+     being verified — undermining the informed MITM-vs-legitimate-change
+     judgment the dialog exists to support. `CertificateVerifier`/
+     `FtpBackend`'s trusted-fingerprint store has the identical host+port
+     key, so the same bug applied there too. Fixed by threading `port`
+     through both `confirmHostKey()`/`confirmCertificate()`'s signatures
+     (a real, compile-time-enforced fix — the old 3/4-argument signatures
+     simply don't compile against the new 4/5-argument call sites, which
+     is exactly how the regression test below proves this was a genuine
+     API gap, not just a wording nit) and showing `"host:port"` in the
+     dialog text, matching each store's own key format exactly.
+  2. **Both dialogs were shown with a `nullptr` parent instead of the
+     main window.** A parentless `QMessageBox` has no guaranteed
+     stacking/focus relationship to the app — on some window managers or
+     multi-monitor setups it could open unfocused, behind the main
+     window, or on a different virtual desktop, making the app LOOK hung
+     (the worker thread really is blocked, waiting on this dialog) while
+     the actual security-critical prompt is invisible. Fixed by using
+     `qobject_cast<QWidget *>(parent())` — both classes' one real
+     construction site (`MainWindow.cpp`) already passes the main window
+     as the `QObject` parent (`new HostKeyVerifier(this)`), so no new
+     member/parameter was needed to get a real widget reference.
+  Also extracted `TrustPromptDialog::confirm()`
+  (`src/ui/TrustPromptDialog.h`, new, header-only) — a real duplication
+  found in the same review: both classes hand-wrote an identical
+  warning-vs-question dispatch, Yes/No buttons, and fail-safe "No"
+  default, differing only in the title/body text each already builds
+  separately. A third, narrower finding — a host/fingerprint value
+  containing HTML-like characters could in theory be misinterpreted as
+  rich text by `QMessageBox`'s default `Qt::AutoText` format — was
+  investigated and left undone: the host-key/certificate trust step only
+  runs after a successful TCP connection, and no real DNS-resolvable
+  hostname can contain HTML-special characters (RFC 1123), so reaching
+  this would require a user-crafted `/etc/hosts` alias — narrow enough
+  that fixing it now would mean solving a problem nothing currently
+  triggers.
+  **Now covered by an automated regression test**, `trust-prompt-test`
+  (`src/trust_prompt_test.cpp`) — drives the REAL `QMessageBox` each
+  class pops (not a mock), using `conflict-resolution-test`'s own proven
+  live-dialog technique (`QApplication::activeModalWidget()` while
+  `exec()` is still blocking). Confirms the dialog text includes the
+  port, the dialog's parent is the main window, and the return value
+  matches which button was actually clicked, for both classes.
 - `FilePaneWidget` — one side of the dual-pane view. Holds a
   `QStandardItemModel`, doesn't know or care which backend it's attached
   to. `setBackend(backend, thread)` swaps backends at runtime: if a
@@ -2921,7 +2972,10 @@ along the way — worth knowing about if it ever needs touching again.
 - **FTPS certificate verification is now a real trust-on-first-use (TOFU)
   model, not fail-closed-only — confirmed end to end against a real
   server, including the mismatch/decline path.** `CertificateVerifier`
-  (`src/ui/CertificateVerifier.h/.cpp`) mirrors `HostKeyVerifier` exactly:
+  (`src/ui/CertificateVerifier.h/.cpp`) mirrors `HostKeyVerifier` exactly,
+  including the two real bugs a dedicated code review found and fixed in
+  both together — see `HostKeyVerifier`'s own entry above for the
+  missing-port and nullptr-parent detail, both fixed identically here:
   an unverifiable certificate routes to a real person via the same
   blocking-cross-thread-call pattern, and the decision persists to
   `AppConfigLocation/known_certs.json` (a certificate fingerprint is

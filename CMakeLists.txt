@@ -315,6 +315,18 @@ qt_add_executable(app-settings-test EXCLUDE_FROM_ALL
 target_include_directories(app-settings-test PRIVATE src)
 target_link_libraries(app-settings-test PRIVATE Qt6::Core)
 
+# --- Trust-prompt test: drives the REAL QMessageBox HostKeyVerifier/
+# CertificateVerifier pop, same live-dialog technique
+# conflict-resolution-test uses (QT_QPA_PLATFORM=offscreen still renders a
+# real, drivable QMessageBox) ---
+qt_add_executable(trust-prompt-test EXCLUDE_FROM_ALL
+    src/trust_prompt_test.cpp
+    src/ui/HostKeyVerifier.cpp
+    src/ui/CertificateVerifier.cpp
+)
+target_include_directories(trust-prompt-test PRIVATE src)
+target_link_libraries(trust-prompt-test PRIVATE Qt6::Widgets)
+
 # --- Navigation history test (back/forward/up, real LocalBackend + real temp dirs) ---
 qt_add_executable(navigation-test EXCLUDE_FROM_ALL
     src/navigation_test.cpp

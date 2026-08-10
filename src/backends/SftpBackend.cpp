@@ -216,6 +216,7 @@ bool SftpBackend::askUserToTrustHostKey(const QString &fingerprint, bool isMisma
     QMetaObject::invokeMethod(m_hostKeyVerifier, "confirmHostKey", Qt::BlockingQueuedConnection,
                                Q_RETURN_ARG(bool, accepted),
                                Q_ARG(QString, m_credentials.host),
+                               Q_ARG(int, m_credentials.port),
                                Q_ARG(QString, fingerprint),
                                Q_ARG(bool, isMismatch));
     return accepted;

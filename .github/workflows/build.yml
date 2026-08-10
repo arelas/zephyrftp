@@ -69,16 +69,16 @@ jobs:
 
       # The ten EXCLUDE_FROM_ALL test targets CONTRIBUTING.md's "All ten
       # need to actually pass, not just build" rule covers, plus
-      # app-settings-test, sort-and-commands-test, remote-to-remote-test,
-      # and move-entry-test — an eleventh through fourteenth
-      # separately-tracked target (see CONTRIBUTING.md's own subsections
-      # on them) that CI now also builds and runs even though none are
-      # folded into that "ten" count in the docs. Built here as .exe's;
-      # actually run (not just linked) in the next-but-one step.
+      # app-settings-test, trust-prompt-test, sort-and-commands-test,
+      # remote-to-remote-test, and move-entry-test — an eleventh through
+      # fifteenth separately-tracked target (see CONTRIBUTING.md's own
+      # subsections on them) that CI now also builds and runs even though
+      # none are folded into that "ten" count in the docs. Built here as
+      # .exe's; actually run (not just linked) in the next-but-one step.
       - name: Build test suite
         run: >
           cmake --build build-win --target
-          smoke-test transfer-queue-test site-store-test app-settings-test navigation-test
+          smoke-test transfer-queue-test site-store-test app-settings-test trust-prompt-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
           move-entry-test
@@ -104,8 +104,8 @@ jobs:
       #
       # xvfb-run wraps every invocation for a real, confirmed reason,
       # not caution for its own sake: without it, every test that drives
-      # a real QMessageBox (conflict-resolution-test) failed with
-      # "CreateWindowEx failed (Invalid window handle.)" — wine needs a
+      # a real QMessageBox (conflict-resolution-test, trust-prompt-test)
+      # failed with "CreateWindowEx failed (Invalid window handle.)" — wine needs a
       # real, even virtual, X display for its own internal window
       # management, independent of Qt's own QT_QPA_PLATFORM=offscreen.
       # Caught by actually running this in a headless container, not
@@ -147,6 +147,7 @@ jobs:
 
           xvfb-run -a wine ./site-store-test.exe
           xvfb-run -a wine ./app-settings-test.exe
+          xvfb-run -a wine ./trust-prompt-test.exe
 
           xvfb-run -a wine ./navigation-test.exe
           xvfb-run -a wine ./transfer-pause-test.exe
@@ -228,7 +229,7 @@ jobs:
       - name: Build test suite
         run: >
           cmake --build build --target
-          smoke-test transfer-queue-test site-store-test app-settings-test navigation-test
+          smoke-test transfer-queue-test site-store-test app-settings-test trust-prompt-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
           move-entry-test
@@ -256,6 +257,7 @@ jobs:
 
           ./site-store-test
           ./app-settings-test
+          ./trust-prompt-test
 
           ./navigation-test
           ./transfer-pause-test
@@ -357,7 +359,7 @@ jobs:
       - name: Build test suite
         run: >
           cmake --build build --target
-          smoke-test transfer-queue-test site-store-test app-settings-test navigation-test
+          smoke-test transfer-queue-test site-store-test app-settings-test trust-prompt-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
           move-entry-test
@@ -386,6 +388,7 @@ jobs:
 
           ./site-store-test
           ./app-settings-test
+          ./trust-prompt-test
 
           ./navigation-test
           ./transfer-pause-test
@@ -466,7 +469,7 @@ jobs:
       - name: Build test suite
         run: >
           cmake --build build --target
-          smoke-test transfer-queue-test site-store-test app-settings-test navigation-test
+          smoke-test transfer-queue-test site-store-test app-settings-test trust-prompt-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
           move-entry-test
@@ -491,6 +494,7 @@ jobs:
 
           ./site-store-test
           ./app-settings-test
+          ./trust-prompt-test
 
           ./navigation-test
           ./transfer-pause-test

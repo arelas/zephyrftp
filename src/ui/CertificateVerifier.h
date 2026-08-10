@@ -22,7 +22,13 @@ public:
     // warning (possible interception), defaults to "no". details carries
     // the certificate's subject/issuer plus the actual reason(s)
     // QSslSocket couldn't verify it (self-signed, expired, ...), so the
-    // prompt names the real problem rather than a generic warning.
-    Q_INVOKABLE bool confirmCertificate(const QString &host, const QString &fingerprint,
+    // prompt names the real problem rather than a generic warning. port
+    // is shown alongside host — see HostKeyVerifier::confirmHostKey()'s
+    // identical reasoning: the trusted-fingerprint store
+    // (loadTrustedFingerprint()/saveTrustedFingerprint() in
+    // FtpBackend.cpp) is keyed on host+port together, so this prompt
+    // needs to show both to actually identify which service is being
+    // verified.
+    Q_INVOKABLE bool confirmCertificate(const QString &host, int port, const QString &fingerprint,
                                          const QString &details, bool isMismatch);
 };

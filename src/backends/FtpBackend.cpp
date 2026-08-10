@@ -272,6 +272,7 @@ bool FtpBackend::askUserToTrustCertificate(const QString &fingerprint, const QSt
     QMetaObject::invokeMethod(m_certificateVerifier, "confirmCertificate", Qt::BlockingQueuedConnection,
                                Q_RETURN_ARG(bool, accepted),
                                Q_ARG(QString, m_credentials.host),
+                               Q_ARG(int, m_credentials.port),
                                Q_ARG(QString, fingerprint),
                                Q_ARG(QString, details),
                                Q_ARG(bool, isMismatch));

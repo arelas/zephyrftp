@@ -654,6 +654,29 @@ cmake --build build --target app-settings-test
 QT_QPA_PLATFORM=offscreen ./build/app-settings-test
 ```
 
+### A fifteenth target: `trust-prompt-test`
+
+Same "additional, not folded into the fixed count" treatment as the
+four above — self-contained, `EXCLUDE_FROM_ALL`, added to all four
+`build.yml` jobs. Drives the REAL `QMessageBox` that
+`HostKeyVerifier::confirmHostKey()`/`CertificateVerifier::confirmCertificate()`
+each pop, same live-dialog technique `conflict-resolution-test` uses
+(`QApplication::activeModalWidget()` while `exec()` is still blocking).
+Regression coverage for two real bugs a code review found in
+`HostKeyVerifier.cpp`, fixed together with `CertificateVerifier.cpp`
+(same pattern in both): the prompt used to show only the host, never
+the port, even though the known-hosts/known-certs stores are both keyed
+on host+port together — two saved sites sharing a hostname on different
+ports got an identical, indistinguishable prompt; and the dialog was
+shown with a `nullptr` parent instead of the main window, with no
+guaranteed stacking/focus relationship to the app. Run it locally the
+same way:
+
+```
+cmake --build build --target trust-prompt-test
+QT_QPA_PLATFORM=offscreen ./build/trust-prompt-test
+```
+
 ## Live-server verification (SFTP public-key auth, FTP/FTPS, cancel/pause/resume)
 
 The ten targets above are deliberately self-contained — no external

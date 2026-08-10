@@ -17,6 +17,17 @@ in the README), so anything may still change between 0.x releases.
   only auto-scrolls to follow new lines when you were already at the
   bottom; scroll up and it stays put until you scroll back down
   yourself.
+- **The "unknown host" / "host key changed" and "untrusted certificate" /
+  "certificate changed" prompts showed only the server's hostname, never
+  the port** — two saved sites on the same hostname but different ports
+  (e.g. two SFTP servers, or an SFTP and an FTPS service on the same
+  machine) got an identical prompt with no way to tell which one was
+  actually being verified. Both now show `host:port`, matching what's
+  actually being remembered.
+- **Those same two prompts could occasionally open unfocused, behind the
+  main window, or on a different virtual desktop**, making the app look
+  like it had frozen (it was really just waiting on a security prompt
+  you couldn't see). They're now properly attached to the main window.
 
 ### Changed (developer-facing only, no shipped behavior)
 
@@ -36,6 +47,10 @@ in the README), so anything may still change between 0.x releases.
   bit of protocol-combo-box setup code. Extracted to a shared helper so
   a future new protocol only needs to be added in one place instead of
   three.
+- `HostKeyVerifier.cpp`/`CertificateVerifier.cpp` each hand-wrote an
+  identical trust-prompt dialog dispatch. Extracted to a shared helper.
+  Both also get their first-ever automated test coverage
+  (`trust-prompt-test`).
 
 ## [0.6.15] — Fix a real crash-corruption bug found by code review of AppSettings
 
