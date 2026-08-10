@@ -8,6 +8,23 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.6.7] — Fix a CI-only test bug that broke the v0.6.6 release build
+
+### Changed (developer-facing only, no shipped behavior)
+
+- **`file-operations-test`'s download-rollback regression relied on
+  `chmod 000` to simulate an unreadable source file — which only blocks
+  reads for a non-root user.** This project's own container-based CI
+  jobs (`build-linux-appimage`, `build-linux-rpm`, `build-windows`) run
+  their test suite as root inside Docker, where root bypasses Unix
+  permission bits entirely, so the "unreadable" source was actually
+  still readable there and the test's rollback assertions failed —
+  which is exactly what broke three of four v0.6.6 release build jobs
+  (no GitHub Release was ultimately published under that tag). Fixed
+  by using a directory as the copy source instead, which
+  `QFile::copy()` refuses to open regardless of privilege — confirmed
+  both as a normal user and as root via a real `fedora:44` container.
+
 ## [0.6.6] — Fix seven more real bugs found by code review of LocalBackend and the UI layer
 
 ### Fixed
@@ -1073,7 +1090,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.6...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.7...HEAD
+[0.6.7]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.7
 [0.6.6]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.6
 [0.6.5]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.5
 [0.6.4]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.4
