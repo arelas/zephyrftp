@@ -16,6 +16,10 @@ in the README), so anything may still change between 0.x releases.
   justification for a threading assumption instead of the real reason,
   and another claimed a stronger guarantee ("structurally impossible")
   than what the code actually delivers.
+- Icons are rendered slightly more efficiently on a cache miss (first
+  use of a given icon/color/size combination) — the source SVG was
+  being parsed twice (once each for the normal and HiDPI versions)
+  instead of once.
 
 ## [0.6.15] — Fix a real crash-corruption bug found by code review of AppSettings
 

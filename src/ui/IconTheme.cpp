@@ -8,12 +8,15 @@
 namespace IconTheme {
 
 namespace {
-QPixmap renderTinted(const QString &resourcePath, const QColor &color, int pixelSize)
+// Takes an already-constructed renderer rather than a resourcePath, and
+// is called twice per cache miss below (base + @2x) — a real inefficiency
+// found by code review: parsing the same SVG resource twice (via two
+// separate QSvgRenderer(resourcePath) constructions) to render it twice
+// was pure waste, since QSvgRenderer::render() can be called repeatedly
+// against different target QPainters once parsed. Now parsed once, in
+// tintedIcon(), and reused for both renders.
+QPixmap renderTinted(QSvgRenderer &renderer, const QColor &color, int pixelSize)
 {
-    QSvgRenderer renderer(resourcePath);
-    if (!renderer.isValid())
-        return QPixmap();
-
     QPixmap pixmap(pixelSize, pixelSize);
     pixmap.fill(Qt::transparent);
 
@@ -53,7 +56,17 @@ QIcon tintedIcon(const QString &resourcePath, const QColor &color, int size)
     if (cached != cache.constEnd())
         return cached.value();
 
-    const QPixmap base = renderTinted(resourcePath, color, size);
+    // Deliberately not cached: an invalid resourcePath would re-parse and
+    // re-fail on every call for that key instead of being memoized as
+    // QIcon() after the first miss — a real gap found by code review, not
+    // fixed since it's currently unreachable: every call site in this
+    // codebase passes a literal ":/icons/*.svg" path to a real bundled
+    // resource, so there's no known way to actually hit this today.
+    QSvgRenderer renderer(resourcePath);
+    if (!renderer.isValid())
+        return QIcon();
+
+    const QPixmap base = renderTinted(renderer, color, size);
     if (base.isNull())
         return QIcon();
 
@@ -64,7 +77,18 @@ QIcon tintedIcon(const QString &resourcePath, const QColor &color, int size)
     // Qt this pixmap represents the same logical size as `base` at twice
     // the resolution — without it, QIcon would treat this as a second,
     // larger *logical* size rather than a retina variant of the first.
-    QPixmap hidpi = renderTinted(resourcePath, color, size * 2);
+    // Hardcoded to 2.0 rather than the display's actual scale factor: a
+    // real, known limitation on fractional-scaling displays (1.25x/1.5x,
+    // common under GNOME/KDE fractional scaling and on some Windows
+    // laptops) — QIcon then has to smooth-upscale one of only two
+    // available pixmaps instead of getting a purpose-rendered one at the
+    // exact runtime ratio, visibly softer than it could be. Not fixed:
+    // tintedIcon() has no widget/screen context to read a real scale
+    // factor from, and a naive QGuiApplication::primaryScreen() read
+    // would still be wrong on a multi-monitor setup with per-monitor
+    // scaling — a proper fix needs real design work, not a quick patch
+    // that could be worse than this in some cases.
+    QPixmap hidpi = renderTinted(renderer, color, size * 2);
     if (!hidpi.isNull()) {
         hidpi.setDevicePixelRatio(2.0);
         icon.addPixmap(hidpi);

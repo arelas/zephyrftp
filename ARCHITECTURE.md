@@ -2660,6 +2660,30 @@ above.
   Exposes the four semantic accent colors (`IconTheme::Blue/Green/Red/Amber`)
   plus two neutral grays as named constants, matching
   `assets/zephyr-theme.css`'s `--zf-*` tokens from the design package.
+  **A dedicated code review of this file found one more real efficiency
+  issue on top of the caching fix above, plus two known, currently
+  unreachable limitations, all now documented in the code itself:**
+  every cache MISS still parsed the same SVG resource twice — once each
+  for the base and `@2x` renders, via two separate
+  `QSvgRenderer(resourcePath)` constructions — when the renderer only
+  needs parsing once and can be rendered from repeatedly against
+  different target `QPainter`s. Fixed by parsing once in `tintedIcon()`
+  and passing the renderer by reference into `renderTinted()`; confirmed
+  correctness-preserving (not just "doesn't crash") via
+  `sort-and-commands-test`'s existing pixel-identity and
+  cache-key-discrimination checks, all of which still pass. Also noted,
+  not fixed: the `@2x` variant is hardcoded to `devicePixelRatio` 2.0
+  rather than the display's actual scale factor, visibly softer than a
+  purpose-rendered icon on a fractional-scaling display (1.25x/1.5x) —
+  real, but `tintedIcon()` has no widget/screen context to read a real
+  ratio from, and a naive `QGuiApplication::primaryScreen()` read would
+  still be wrong on a multi-monitor setup with per-monitor scaling, so
+  this needs real design work rather than a quick patch that could make
+  things worse in some cases. And: a failed render (invalid
+  `resourcePath`) is never cached, so a bad key would re-parse and
+  re-fail on every call rather than being memoized — not fixed since
+  it's currently unreachable, every call site in this codebase passes a
+  literal `":/icons/*.svg"` path to a real bundled resource.
 - `resources/theme.qss` — the design package's CSS theme ported to Qt
   Style Sheets token-by-token (QSS has no equivalent of CSS custom
   properties, so each `--zf-*` value is hardcoded here with its source
