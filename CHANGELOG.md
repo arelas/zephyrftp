@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.6.6] — Fix seven more real bugs found by code review of LocalBackend and the UI layer
+
 ### Fixed
 
 - **Overwriting a local file or folder during a transfer, rename, or
@@ -1071,7 +1073,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.5...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.6...HEAD
+[0.6.6]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.6
 [0.6.5]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.5
 [0.6.4]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.4
 [0.6.3]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.3
