@@ -2285,6 +2285,28 @@ to drive FileZilla itself for a same-desktop comparison.
   (`s_nextRequestId`) `static` — shared across every `FolderEnumerator`
   instance ever created, not per-instance — so two concurrent instances
   can never collide regardless of how many requests either has issued.
+  **A dedicated code review of this file (its first) found no new
+  functional bugs — genuinely a clean, small file — but two real
+  documentation-accuracy issues in the comment above, both fixed:** the
+  `s_nextRequestId` comment justified skipping an atomic with "instances
+  are only ever constructed on the GUI thread (see this class's own
+  header comment)" — a circular citation pointing at itself rather than
+  an independent reason. Corrected to cite the real reason (both actual
+  construction sites — `TransferManager`, always GUI-thread per its own
+  header comment, and `verify-sftp-pubkey`'s manual harness — are
+  GUI-thread-only today; nothing enforces this for a hypothetical future
+  caller). Separately, the fix's own comment claimed the static counter
+  makes id collisions "structurally impossible" — true only between two
+  concurrently-*active* enumerators; a just-finished one stays connected
+  to the backend's signals until its `deleteLater()` actually runs on
+  the next event-loop pass, so a backend that ever re-emitted
+  `directoryEnumerated` for that enumerator's last-consumed request id
+  during that window would be silently reprocessed. Not guarded against
+  in code — no real backend (`LocalBackend`/`SftpBackend`/`FtpBackend`)
+  does this, so there's nothing to defend against yet — but the
+  overclaiming wording is fixed rather than left to mislead a future
+  reader, per this project's own "verify rather than assume" rule (see
+  CONTRIBUTING.md).
 - `TransferQueueWidget` — table view mirroring `TransferManager`'s
   `itemAdded`/`itemUpdated` signals, plus a right-click context menu
   (Cancel/Pause/Resume/Retry, each enabled based on the item's current

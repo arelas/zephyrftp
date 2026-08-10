@@ -8,6 +8,15 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Changed (developer-facing only, no shipped behavior)
+
+- `FolderEnumerator.cpp` got its first dedicated code review — a
+  genuinely clean, small file with no new functional bugs found. Two
+  inaccurate code comments were corrected: one cited itself as its own
+  justification for a threading assumption instead of the real reason,
+  and another claimed a stronger guarantee ("structurally impossible")
+  than what the code actually delivers.
+
 ## [0.6.15] — Fix a real crash-corruption bug found by code review of AppSettings
 
 ### Fixed

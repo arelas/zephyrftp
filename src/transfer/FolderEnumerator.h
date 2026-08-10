@@ -88,9 +88,26 @@ private:
     // own (requestId == m_activeRequestId matching for the wrong reason),
     // corrupting both enumerations' results together. A `static` counter,
     // shared across every instance ever created, makes that collision
-    // structurally impossible — instances are only ever constructed on the
-    // GUI thread (see this class's own header comment), so a plain
-    // (non-atomic) static is sufficient.
+    // impossible between two concurrently-ACTIVE enumerators — the actual
+    // scenario the bug above was about. It's a plain (non-atomic) int, not
+    // an atomic, because both of this class's real construction sites
+    // (TransferManager.cpp, which — per TransferManager.h's own comment —
+    // always lives on the GUI thread; verify-sftp-pubkey.cpp's manual test
+    // harness) only ever construct one on the GUI thread; a future caller
+    // constructing one from a worker thread would reintroduce a genuine
+    // data race here, since nothing enforces that today.
+    //
+    // NOT covered by "impossible" above, found by review rather than
+    // testing: a FINISHED enumerator stays connected to the backend's
+    // signals until its deleteLater() (issued by the caller right after
+    // finished()/failed(), see TransferManager.cpp) actually runs on the
+    // next event-loop pass — if a backend ever re-emitted
+    // directoryEnumerated for that enumerator's last-consumed requestId
+    // during that narrow window, this class would silently reprocess it.
+    // Not fixed: no real backend (LocalBackend/SftpBackend/FtpBackend)
+    // double-emits for an already-answered request id, so this has no
+    // known way to actually happen — noted here rather than guarded
+    // against in code for a scenario nothing currently triggers.
     static int s_nextRequestId;
     int m_activeRequestId = -1;
     QList<EnumeratedItem> m_results;
