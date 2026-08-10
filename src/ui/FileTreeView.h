@@ -13,15 +13,30 @@ class FilePaneWidget;
 // a file from one pane's tree onto a different pane's tree", so drag
 // start and drop handling are both done here manually instead.
 //
-// Same-process only: the dragged MIME data embeds a raw FilePaneWidget*
-// (as a quintptr) identifying the source pane, resolved back to a pointer
-// on drop. This never needs to survive outside this app's own process —
-// there's no real OS-level drag target involved — so this is a standard,
-// legitimate technique for internal Qt drag-and-drop, not a hack. It does
-// mean the source pane must still exist when the drop lands; in practice
-// that's guaranteed here since a drag's nested event loop (QDrag::exec())
-// keeps running until the drop completes, and nothing in this app
-// destroys a FilePaneWidget while that's happening.
+// Meant for same-process use only: the dragged MIME data embeds a raw
+// FilePaneWidget* (as a quintptr) identifying the source pane, resolved
+// back to a pointer on drop — a standard, legitimate technique for
+// internal Qt drag-and-drop, not a hack. It does mean the source pane
+// must still exist when the drop lands; in practice that's guaranteed
+// here since a drag's nested event loop (QDrag::exec()) keeps running
+// until the drop completes, and nothing in this app destroys a
+// FilePaneWidget while that's happening.
+// **A real bug found by code review: "same-process only" was an
+// assumption, not something ever enforced.** The underlying OS
+// drag-and-drop transport (XDND on X11, the Wayland data-device
+// protocol, OLE DnD on Windows) is inherently cross-PROCESS by design on
+// every platform this app targets, and Qt adds no same-process
+// restriction for a custom MIME type — so dragging a file from one
+// running ZephyrFTP instance onto a SECOND instance's window delivered
+// the first instance's raw pane pointer to the second instance, which
+// genuinely dereferenced it (TransferManager::enqueue() calls
+// sourcePane->currentDirectory()/backend() directly): a wild-pointer
+// dereference into memory this process never allocated. Closed with a
+// random per-process token (see FileTreeView.cpp's kProcessDragToken)
+// embedded alongside the pointer and checked BEFORE the pointer bytes
+// are ever even reconstructed, let alone dereferenced — a cross-process
+// drop carries a token this process never generated, so it's rejected
+// outright.
 class FileTreeView : public QTreeView {
     Q_OBJECT
 public:

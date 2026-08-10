@@ -6,14 +6,33 @@
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
+#include <QRandomGenerator>
 #include <cstring>
 
 namespace {
-// Same-process-only MIME types — never meant to interoperate with the OS
-// or another application, just to carry data between two FileTreeViews
-// inside this one app during a single drag gesture.
+// Custom MIME types meant only to carry data between two FileTreeViews
+// inside this one app during a single drag gesture — NOT meant to
+// interoperate with another application. The underlying OS drag-and-drop
+// transport doesn't actually enforce that intent, though (see
+// kProcessDragToken below): a custom MIME type is visible to any
+// receiving process that recognizes its name, same-app or not.
 const QString kSourcePaneMimeType = QStringLiteral("application/x-zephyrftp-sourcepane");
 const QString kFileNamesMimeType = QStringLiteral("application/x-zephyrftp-filenames");
+
+// Generated fresh once per process, at static-initialization time, and
+// never transmitted anywhere else — see FileTreeView.h's own comment for
+// the real cross-process pointer-dereference bug this closes. A drop
+// carrying any other value (a different process, or in principle a
+// different, non-ZephyrFTP application that happened to offer the same
+// custom MIME type name) is rejected before the pointer bytes that
+// follow it are ever reconstructed. Deliberately not hardened against a
+// hostile process on the same machine deliberately guessing/brute-
+// forcing this exact 64-bit value — that's a much larger threat model a
+// malicious local binary could attack this process through a dozen
+// other ways regardless — this closes the ordinary, non-adversarial
+// case of two genuine ZephyrFTP windows (or a second instance) sharing
+// one desktop.
+const quint64 kProcessDragToken = QRandomGenerator::global()->generate64();
 }
 
 FileTreeView::FileTreeView(FilePaneWidget *owningPane, QWidget *parent)
@@ -36,9 +55,13 @@ void FileTreeView::startDrag(Qt::DropActions supportedActions)
 
     auto *mimeData = new QMimeData;
 
+    // Token first, then the pointer — see kProcessDragToken's own comment
+    // for why. dropEvent() checks the token before it ever looks at the
+    // pointer bytes that follow it.
     const quintptr sourcePanePtr = reinterpret_cast<quintptr>(m_owningPane);
-    mimeData->setData(kSourcePaneMimeType,
-                       QByteArray(reinterpret_cast<const char *>(&sourcePanePtr), sizeof(sourcePanePtr)));
+    QByteArray payload(reinterpret_cast<const char *>(&kProcessDragToken), sizeof(kProcessDragToken));
+    payload.append(reinterpret_cast<const char *>(&sourcePanePtr), sizeof(sourcePanePtr));
+    mimeData->setData(kSourcePaneMimeType, payload);
 
     // Encoded as "<0 or 1>\t<name>" per line — the isDir flag needs to
     // survive the drag too now that whole folders can be dragged, not
@@ -73,13 +96,27 @@ void FileTreeView::dropEvent(QDropEvent *event)
         return;
     }
 
-    const QByteArray ptrBytes = mimeData->data(kSourcePaneMimeType);
-    if (ptrBytes.size() != sizeof(quintptr)) {
+    const QByteArray payload = mimeData->data(kSourcePaneMimeType);
+    if (payload.size() != static_cast<int>(sizeof(kProcessDragToken) + sizeof(quintptr))) {
         event->ignore();
         return;
     }
+
+    // Checked BEFORE the pointer bytes that follow are ever reconstructed
+    // — see kProcessDragToken's own comment for the real cross-process
+    // pointer-dereference bug this prevents. A mismatch means this drop
+    // didn't originate from THIS process's own startDrag() (almost
+    // certainly a different ZephyrFTP instance), so the pointer bytes
+    // are never even looked at, let alone dereferenced.
+    quint64 receivedToken = 0;
+    std::memcpy(&receivedToken, payload.constData(), sizeof(receivedToken));
+    if (receivedToken != kProcessDragToken) {
+        event->ignore();
+        return;
+    }
+
     quintptr sourcePanePtr = 0;
-    std::memcpy(&sourcePanePtr, ptrBytes.constData(), sizeof(quintptr));
+    std::memcpy(&sourcePanePtr, payload.constData() + sizeof(receivedToken), sizeof(quintptr));
     auto *sourcePane = reinterpret_cast<FilePaneWidget *>(sourcePanePtr);
 
     if (sourcePane == m_owningPane) {

@@ -39,7 +39,10 @@
 #include <QAbstractItemModel>
 #include <QItemSelectionModel>
 #include <QPlainTextEdit>
+#include <QMimeData>
+#include <QDropEvent>
 #include "ui/FilePaneWidget.h"
+#include "ui/FileTreeView.h"
 #include "ui/CommandsPaneWidget.h"
 #include "backends/LocalBackend.h"
 #include "backends/RemoteBackend.h"
@@ -245,6 +248,70 @@ int main(int argc, char *argv[])
         const QStringList stillSelected = sortPane->selectedFileNames();
         check("selection survived a same-directory refresh (bravo.txt still selected)",
               stillSelected.size() == 1 && stillSelected.first() == QStringLiteral("bravo.txt"));
+
+        // ---------- Regression: FileTreeView::dropEvent() must reject a
+        // drop whose MIME payload doesn't carry a token matching THIS
+        // process's own per-process random token — the real bug this
+        // closes: dragging between two SEPARATE ZephyrFTP processes used
+        // to reconstruct and genuinely dereference the OTHER process's
+        // raw FilePaneWidget pointer (see FileTreeView.h's own comment).
+        // Can't spawn a second real process here, but the property under
+        // test is exactly "a drop carrying the wrong token is safely
+        // ignored, with the pointer bytes never even touched" — proven
+        // directly by forging a drop with a deliberately wrong token and
+        // a deliberately poisoned pointer value that would almost
+        // certainly crash this process outright if it were ever actually
+        // dereferenced. No crash occurring (this test process is still
+        // running to check the result at all) plus filesDroppedFrom
+        // never firing is the proof. ----------
+        auto *dropView = sortPane->findChild<FileTreeView *>();
+        check("found the file pane's FileTreeView", dropView != nullptr);
+
+        bool sawFilesDropped = false;
+        QObject::connect(dropView, &FileTreeView::filesDroppedFrom, &app,
+                          [&](FilePaneWidget *, const QList<RemoteEntry> &) {
+            sawFilesDropped = true;
+        });
+
+        auto sendForgedDrop = [&](const QByteArray &sourcePanePayload) {
+            auto *mimeData = new QMimeData;
+            mimeData->setData(QStringLiteral("application/x-zephyrftp-sourcepane"), sourcePanePayload);
+            mimeData->setData(QStringLiteral("application/x-zephyrftp-filenames"),
+                               QByteArrayLiteral("0\tsomefile.txt"));
+            // Sent to the view's VIEWPORT, not the QTreeView/FileTreeView
+            // widget itself — QAbstractScrollArea (which QTreeView derives
+            // from) delivers mouse/drag-and-drop events to its internal
+            // viewport child widget, not the outer widget directly;
+            // confirmed directly (a send to dropView itself never reached
+            // dropEvent() at all) before landing on this.
+            QDragEnterEvent enterEvent(QPoint(5, 5), Qt::CopyAction, mimeData, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(dropView->viewport(), &enterEvent);
+            QDropEvent dropEvent(QPointF(5, 5), Qt::CopyAction, mimeData,
+                                  Qt::LeftButton, Qt::NoModifier, QEvent::Drop);
+            QApplication::sendEvent(dropView->viewport(), &dropEvent);
+        };
+
+        // Wrong token (16 bytes: 8-byte bogus token + 8-byte poison
+        // pointer). The poison pointer value would be a near-certain
+        // crash if this were ever actually dereferenced as a
+        // FilePaneWidget*.
+        const quint64 wrongToken = 0xDEADBEEFCAFEBABEULL;
+        const quintptr poisonPtr = 0x4141414141414141ULL;
+        QByteArray forgedPayload(reinterpret_cast<const char *>(&wrongToken), sizeof(wrongToken));
+        forgedPayload.append(reinterpret_cast<const char *>(&poisonPtr), sizeof(poisonPtr));
+        sendForgedDrop(forgedPayload);
+
+        check("a drop with a wrong token was safely rejected — filesDroppedFrom never fired",
+              !sawFilesDropped);
+
+        // Old-format payload (just a lone pointer, no token at all —
+        // what a pre-fix version of this app would have sent) must also
+        // be safely rejected, on size mismatch alone.
+        sawFilesDropped = false;
+        QByteArray oldFormatPayload(reinterpret_cast<const char *>(&poisonPtr), sizeof(poisonPtr));
+        sendForgedDrop(oldFormatPayload);
+        check("an old-format (pre-fix, token-less) payload was safely rejected on size mismatch alone",
+              !sawFilesDropped);
 
         qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
         app.exit(allPass ? 0 : 1);

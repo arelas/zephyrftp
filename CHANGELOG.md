@@ -25,6 +25,11 @@ in the README), so anything may still change between 0.x releases.
   deleted** — it always failed with a misleading "may not be empty"
   message regardless of whether it (or its target) was genuinely
   removable.
+- **Running two copies of ZephyrFTP at once and dragging a file from a
+  pane in one onto a pane in the other could crash the receiving copy**
+  instead of being safely ignored — a drag-and-drop payload from a
+  different running instance was mistakenly treated as if it came from
+  the same one.
 
 ## [0.6.5] — Fix five more real bugs found by code review of TransferManager and the UI layer
 

@@ -1456,6 +1456,44 @@ to drive FileZilla itself for a same-desktop comparison.
   selected entries encoded as `"<0 or 1>\t<name>"` per line, the leading
   flag being `isDir`, needed since whole folders can be dragged now, not
   just files.
+  **A real, security-relevant bug found by code review: "same-process
+  only" was an assumption never actually enforced, and cross-process
+  delivery is genuinely reachable, not just theoretical.** `dropEvent()`
+  used to reconstruct the `FilePaneWidget*` from the raw bytes with only
+  a byte-COUNT check — no check the pointer was live or belonged to this
+  process — and the reconstructed pointer IS genuinely dereferenced
+  downstream (`MainWindow::onFilesDropped()` -> `enqueueEntries()` ->
+  `TransferManager::enqueue()`, which calls
+  `sourcePane->currentDirectory()`/`backend()` directly). The underlying
+  OS drag-and-drop transport (XDND on X11, the Wayland data-device
+  protocol, OLE DnD on Windows) is inherently cross-PROCESS by design on
+  every platform this app targets, and Qt adds no same-process
+  restriction for a custom MIME type — dragging a file from one running
+  ZephyrFTP instance onto a SECOND instance's window really did deliver
+  the first instance's raw pane pointer to the second, which would then
+  dereference it: a wild-pointer read into memory that process never
+  allocated. Fixed with `kProcessDragToken`, a random 64-bit value
+  generated fresh once per process at static-initialization time and
+  embedded alongside the pointer — checked BEFORE the pointer bytes are
+  ever even reconstructed, let alone dereferenced, so a cross-process
+  drop (carrying a token this process never generated) is rejected
+  outright. Not hardened against a hostile process on the same machine
+  deliberately guessing/brute-forcing this exact value — a much larger
+  threat model a malicious local binary could attack this process
+  through a dozen other ways regardless — this closes the ordinary,
+  non-adversarial case of two genuine ZephyrFTP windows (or a second
+  instance) sharing one desktop. Confirmed with a real regression test
+  in `sort-and-commands-test`: forging a drop with a valid-looking but
+  wrong token, and separately an old-format (pre-fix) token-less
+  payload, against a real `FileTreeView` — the old-format payload is
+  confirmed (via a real pre-fix control) to have been genuinely accepted
+  and dereferenced before this fix, safely rejected after it. Delivering
+  the forged `QDropEvent` needed sending it to the view's `viewport()`
+  child widget specifically, not the `FileTreeView` itself — confirmed
+  directly (a send to the outer widget never reached `dropEvent()` at
+  all) rather than assumed, since `QAbstractScrollArea` (which
+  `QTreeView` derives from) routes mouse/drag-and-drop events through
+  its internal viewport, not the outer widget.
 - `TransferManager` — owns the transfer queue, processes it **serially**
   (one item at a time — SftpBackend holds a single libssh2 session, and
   concurrent transfers on the same session aren't safe without more
