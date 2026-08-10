@@ -47,6 +47,23 @@ int main(int argc, char *argv[])
         qDebug() << "[test] fileOperationFailed:" << op << path << reason;
     });
 
+    // For the rollback regression phases further down.
+    bool lastTransferFailed = false;
+    QObject::connect(backend, &RemoteBackend::transferFailed, &app,
+                      [&](const QString &fileName, const QString &reason) {
+        Q_UNUSED(fileName);
+        lastTransferFailed = true;
+        qDebug() << "[test] transferFailed:" << reason;
+    });
+    bool lastMoveFailed = false;
+    int lastMoveFailedRequestId = -1;
+    QObject::connect(backend, &RemoteBackend::entryMoveFailed, &app,
+                      [&](const QString &reason, int requestId) {
+        lastMoveFailed = true;
+        lastMoveFailedRequestId = requestId;
+        qDebug() << "[test] entryMoveFailed:" << reason << requestId;
+    });
+
     // --- Phase 1: create an empty file ---
     QTimer::singleShot(100, &app, [&]() {
         QMetaObject::invokeMethod(backend, "createFile", Qt::QueuedConnection,
@@ -142,6 +159,117 @@ int main(int argc, char *argv[])
               lastFailedOperation == "Delete");
         check("deleteEntry (non-empty folder): folder was NOT deleted (no accidental recursive wipe)",
               QDir(base + "/nonempty").exists() && QDir(base + "/nonempty/inner").exists());
+
+        // --- Phase 10: delete a DIRECTORY SYMLINK. Regression test for a
+        // real bug: QFileInfo::isDir() — which RemoteEntry::isDir, and so
+        // deleteEntry()'s isDirectory parameter, is ultimately derived
+        // from in listDirectory() — follows symlinks, but QDir::rmdir()
+        // (POSIX rmdir(2)) deliberately does NOT follow one in its final
+        // path component. A directory symlink could therefore never
+        // actually be deleted, always failing with the same misleading
+        // "may not be empty" message no matter how removable it (or its
+        // target) genuinely was. ---
+        QDir().mkpath(base + "/symlink_target");
+        QFile::link(base + "/symlink_target", base + "/symlink_to_dir");
+        lastFailedOperation.clear();
+        QMetaObject::invokeMethod(backend, "deleteEntry", Qt::QueuedConnection,
+                                   Q_ARG(QString, base + "/symlink_to_dir"), Q_ARG(bool, true));
+    });
+
+    QTimer::singleShot(2100, &app, [&]() {
+        check("deleteEntry (directory symlink): no failure reported", lastFailedOperation.isEmpty());
+        check("deleteEntry (directory symlink): the symlink itself is gone",
+              !QFileInfo(base + "/symlink_to_dir").exists());
+        check("deleteEntry (directory symlink): its TARGET directory survived untouched "
+              "(only the link was removed, not the real directory)",
+              QDir(base + "/symlink_target").exists());
+
+        // --- Phase 11: renameEntry() must still correctly reject a
+        // GENUINE naming conflict (a real, different file already at
+        // newPath) — confirms the operator== fix below didn't
+        // accidentally loosen this into a no-op. ---
+        QFile a(base + "/conflict_a.txt");
+        a.open(QIODevice::WriteOnly);
+        a.write("file a");
+        a.close();
+        QFile b(base + "/conflict_b.txt");
+        b.open(QIODevice::WriteOnly);
+        b.write("file b");
+        b.close();
+        lastFailedOperation.clear();
+        QMetaObject::invokeMethod(backend, "renameEntry", Qt::QueuedConnection,
+                                   Q_ARG(QString, base + "/conflict_a.txt"),
+                                   Q_ARG(QString, base + "/conflict_b.txt"));
+    });
+
+    QTimer::singleShot(2300, &app, [&]() {
+        check("renameEntry onto a genuinely different existing file: still correctly rejected",
+              lastFailedOperation == "Rename");
+        check("renameEntry onto a genuinely different existing file: neither file was touched",
+              QFile::exists(base + "/conflict_a.txt") && QFile::exists(base + "/conflict_b.txt"));
+
+        // --- Phase 12: a failed download copy must roll back to the
+        // original destination content, not lose it. Regression test for
+        // a real bug: the old code deleted any existing destination
+        // FIRST, then attempted the copy — if the copy then failed, the
+        // original content was already gone, permanently. Forces a real,
+        // deterministic copy failure (source made unreadable via chmod)
+        // against a real pre-existing destination file. ---
+        QFile::setPermissions(base + "/rollback_src.txt",   // in case a previous interrupted run left this chmod'd
+                               QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+        QFile dest(base + "/rollback_dest.txt");
+        dest.open(QIODevice::WriteOnly);
+        dest.write("original destination content — must survive a failed copy");
+        dest.close();
+        QFile src(base + "/rollback_src.txt");
+        src.open(QIODevice::WriteOnly);
+        src.write("new content that will never actually arrive");
+        src.close();
+        QFile::setPermissions(base + "/rollback_src.txt", QFileDevice::Permissions());   // chmod 000: genuinely unreadable
+
+        lastTransferFailed = false;
+        QMetaObject::invokeMethod(backend, "downloadFile", Qt::QueuedConnection,
+                                   Q_ARG(QString, base + "/rollback_src.txt"),
+                                   Q_ARG(QString, base + "/rollback_dest.txt"),
+                                   Q_ARG(qint64, 0));
+    });
+
+    QTimer::singleShot(2500, &app, [&]() {
+        check("downloadFile with an unreadable source: reported as a failure", lastTransferFailed);
+        QFile dest(base + "/rollback_dest.txt");
+        dest.open(QIODevice::ReadOnly);
+        check("downloadFile with an unreadable source: the ORIGINAL destination content survived "
+              "(not deleted before the copy was known to succeed)",
+              dest.readAll() == "original destination content — must survive a failed copy");
+        QFile::setPermissions(base + "/rollback_src.txt",   // restore, so a re-run of this test can clean up normally
+                               QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+
+        // --- Phase 13: same bug, same fix, for moveEntry() — a failed
+        // move must roll back an overwritten destination too. oldPath
+        // deliberately doesn't exist, guaranteeing QDir::rename() fails
+        // deterministically inside moveEntry(), AFTER it has already
+        // moved the pre-existing destination aside. ---
+        QFile moveDest(base + "/move_rollback_dest.txt");
+        moveDest.open(QIODevice::WriteOnly);
+        moveDest.write("move destination content — must survive a failed move");
+        moveDest.close();
+
+        lastMoveFailed = false;
+        QMetaObject::invokeMethod(backend, "moveEntry", Qt::QueuedConnection,
+                                   Q_ARG(QString, base + "/move_rollback_nonexistent_source.txt"),
+                                   Q_ARG(QString, base + "/move_rollback_dest.txt"),
+                                   Q_ARG(int, 777));
+    });
+
+    QTimer::singleShot(2700, &app, [&]() {
+        check("moveEntry with a nonexistent source: reported as a failure", lastMoveFailed);
+        check("moveEntry with a nonexistent source: the failure carried the right request id",
+              lastMoveFailedRequestId == 777);
+        QFile moveDest(base + "/move_rollback_dest.txt");
+        moveDest.open(QIODevice::ReadOnly);
+        check("moveEntry with a nonexistent source: the ORIGINAL destination content survived "
+              "(not deleted before the move was known to succeed)",
+              moveDest.readAll() == "move destination content — must survive a failed move");
 
         qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
         app.exit(allPass ? 0 : 1);

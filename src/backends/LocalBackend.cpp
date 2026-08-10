@@ -31,6 +31,37 @@ QString renderPermissions(QFileDevice::Permissions permissions)
     if (permissions & QFileDevice::ExeOther)   perms[8] = 'x';
     return QString::fromLatin1(perms, 9);
 }
+
+// Prepares `destPath` to be safely overwritten: if something's already
+// there, moves it aside to a same-directory sibling instead of deleting
+// it outright — a real bug this closes, shared by downloadFile(),
+// uploadFile(), and moveEntry(): all three used to delete any existing
+// destination FIRST, then attempt the actual copy/rename; if that then
+// failed (disk full, permission denied, source vanishing mid-copy), the
+// original destination content was already gone, permanently, with only
+// a generic failure message. Moving aside instead means a subsequent
+// failure can restore the original exactly as it was (see each call
+// site's own rollback), rather than losing it. Same-directory sibling
+// specifically so both the aside-move and any rollback stay a cheap,
+// same-filesystem rename on every platform, never a cross-filesystem
+// copy. Returns true if the caller can proceed — either nothing was
+// there (*backupPath left empty, nothing to roll back) or the existing
+// entry was safely moved aside (*backupPath set to where it went);
+// false only if something exists but couldn't even be moved aside (a
+// permission issue), which the caller should treat as the destination
+// being genuinely blocked.
+bool prepareOverwrite(const QString &destPath, QString *backupPath)
+{
+    backupPath->clear();
+    if (!QFile::exists(destPath))
+        return true;
+    const QString candidate = destPath + QStringLiteral(".zephyrftp-bak");
+    QFile::remove(candidate);   // leftover from an earlier failed attempt, if any — safe to discard
+    if (!QFile::rename(destPath, candidate))
+        return false;
+    *backupPath = candidate;
+    return true;
+}
 }
 
 LocalBackend::LocalBackend(QObject *parent)
@@ -140,19 +171,26 @@ void LocalBackend::downloadFile(const QString &remotePath, const QString &localP
     // QFile::copy() specifically refuses to overwrite an existing
     // destination (unlike QFile::open(WriteOnly), which truncates) — found
     // via the transfer-queue-test's retry phase failing on a second copy
-    // of the same file. Remove any existing destination first so this
-    // matches SftpBackend's overwrite behavior (LIBSSH2_FXF_TRUNC on
-    // upload; QFile::open(WriteOnly) truncates on download).
-    if (QFile::exists(localPath) && !QFile::remove(localPath)) {
+    // of the same file. prepareOverwrite() moves any existing destination
+    // aside rather than deleting it outright — see its own comment for
+    // the real data-loss bug this fixes — matching SftpBackend's
+    // overwrite behavior (LIBSSH2_FXF_TRUNC on upload; QFile::open(WriteOnly)
+    // truncates on download) once the copy has actually succeeded.
+    QString backupPath;
+    if (!prepareOverwrite(localPath, &backupPath)) {
         emit transferFailed(remotePath, QStringLiteral("Could not overwrite existing file: %1").arg(localPath));
         return;
     }
 
     QFile src(remotePath);
     if (!src.copy(localPath)) {
+        if (!backupPath.isEmpty())
+            QFile::rename(backupPath, localPath);   // roll back — restore the original exactly as it was
         emit transferFailed(remotePath, src.errorString());
         return;
     }
+    if (!backupPath.isEmpty())
+        QFile::remove(backupPath);   // copy succeeded — the backup is no longer needed
     emit transferProgress(remotePath, size, size);
     emit transferFinished(remotePath);
 }
@@ -165,16 +203,21 @@ void LocalBackend::uploadFile(const QString &localPath, const QString &remotePat
     emit transferProgress(localPath, 0, size);
 
     // See the matching comment in downloadFile() above — same fix, same reason.
-    if (QFile::exists(remotePath) && !QFile::remove(remotePath)) {
+    QString backupPath;
+    if (!prepareOverwrite(remotePath, &backupPath)) {
         emit transferFailed(localPath, QStringLiteral("Could not overwrite existing file: %1").arg(remotePath));
         return;
     }
 
     QFile src(localPath);
     if (!src.copy(remotePath)) {
+        if (!backupPath.isEmpty())
+            QFile::rename(backupPath, remotePath);   // roll back — restore the original exactly as it was
         emit transferFailed(localPath, src.errorString());
         return;
     }
+    if (!backupPath.isEmpty())
+        QFile::remove(backupPath);   // copy succeeded — the backup is no longer needed
     emit transferProgress(localPath, size, size);
     emit transferFinished(localPath);
 }
@@ -186,7 +229,22 @@ QString LocalBackend::currentPath() const
 
 void LocalBackend::deleteEntry(const QString &path, bool isDirectory)
 {
-    if (isDirectory) {
+    // isDirectory comes from the caller's RemoteEntry::isDir, set via
+    // QFileInfo::isDir() in listDirectory()/listDirectoryForEnumeration()
+    // — which FOLLOWS symlinks, so a directory symlink also reports
+    // isDirectory=true here. A real bug this guard fixes, confirmed
+    // directly: QDir::rmdir() (POSIX rmdir(2)) deliberately does NOT
+    // follow a symlink in its final path component — it requires the
+    // path to literally BE a directory, not a symlink to one — so a
+    // directory symlink could never actually be deleted this way,
+    // always failing with the same misleading "may not be empty"
+    // message no matter how genuinely removable it (or its target) was.
+    // A symlink — to a directory or otherwise — is itself always a
+    // single filesystem entry, removed the same way a plain file is
+    // (QFile::remove(), POSIX unlink(2) semantics, confirmed to act on
+    // the symlink entry itself and leave its target directory
+    // completely untouched).
+    if (isDirectory && !QFileInfo(path).isSymLink()) {
         // Empty-only, matching plain POSIX rmdir / SFTP RMDIR semantics —
         // see RemoteBackend::deleteEntry()'s doc comment for why this is
         // deliberately not recursive.
@@ -210,7 +268,20 @@ void LocalBackend::renameEntry(const QString &oldPath, const QString &newPath)
     // Checked explicitly rather than relying on QDir::rename()'s own
     // failure to distinguish "name taken" from any other failure reason
     // in the error message shown to the person who triggered this.
-    if (QFileInfo::exists(newPath)) {
+    // QFileInfo(oldPath) != QFileInfo(newPath) — not just
+    // QFileInfo::exists(newPath) alone — a real bug this closes: a
+    // case-ONLY rename (e.g. "readme.txt" -> "README.txt") on a
+    // case-insensitive filesystem (the default on Windows/NTFS and
+    // macOS/APFS, both real release targets) makes exists(newPath) true
+    // even though newPath IS oldPath, just spelled differently — the old
+    // check rejected this as "already exists" when it's actually a
+    // no-conflict rename. QFileInfo::operator==() is Qt's own "do these
+    // refer to the same file" comparison (confirmed directly: two
+    // different path strings that resolve to the same underlying file —
+    // e.g. via a symlink — compare equal, not just byte-identical
+    // strings), so it correctly recognizes this case and still rejects a
+    // GENUINE naming conflict.
+    if (QFileInfo::exists(newPath) && QFileInfo(oldPath) != QFileInfo(newPath)) {
         emit fileOperationFailed(QStringLiteral("Rename"), oldPath,
             QStringLiteral("\"%1\" already exists").arg(QFileInfo(newPath).fileName()));
         return;
@@ -238,18 +309,27 @@ void LocalBackend::moveEntry(const QString &oldPath, const QString &newPath, int
     // resolved a destination conflict itself (Overwrite for a file; a
     // folder move never reaches here if something's already at newPath —
     // see TransferManager::moveFolder()'s own comment on why a merge
-    // isn't attempted). A pre-existing FILE at newPath is removed first,
-    // the same established convention uploadFile() already uses for an
-    // Overwrite-resolved transfer, so QDir::rename() below succeeds
-    // instead of failing on an existing-destination check of its own.
+    // isn't attempted). A pre-existing FILE at newPath is moved aside via
+    // prepareOverwrite() rather than deleted outright — see its own
+    // comment for the real data-loss bug this fixes — so QDir::rename()
+    // below succeeds instead of failing on an existing-destination check
+    // of its own, with a real rollback available if the move then fails.
     const QFileInfo destInfo(newPath);
-    if (destInfo.exists() && destInfo.isFile())
-        QFile::remove(newPath);
+    QString backupPath;
+    if (destInfo.exists() && destInfo.isFile() && !prepareOverwrite(newPath, &backupPath)) {
+        emit entryMoveFailed(QStringLiteral("Could not move existing \"%1\" aside to overwrite it")
+                              .arg(destInfo.fileName()), requestId);
+        return;
+    }
 
     if (!QDir().rename(oldPath, newPath)) {
+        if (!backupPath.isEmpty())
+            QFile::rename(backupPath, newPath);   // roll back — restore the original exactly as it was
         emit entryMoveFailed(QStringLiteral("Move failed"), requestId);
         return;
     }
+    if (!backupPath.isEmpty())
+        QFile::remove(backupPath);   // move succeeded — the backup is no longer needed
     emit entryMoved(requestId);
 }
 

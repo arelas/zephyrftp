@@ -598,12 +598,59 @@ to drive FileZilla itself for a same-desktop comparison.
   `QFileInfo::exists()` explicitly before create/rename so "the name is
   already taken" is reported as a specific error rather than silently
   overwriting or falling through to a generic OS failure message.
-  `moveEntry()` differs from `renameEntry()` in one respect: it removes a
-  pre-existing FILE destination before renaming onto it (mirroring
-  `uploadFile()`'s established Overwrite convention), where `renameEntry()`
-  rejects outright if the destination already exists — the two callers
-  have genuinely different pre-conditions, so this isn't shared with
-  `renameEntry()`'s own logic the way SFTP/FTP's `performRename()` is.
+  `moveEntry()` differs from `renameEntry()` in one respect: it moves a
+  pre-existing FILE destination aside before renaming onto it (mirroring
+  `downloadFile()`/`uploadFile()`'s established Overwrite convention —
+  see below), where `renameEntry()` rejects outright if the destination
+  already exists — the two callers have genuinely different
+  pre-conditions, so this isn't shared with `renameEntry()`'s own logic
+  the way SFTP/FTP's `performRename()` is.
+  **Three real bugs found by code review, all fixed, all now covered by
+  regression scenarios in `file-operations-test`:**
+  1. **`downloadFile()`/`uploadFile()`/`moveEntry()` deleted any
+     pre-existing destination FIRST, then attempted the actual
+     copy/rename** — if that then failed (disk full, permission denied,
+     the source vanishing mid-copy), the original destination content
+     was already gone, permanently, with only a generic failure message.
+     Fixed with a shared `prepareOverwrite()` helper: an existing
+     destination is moved aside to a same-directory sibling (a cheap,
+     same-filesystem rename, not a delete) instead, and every failure
+     path rolls it back into place — confirmed directly with a
+     regression scenario that forces a real, deterministic copy/move
+     failure (the source made genuinely unreadable via `chmod`, or made
+     to simply not exist) against a real pre-existing destination, and
+     checks the original content survived intact.
+  2. **`renameEntry()` used a plain `QFileInfo::exists(newPath)` check to
+     detect a naming conflict, which false-positives on a case-ONLY
+     rename** (e.g. `"readme.txt"` -> `"README.txt"`) **on a
+     case-insensitive filesystem** — the default on Windows/NTFS and
+     macOS/APFS, both real release targets — since `newPath` resolves to
+     the very file being renamed. Fixed by additionally checking
+     `QFileInfo(oldPath) != QFileInfo(newPath)`, Qt's own "do these refer
+     to the same file" comparison rather than a byte-identical string
+     check — confirmed directly (via a standalone probe, not just
+     assumed from documentation) that this comparison correctly
+     recognizes two different path strings pointing at the same
+     underlying file as equal (proven with a symlink, since this
+     project's own Linux dev/CI environment is case-sensitive and can't
+     reproduce the actual Windows/macOS collision directly), while still
+     correctly rejecting a genuine conflict against a real, different
+     file — also covered by its own regression check, specifically to
+     confirm the fix didn't loosen this into a no-op.
+  3. **`deleteEntry()` could never actually delete a directory
+     symlink.** `isDirectory` comes from `QFileInfo::isDir()`
+     (`RemoteEntry::isDir`, set in `listDirectory()`), which FOLLOWS
+     symlinks — so a directory symlink also reports `isDirectory=true`
+     here — but `QDir::rmdir()` (POSIX `rmdir(2)`) deliberately does NOT
+     follow a symlink in its final path component, so it always failed
+     with the same misleading "may not be empty" message regardless of
+     how genuinely removable the symlink was. Confirmed directly with a
+     standalone probe before fixing: `rmdir()` fails on a real directory
+     symlink every time, while `QFile::remove()` (POSIX `unlink(2)`
+     semantics) correctly removes just the symlink entry and leaves its
+     target directory completely untouched. Fixed by routing a directory
+     symlink through the same `QFile::remove()` path a plain file
+     already uses, gated on `!QFileInfo(path).isSymLink()`.
 - `SftpBackend` — wraps libssh2's synchronous API directly. Runs on a
   dedicated `QThread`, confirmed by the smoke test above. Its four
   operations (`connectToHost`, `listDirectory`, `downloadFile`,

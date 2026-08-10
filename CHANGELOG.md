@@ -8,6 +8,24 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Overwriting a local file or folder during a transfer, rename, or
+  Move could permanently lose the ORIGINAL destination content if the
+  operation then failed partway through** (a full disk, a permission
+  problem, or the source disappearing mid-copy) — the old content was
+  deleted before the replacement was confirmed to actually succeed.
+  Fixed: the existing destination is now moved aside first and only
+  cleaned up (or restored) once the outcome is known.
+- **Renaming a local file to a name that differs only by letter case
+  (e.g. "readme.txt" to "README.txt") was incorrectly rejected as
+  "already exists"** on Windows and macOS, where filenames aren't
+  case-sensitive.
+- **A directory symlink in the local pane could never actually be
+  deleted** — it always failed with a misleading "may not be empty"
+  message regardless of whether it (or its target) was genuinely
+  removable.
+
 ## [0.6.5] — Fix five more real bugs found by code review of TransferManager and the UI layer
 
 ### Fixed
