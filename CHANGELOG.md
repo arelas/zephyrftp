@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.6.11] — Fix five real issues found by code review of TransferQueueWidget
+
 ### Fixed
 
 - **The transfer queue's Direction column could show a misleading
@@ -1157,7 +1159,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.10...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.11...HEAD
+[0.6.11]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.11
 [0.6.10]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.10
 [0.6.9]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.9
 [0.6.8]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.8
