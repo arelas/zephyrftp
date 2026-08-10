@@ -2458,6 +2458,27 @@ to drive FileZilla itself for a same-desktop comparison.
   this at all — nothing protocol-like happens for a purely local pane. A
   one-line welcome message fills the log before any real traffic exists,
   so the pane never opens looking blank/broken.
+  **A real bug found by a dedicated code review of this file:**
+  `appendLine()` used to force-scroll to the bottom unconditionally on
+  every call, regardless of where the view actually was. Confirmed
+  directly (a standalone probe, not assumed from documentation) that
+  `QPlainTextEdit::appendPlainText()` already preserves scroll position
+  correctly on its own — the override was pure regression. Scrolling up
+  to re-read an earlier line during an active transfer
+  (`SftpBackend`/`FtpBackend` emit `commandLogged` on nearly every
+  control-channel operation) got yanked straight back down the instant
+  the next line arrived, making it functionally impossible to review
+  scrollback while the log was still live — undermining the pane's
+  whole stated purpose. Fixed by checking the scroll position BEFORE
+  appending and only re-pinning to the bottom if the view was already
+  there, matching how every real terminal/log viewer/chat app actually
+  implements "tail like a live console." Also noted, not fixed: the
+  synthetic welcome line goes through the same `appendLine()` path as
+  genuine traffic with nothing in the data marking it as synthetic —
+  only a code comment asserts it's never real traffic. Not acted on
+  since no existing feature (export, filtering, counting) needs to tell
+  them apart yet; inventing that distinction now would be solving a
+  problem nothing currently has.
   **Now covered by an automated regression test**, `sort-and-commands-test`
   (`src/sort_and_commands_test.cpp`) — a headless, self-contained
   `EXCLUDE_FROM_ALL` target added after this component and the

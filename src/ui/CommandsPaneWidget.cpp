@@ -42,12 +42,27 @@ CommandsPaneWidget::CommandsPaneWidget(QWidget *parent)
 
 void CommandsPaneWidget::appendLine(const QString &line)
 {
-    m_log->appendPlainText(line);
-    // appendPlainText() alone only scrolls if the view already happened to
-    // be at the bottom — explicit here so the log always tails like a
-    // live console, matching what FileZilla's own message log does.
+    // A real bug found by code review: this used to force-scroll to the
+    // bottom unconditionally on every call, regardless of where the view
+    // actually was. Confirmed directly (a standalone probe, not assumed
+    // from documentation) that QPlainTextEdit::appendPlainText() on its
+    // own already does the right thing — it leaves the scroll position
+    // exactly where the user left it. Forcing it back to the bottom every
+    // time meant scrolling up to re-read an earlier line during an active
+    // transfer (SftpBackend/FtpBackend emit commandLogged on nearly every
+    // control-channel operation) got yanked straight back down on the
+    // very next line, making it impossible to actually review scrollback
+    // while the log was still live — undermining the pane's whole stated
+    // purpose as a reviewable protocol-traffic log. Fixed by checking the
+    // scroll position BEFORE appending and only re-pinning to the bottom
+    // if the view was already there — real "tail like a live console"
+    // behavior (matches how every terminal/log viewer/chat app actually
+    // does this), not blind forcing.
     QScrollBar *scrollBar = m_log->verticalScrollBar();
-    scrollBar->setValue(scrollBar->maximum());
+    const bool wasAtBottom = scrollBar->value() == scrollBar->maximum();
+    m_log->appendPlainText(line);
+    if (wasAtBottom)
+        scrollBar->setValue(scrollBar->maximum());
 }
 
 void CommandsPaneWidget::showContextMenu(const QPoint &pos)

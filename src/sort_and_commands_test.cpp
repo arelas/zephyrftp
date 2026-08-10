@@ -46,6 +46,7 @@
 #include <QAbstractItemModel>
 #include <QItemSelectionModel>
 #include <QPlainTextEdit>
+#include <QScrollBar>
 #include <QMimeData>
 #include <QDropEvent>
 #include <QElapsedTimer>
@@ -122,6 +123,39 @@ int main(int argc, char *argv[])
               && logText.contains(QStringLiteral("Command: LIST /"))
               && logText.indexOf(QStringLiteral("Connecting"))
                      < logText.indexOf(QStringLiteral("Command: LIST")));
+
+    // ---------- Regression: appendLine() must not force-scroll to the
+    // bottom if the user had already scrolled away to review an earlier
+    // line — a real bug found by code review. Confirmed directly (a
+    // standalone probe, not assumed) that QPlainTextEdit::appendPlainText()
+    // already preserves scroll position on its own; the old code
+    // overrode that with an unconditional
+    // scrollBar->setValue(scrollBar->maximum()) on every single call,
+    // yanking the view straight back down the instant any new line
+    // arrived — undermining the whole point of being able to review
+    // scrollback while the log is still live. ----------
+    {
+        auto *scrollPane = new CommandsPaneWidget();
+        auto *scrollLog = scrollPane->findChild<QPlainTextEdit *>();
+        scrollPane->resize(300, 100);
+        scrollPane->show();
+        for (int i = 0; i < 100; ++i)
+            scrollPane->appendLine(QStringLiteral("line %1").arg(i));
+
+        QScrollBar *scrollBar = scrollLog->verticalScrollBar();
+        check("scroll test setup: enough lines to actually need scrolling",
+              scrollBar->maximum() > 0);
+
+        scrollBar->setValue(0);   // scroll all the way up, as if re-reading an earlier line
+        scrollPane->appendLine(QStringLiteral("new line while scrolled up"));
+        check("appendLine() while scrolled away does NOT force the view back to the bottom",
+              scrollBar->value() == 0);
+
+        scrollBar->setValue(scrollBar->maximum());   // back at the bottom, tailing live
+        scrollPane->appendLine(QStringLiteral("another new line while already at the bottom"));
+        check("appendLine() while already at the bottom keeps tailing (stays pinned to the end)",
+              scrollBar->value() == scrollBar->maximum());
+    }
 
     // ---------- Part 2: FilePaneWidget forwards the CURRENTLY attached
     // backend's commandLogged, and re-targets (not adds to) that

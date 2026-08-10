@@ -8,6 +8,16 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Scrolling up in the Commands pane to re-read an earlier line, while
+  a transfer was still running, immediately snapped back down to the
+  bottom the moment the next line arrived** — making it impossible to
+  actually review protocol traffic while it was still live. The log now
+  only auto-scrolls to follow new lines when you were already at the
+  bottom; scroll up and it stays put until you scroll back down
+  yourself.
+
 ### Changed (developer-facing only, no shipped behavior)
 
 - `FolderEnumerator.cpp` got its first dedicated code review — a
