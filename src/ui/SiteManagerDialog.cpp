@@ -470,7 +470,32 @@ void SiteManagerDialog::commitFormToSelectedSite()
     site->useHomeDirectory = m_homeDirRadio->isChecked();
     site->startingDirectory = m_startingDirEdit->text().trimmed();
 
-    SiteStore::save(m_sites);
+    // A real bug found by code review: this persists to sites.json with
+    // no equivalent of onConnectClicked()'s own validation. Two real,
+    // if narrow, ways to trigger it: clearing the Host field (e.g.
+    // select-all then retype) and losing focus before finishing —
+    // m_hostEdit commits on editingFinished, not per-keystroke, but
+    // clicking away mid-retype still fires it with an empty value — or
+    // switching straight to the "Specific directory" radio, which
+    // (unlike the text fields) commits immediately on toggle, before any
+    // path has been typed. Either hits disk instantly with an unusable
+    // value, silently overwriting whatever was there before with nothing
+    // to recover it if the person then navigates away. `name` above
+    // already has an equivalent safeguard for this exact class of
+    // problem (falls back to "Untitled Site" instead of persisting
+    // empty) — host and startingDirectory get the same protection here,
+    // just by skipping the disk write itself rather than substituting a
+    // placeholder value (there's no sensible placeholder host the way
+    // there is a placeholder name). `site` above still reflects the true
+    // current form state either way, so onConnectClicked()'s own
+    // validation (which calls this function first) still correctly sees
+    // and rejects an empty host/starting-directory rather than silently
+    // connecting with a stale one — only the disk write is deferred, not
+    // the in-memory model.
+    const bool unusable =
+        site->host.isEmpty() || (!site->useHomeDirectory && site->startingDirectory.isEmpty());
+    if (!unusable)
+        SiteStore::save(m_sites);
 
     if (groupChanged) {
         // Hierarchy itself changed (site may need to move to a different

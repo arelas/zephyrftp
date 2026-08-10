@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QUuid>
+#include <QSet>
 
 ConnectionRequest SavedSite::toConnectionRequest() const
 {
@@ -96,6 +97,24 @@ QList<SavedSite> SiteStore::load()
             site.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
 
         sites.append(site);
+    }
+
+    // A real bug found by code review: a hand-edited or otherwise
+    // corrupted sites.json could have two entries sharing the same id
+    // (the backfill above only handles a MISSING id, not a genuinely
+    // duplicated one). Every id-based lookup elsewhere does a linear
+    // first-match search (SiteManagerDialog::selectedSite(), in
+    // particular), so acting on the second of two colliding rows would
+    // silently mutate/delete the FIRST site instead of the one actually
+    // selected. Deduplicated once, here, rather than at every call site:
+    // the first occurrence of a given id keeps it; any later entry
+    // sharing that id is assigned a fresh one instead, so every site
+    // this function returns is guaranteed to have a genuinely unique id.
+    QSet<QString> seenIds;
+    for (SavedSite &site : sites) {
+        if (seenIds.contains(site.id))
+            site.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        seenIds.insert(site.id);
     }
 
     return sites;

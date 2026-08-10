@@ -30,6 +30,16 @@ in the README), so anything may still change between 0.x releases.
   instead of being safely ignored — a drag-and-drop payload from a
   different running instance was mistakenly treated as if it came from
   the same one.
+- **Dragging a file whose name contained a line break (unusual, but
+  legal on Linux) could transfer the wrong file, or silently drop part
+  of the selection.**
+- **A hand-edited or otherwise corrupted `sites.json` with two saved
+  sites sharing the same internal ID could make an action on one site
+  silently affect the other instead.**
+- **Clearing a saved site's Host field (or switching to "Specific
+  directory" before typing a path) and then clicking away without
+  finishing the edit could silently and permanently blank out that
+  setting**, with no way to recover it short of retyping it from memory.
 
 ## [0.6.5] — Fix five more real bugs found by code review of TransferManager and the UI layer
 

@@ -63,13 +63,24 @@ void FileTreeView::startDrag(Qt::DropActions supportedActions)
     payload.append(reinterpret_cast<const char *>(&sourcePanePtr), sizeof(sourcePanePtr));
     mimeData->setData(kSourcePaneMimeType, payload);
 
-    // Encoded as "<0 or 1>\t<name>" per line — the isDir flag needs to
-    // survive the drag too now that whole folders can be dragged, not
-    // just files.
-    QStringList lines;
-    for (const RemoteEntry &entry : entries)
-        lines.append((entry.isDir ? QStringLiteral("1\t") : QStringLiteral("0\t")) + entry.name);
-    mimeData->setData(kFileNamesMimeType, lines.join('\n').toUtf8());
+    // Encoded as "<0 or 1>\t<name>" per entry, entries joined by NUL
+    // bytes — not '\n', which a real bug found by code review used to
+    // separate entries with: '\n' is legal in a POSIX filename (e.g. on
+    // ext4), so a name containing one got split into multiple bogus
+    // "lines" here, corrupting the drop (a truncated name, and a
+    // leftover fragment with no isDir prefix silently discarded by
+    // dropEvent()'s own parsing below). A literal NUL byte can never
+    // appear in a real filename on any filesystem this app targets — the
+    // OS path APIs themselves treat it as a string terminator — making
+    // it a genuinely unambiguous record separator, unlike '\n' or '\t'
+    // (both technically legal, just rare in practice).
+    QByteArray namesPayload;
+    for (const RemoteEntry &entry : entries) {
+        if (!namesPayload.isEmpty())
+            namesPayload.append('\0');
+        namesPayload.append(((entry.isDir ? QStringLiteral("1\t") : QStringLiteral("0\t")) + entry.name).toUtf8());
+    }
+    mimeData->setData(kFileNamesMimeType, namesPayload);
 
     auto *drag = new QDrag(this);
     drag->setMimeData(mimeData);
@@ -125,10 +136,15 @@ void FileTreeView::dropEvent(QDropEvent *event)
         return;
     }
 
-    const QStringList lines = QString::fromUtf8(mimeData->data(kFileNamesMimeType))
-                                   .split('\n', Qt::SkipEmptyParts);
+    // Split on NUL bytes, matching startDrag()'s own encoding — see its
+    // comment for why '\n' used to be (and can't safely be) the record
+    // separator here.
+    const QList<QByteArray> rawLines = mimeData->data(kFileNamesMimeType).split('\0');
     QList<RemoteEntry> entries;
-    for (const QString &line : lines) {
+    for (const QByteArray &rawLine : rawLines) {
+        if (rawLine.isEmpty())
+            continue;
+        const QString line = QString::fromUtf8(rawLine);
         const int tabIndex = line.indexOf('\t');
         if (tabIndex < 0)
             continue;   // malformed — shouldn't happen given startDrag() always writes this format, but don't crash on it

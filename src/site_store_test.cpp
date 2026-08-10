@@ -146,6 +146,53 @@ int main(int argc, char *argv[])
     qDebug() << "[test] load() with no file returns an empty list, not an error:" << emptyOk;
     if (!emptyOk) allPass = false;
 
+    // --- Duplicate-id handling: a hand-edited or otherwise corrupted
+    // sites.json with two entries sharing the same id must come back
+    // with genuinely unique ids, not silently keep the collision.
+    // Regression test for a real bug: the id-backfill above only handles
+    // a MISSING id, not a genuinely duplicated one — every id-based
+    // lookup elsewhere (SiteManagerDialog::selectedSite(), in
+    // particular) does a linear first-match search, so acting on the
+    // second of two colliding rows would silently affect the FIRST site
+    // instead of the one actually selected. ---
+    {
+        QJsonArray dupArray;
+        QJsonObject dup1;
+        dup1["id"] = "duplicate-id";
+        dup1["name"] = "First Site";
+        dup1["host"] = "first.example.com";
+        dupArray.append(dup1);
+        QJsonObject dup2;
+        dup2["id"] = "duplicate-id";
+        dup2["name"] = "Second Site";
+        dup2["host"] = "second.example.com";
+        dupArray.append(dup2);
+
+        QFile dupFile(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) + "/sites.json");
+        dupFile.open(QIODevice::WriteOnly | QIODevice::Truncate);
+        dupFile.write(QJsonDocument(dupArray).toJson());
+        dupFile.close();
+
+        const QList<SavedSite> deduped = SiteStore::load();
+        const bool dupCountOk = deduped.size() == 2;
+        qDebug() << "[test] a duplicate-id file still loads both sites:" << dupCountOk;
+        if (!dupCountOk) allPass = false;
+
+        const bool idsUnique = dupCountOk && deduped[0].id != deduped[1].id;
+        qDebug() << "[test] duplicate ids were deduplicated — the two sites now have genuinely different ids:"
+                  << idsUnique;
+        if (!idsUnique) allPass = false;
+
+        const bool firstKeptOriginalId = dupCountOk && deduped[0].id == "duplicate-id";
+        qDebug() << "[test] the FIRST occurrence kept its original id (only the later duplicate was reassigned):"
+                  << firstKeptOriginalId;
+        if (!firstKeptOriginalId) allPass = false;
+
+        const bool namesIntact = dupCountOk && deduped[0].name == "First Site" && deduped[1].name == "Second Site";
+        qDebug() << "[test] both sites' other fields survived intact:" << namesIntact;
+        if (!namesIntact) allPass = false;
+    }
+
     qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
     return allPass ? 0 : 1;
 }

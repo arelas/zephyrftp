@@ -1078,6 +1078,22 @@ to drive FileZilla itself for a same-desktop comparison.
   validated at save time; an invalid path surfaces through the same
   `listDirectory()`/`connectionFailed` error path as typing a bad path
   into the pane's own path bar.
+  **A real bug found by code review: `SiteStore::load()` backfilled a
+  missing `id` for legacy entries, but never checked for (or deduped) an
+  `id` that was already a duplicate of another entry's.** Every id-based
+  lookup elsewhere does a linear first-match search
+  (`SiteManagerDialog::selectedSite()`, in particular), so a hand-edited
+  or otherwise corrupted `sites.json` with two entries sharing an id
+  would silently route an action on the SECOND colliding row to the
+  FIRST site instead of the one actually selected. Fixed with a
+  dedup pass after the existing backfill loop: the first occurrence of a
+  given id keeps it, any later entry sharing that id gets a fresh one,
+  so every site `load()` returns is guaranteed genuinely unique.
+  Confirmed with a real regression test in `site-store-test`: a
+  hand-written `sites.json` with two entries both using `"id":
+  "duplicate-id"` comes back with two distinct ids (the first keeping
+  the original, confirmed via a real pre-fix control that the old code
+  returned both entries still sharing the same id).
 - `CredentialStore` (`src/backends/CredentialStore.h/.cpp`) — the OS
   credential store, opt-in, and the only place a secret from this app
   is ever written to disk. `save`/`load`/`remove`/`hasSecret`, keyed by
@@ -1147,6 +1163,35 @@ to drive FileZilla itself for a same-desktop comparison.
   real, visible, one-click confirmation rather than a silent
   auto-connect, consistent with this project's refusal to do anything
   credential-related invisibly.
+  **A real bug found by code review: `commitFormToSelectedSite()`
+  persisted to `sites.json` with no equivalent of `onConnectClicked()`'s
+  own validation.** Two real, if narrow, ways to trigger it: clearing
+  the Host field (e.g. select-all then retype) and losing focus before
+  finishing — `m_hostEdit` commits on `editingFinished`, not
+  per-keystroke, but clicking away mid-retype still fires it with an
+  empty value — or switching straight to the "Specific directory" radio,
+  which (unlike the text fields) commits immediately on toggle, before
+  any path has been typed. Either hit disk instantly with an unusable
+  value, silently overwriting whatever was there before with nothing to
+  recover it if the person then navigated away mid-edit. `name` already
+  had an equivalent safeguard for this exact class of problem (falls
+  back to "Untitled Site" instead of persisting empty) — fixed by giving
+  `host`/`startingDirectory` the same protection, just by skipping the
+  disk write itself rather than substituting a placeholder value (no
+  sensible placeholder host exists the way "Untitled Site" does for
+  name). The in-memory `SavedSite` this function edits still reflects
+  the true current form state either way, so `onConnectClicked()`'s own
+  validation (which calls this function first) still correctly sees and
+  rejects an empty host/starting-directory rather than silently
+  connecting with a stale one — only the disk write is deferred, not the
+  in-memory model. **Not covered by an automated test** — the dialog's
+  form fields are private with no test-oriented accessor, and adding one
+  purely for this would mean changing production code beyond the fix
+  itself; verified by direct reasoning through the exact
+  `onConnectClicked()` interaction instead (confirmed a naive
+  "just skip updating `site->host` too" version would have silently
+  reconnected using a stale host instead of showing "Host cannot be
+  empty," before landing on deferring only the disk write).
   **A real, reported layout bug, fixed:** the checkbox row added real
   height the dialog's original fixed `resize(700, 440)` (set before
   this feature existed) didn't account for — confirmed directly by
@@ -1494,6 +1539,27 @@ to drive FileZilla itself for a same-desktop comparison.
   all) rather than assumed, since `QAbstractScrollArea` (which
   `QTreeView` derives from) routes mouse/drag-and-drop events through
   its internal viewport, not the outer widget.
+  **A second real bug in the same drag payload, found by code review:
+  the selected-entries list was encoded as `"<0 or 1>\t<name>"` lines
+  joined by `'\n'`, which a name containing a literal newline (legal in
+  a POSIX filename, e.g. on ext4) would corrupt** — `dropEvent()`'s
+  `split('\n')` silently truncated the name at the embedded newline and
+  discarded the leftover fragment (no tab prefix to parse), confirmed
+  directly with a standalone probe reproducing the exact corruption
+  (`"weird\nname"` decoded back as bare `"weird"`). Fixed by joining
+  entries with a NUL byte instead: unlike `'\n'` or `'\t'` (both legal,
+  if rare, in a real filename), a literal NUL byte can never appear in
+  one on any filesystem this app targets — the OS path APIs themselves
+  treat it as a string terminator — making it a genuinely unambiguous
+  record separator. Verified with the same standalone technique: the new
+  encoding round-trips a name with an embedded newline (and, separately,
+  one with an embedded tab, confirming the field separator stays safe
+  too) byte-for-byte. Not wired into the automated suite as a live
+  `QDropEvent` scenario like the token check above — doing so would need
+  the real per-process `kProcessDragToken` to get a forged drop past the
+  check that fix added, which isn't exposed outside this file and
+  shouldn't be just for testability — so this one is confirmed by direct
+  encode/decode verification instead, not a live event-delivery test.
 - `TransferManager` — owns the transfer queue, processes it **serially**
   (one item at a time — SftpBackend holds a single libssh2 session, and
   concurrent transfers on the same session aren't safe without more
