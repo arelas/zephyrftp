@@ -50,6 +50,21 @@ struct ConnectionRequest {
     {
         return protocol == Protocol::Sftp ? sftp.startingDirectory : ftp.startingDirectory;
     }
+
+    // True when this request asked for SFTP public-key auth but never
+    // actually got a key file — both MainWindow::connectViaDialog() and
+    // SiteManagerDialog::onConnectClicked() need to reject exactly this
+    // before dispatching a connection attempt that would otherwise fail
+    // deep inside SftpBackend with a far less obvious error. A real
+    // duplication found by code review had this exact three-part
+    // condition copy-pasted at both call sites, with no shared helper —
+    // risking one of the two silently drifting if the rule ever changed.
+    bool missingRequiredPrivateKeyPath() const
+    {
+        return protocol == Protocol::Sftp
+            && sftp.authMethod == SftpAuthMethod::PublicKey
+            && sftp.privateKeyPath.isEmpty();
+    }
 };
 
 // Explicit TLS for FTPS, none for plain FTP. The single place this

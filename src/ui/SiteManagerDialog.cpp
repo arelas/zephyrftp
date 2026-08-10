@@ -680,7 +680,10 @@ void SiteManagerDialog::onConnectClicked()
 
     if (request.protocol == Protocol::Sftp
         && request.sftp.authMethod == SftpAuthMethod::PublicKey) {
-        if (request.sftp.privateKeyPath.isEmpty()) {
+        // Same check MainWindow::connectViaDialog() makes for its own
+        // Connect button — shared via ConnectionRequest itself rather
+        // than duplicated here (a real bug found by code review).
+        if (request.missingRequiredPrivateKeyPath()) {
             QMessageBox::warning(this, tr("Connect"), tr("Select a private key file."));
             return;
         }

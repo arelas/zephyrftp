@@ -77,6 +77,18 @@ private:
     void buildTransferQueue();
     void buildCommandsPane();
 
+    // Checks whether targetPane is still mid-connect (see
+    // FilePaneWidget::isConnecting()'s own doc comment for the hazard this
+    // guards against — a blocking connect()/SSH-handshake syscall that
+    // thread->quit() can't interrupt) and, if so, shows the standard
+    // "wait for it" status message. Every place that needs this exact
+    // guard (startConnection(), disconnectPane(), closeEvent()) goes
+    // through this rather than repeating the check inline — a real bug
+    // found by code review was closeEvent() missing this invariant
+    // entirely because the guard was copy-pasted at each call site with
+    // nothing enforcing that a new one couldn't forget it.
+    bool stillConnecting(FilePaneWidget *targetPane);
+
     // Shared by the plain "Connect..." dialog, the Site Manager's Connect
     // button, AND now either pane's own path-bar icon menu — picks the
     // backend matching the request's protocol, spins it up on a worker
@@ -97,6 +109,11 @@ private:
     // closeEvent() (which now needs to tear down BOTH panes, not just the
     // one the toolbar happens to target).
     void disconnectPane(FilePaneWidget *targetPane);
+
+    // Re-lists whatever both panes are currently showing — shared by
+    // onTransferSucceeded() and onRefreshTriggered(), a real duplication
+    // found by code review.
+    void refreshBothPanes();
 
     // Shared by onLeftFilesActivated/onRightFilesActivated/onFilesDropped
     // — all three end up with the same "here's a selection of files and/or

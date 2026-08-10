@@ -2,6 +2,18 @@
 // start, connectToHost -> connect() fails fast against a closed local port,
 // connectionFailed signal delivered back to GUI thread, then teardown via
 // quit()/wait()) without needing a live SFTP server or a display.
+//
+// Also covers a real MainWindow-level regression found by code review:
+// closeEvent() must REFUSE to close (QCloseEvent::ignore()) while either
+// pane is still mid-connect, rather than silently letting the window (and,
+// via main.cpp's default quitOnLastWindowClosed, the whole app) close with
+// a worker QThread still running and still parented to it — which used to
+// reintroduce the exact qFatal("QThread: Destroyed while thread is still
+// running") crash this whole mechanism exists to prevent (see
+// MainWindow.h's own header doc comment). Tested with a fake backend
+// whose connectToHost() deliberately never emits connected/connectionFailed
+// — not a real hang, but the same observable state (isConnecting() stuck
+// true) without depending on real network timing or a live server.
 #include <QApplication>
 #include <QTimer>
 #include <QThread>
@@ -11,11 +23,102 @@
 #include "ui/HostKeyVerifier.h"
 #include "backends/SftpBackend.h"
 #include "backends/SftpCredentials.h"
+#include "backends/LocalBackend.h"
+
+namespace {
+// Deliberately never emits connected() or connectionFailed() — keeps
+// FilePaneWidget::isConnecting() stuck true for as long as this backend
+// stays attached, standing in for a connection attempt that hasn't
+// resolved yet without needing real (and unreliably-timed) network I/O.
+class FakeNeverConnectsBackend : public RemoteBackend {
+    Q_OBJECT
+public:
+    explicit FakeNeverConnectsBackend(QObject *parent = nullptr) : RemoteBackend(parent) {}
+
+    QString currentPath() const override { return QString(); }
+    bool isLocalFilesystem() const override { return false; }
+    QString connectionIdentity() const override { return QStringLiteral("fake-never-connects"); }
+    void requestCancel() override {}
+    void requestPause() override {}
+
+public slots:
+    void connectToHost() override {}   // deliberately does nothing — see class doc comment
+    void listDirectory(const QString &) override {}
+    void downloadFile(const QString &, const QString &, qint64 = 0) override {}
+    void uploadFile(const QString &, const QString &, qint64 = 0) override {}
+    void deleteEntry(const QString &, bool) override {}
+    void renameEntry(const QString &, const QString &) override {}
+    void moveEntry(const QString &, const QString &, int requestId) override {
+        emit entryMoveFailed(QStringLiteral("Not implemented"), requestId);
+    }
+    void createDirectory(const QString &) override {}
+    void createFile(const QString &) override {}
+    void listDirectoryForEnumeration(const QString &, int) override {}
+    void checkExists(const QString &, int) override {}
+};
+}
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
+    // Without this, the close()/reopen sequence in the closeEvent()
+    // regression phase below would trigger Qt's default "quit when the
+    // last window closes" the instant the window genuinely closes (once
+    // no pane is connecting), ending the whole test's event loop before
+    // the later async SFTP phase's 4-second timer ever gets to fire —
+    // same fix navigation-test's own header comment explains in more
+    // detail for the identical reason.
+    app.setQuitOnLastWindowClosed(false);
     MainWindow window;
     window.show();
+
+    bool allPass = true;
+    auto check = [&](const QString &label, bool condition) {
+        qDebug() << (condition ? "[PASS]" : "[FAIL]") << label;
+        if (!condition) allPass = false;
+    };
+
+    // ---------- Regression: closeEvent() must refuse to close while a
+    // pane is still mid-connect (see this file's own header comment). ----------
+    {
+        auto panes = window.findChildren<FilePaneWidget *>();
+        check("found both panes to test against", panes.size() == 2);
+        FilePaneWidget *pane = panes.isEmpty() ? nullptr : panes.first();
+
+        auto *stuckBackend = new FakeNeverConnectsBackend();
+        auto *stuckThread = new QThread(&window);   // matches startConnection()'s own parenting exactly
+        stuckBackend->moveToThread(stuckThread);
+        stuckThread->start();
+
+        // setBackend() sets m_connecting = true synchronously, before
+        // connectToHost() is even dispatched (Qt::QueuedConnection, not
+        // run until the next event-loop turn) — so isConnecting() is
+        // already true here, no event-loop turn needed to arm this.
+        pane->setBackend(stuckBackend, stuckThread);
+        check("pane reports isConnecting() immediately after setBackend()", pane->isConnecting());
+
+        const bool closeWasAccepted = window.close();
+        check("closeEvent() refused to close while a pane is still connecting",
+              !closeWasAccepted);
+        check("window is still open after the refused close", window.isVisible());
+
+        // Clean teardown for the rest of this test — swap back to a real
+        // LocalBackend via the same setBackend() teardown path production
+        // code uses (deleteLater() + thread->quit()/wait()), now that
+        // isConnecting() no longer needs to stay true for anything else
+        // here. Safe to do directly (bypassing MainWindow's own
+        // disconnectPane(), which would itself refuse for the same
+        // isConnecting() reason): FakeNeverConnectsBackend never enters a
+        // blocking call, so quit()/wait() below returns immediately, no
+        // hang risk the way a real stuck backend would have.
+        pane->setBackend(new LocalBackend(), nullptr);
+
+        const bool closeAfterCleanup = window.close();
+        check("closeEvent() allows closing again once no pane is connecting",
+              closeAfterCleanup);
+        // Reopen for the rest of this test — this phase's own close()
+        // calls above are otherwise unrelated to the SFTP phase below.
+        window.show();
+    }
 
     bool failureSignalReceived = false;
 
@@ -79,9 +182,12 @@ int main(int argc, char *argv[]) {
         QCoreApplication::processEvents();
         qDebug() << "[smoke test] thread->wait() returned, isFinished() ="
                   << thread->isFinished();
-        qDebug() << (failureSignalReceived ? "[smoke test] PASS" : "[smoke test] FAIL: no connectionFailed signal received");
-        app.exit(failureSignalReceived ? 0 : 1);
+        check("connectionFailed signal received", failureSignalReceived);
+        qDebug() << (allPass ? "[smoke test] PASS" : "[smoke test] FAIL");
+        app.exit(allPass ? 0 : 1);
     });
 
     return app.exec();
 }
+
+#include "smoke_test.moc"

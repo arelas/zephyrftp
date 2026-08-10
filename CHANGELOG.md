@@ -8,6 +8,12 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Closing the app while a connection attempt was still in progress
+  could crash it** — the fix now refuses to close until that attempt
+  finishes or fails, instead of letting the window close anyway.
+
 ## [0.6.9] — Fix nine real bugs found by a dedicated code review of FilePaneWidget
 
 ### Fixed

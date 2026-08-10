@@ -357,14 +357,20 @@ void MainWindow::moveEntries(FilePaneWidget *sourcePane, FilePaneWidget *destPan
     }
 }
 
-void MainWindow::onTransferSucceeded()
+void MainWindow::refreshBothPanes()
 {
     // Cheap and correct beats clever here: just re-list whatever both
-    // panes are currently showing. If neither pane's current directory
-    // was the source or destination of the completed transfer this is a
-    // no-op refresh, which is harmless.
+    // panes are currently showing. If a given pane's current directory
+    // isn't the source or destination of whatever triggered this, it's a
+    // no-op refresh, which is harmless. Shared by onTransferSucceeded()
+    // and onRefreshTriggered() — a real duplication found by code review.
     m_leftPane->navigateTo(m_leftPane->currentDirectory());
     m_rightPane->navigateTo(m_rightPane->currentDirectory());
+}
+
+void MainWindow::onTransferSucceeded()
+{
+    refreshBothPanes();
 }
 
 void MainWindow::onAboutTriggered()
@@ -435,10 +441,11 @@ void MainWindow::connectViaDialog(FilePaneWidget *targetPane)
         return;
     }
     // Key-auth validation only applies to SFTP — the dialog hides the auth
-    // choice entirely for FTP/FTPS, so there's no key path to check there.
-    if (request.protocol == Protocol::Sftp
-        && request.sftp.authMethod == SftpAuthMethod::PublicKey
-        && request.sftp.privateKeyPath.isEmpty()) {
+    // choice entirely for FTP/FTPS, so missingRequiredPrivateKeyPath() is
+    // always false there. Same check SiteManagerDialog::onConnectClicked()
+    // makes for its own Connect button — shared via ConnectionRequest
+    // itself rather than duplicated here.
+    if (request.missingRequiredPrivateKeyPath()) {
         QMessageBox::warning(this, tr("Connect"), tr("Select a private key file."));
         return;
     }
@@ -458,6 +465,15 @@ void MainWindow::siteManagerViaDialog(FilePaneWidget *targetPane)
     startConnection(dialog.connectionRequestToConnect(), targetPane);
 }
 
+bool MainWindow::stillConnecting(FilePaneWidget *targetPane)
+{
+    if (!targetPane->isConnecting())
+        return false;
+    statusBar()->showMessage(
+        tr("Still connecting on this pane — wait for that to finish or fail first."), 5000);
+    return true;
+}
+
 void MainWindow::startConnection(const ConnectionRequest &request, FilePaneWidget *targetPane)
 {
     // A real bug this guards against: targetPane->setBackend() (called at
@@ -471,11 +487,8 @@ void MainWindow::startConnection(const ConnectionRequest &request, FilePaneWidge
     // out on its own. Refusing here — rather than fixing the underlying
     // blocking I/O, a much larger change — is the same tradeoff
     // disconnectPane() makes for the identical hazard on the Disconnect path.
-    if (targetPane->isConnecting()) {
-        statusBar()->showMessage(
-            tr("Still connecting on this pane — wait for that to finish or fail first."), 5000);
+    if (stillConnecting(targetPane))
         return;
-    }
 
     // No parent on the backend: it's about to be moved to a worker thread,
     // and Qt refuses to reparent an object across thread boundaries.
@@ -557,15 +570,17 @@ void MainWindow::disconnectPane(FilePaneWidget *targetPane)
     // setBackend() below tears down the pane's current backend with a
     // blocking QThread::quit()+wait(), which can't interrupt a worker
     // thread still stuck inside a blocking connect()/SSH-handshake
-    // syscall. Disconnecting (including via closeEvent()'s own call to
-    // this, on app close) while that's happening would otherwise freeze
-    // the GUI until the syscall times out on its own — refusing here is
-    // deliberately preferred to attempting to interrupt that blocking I/O.
-    if (targetPane->isConnecting()) {
-        statusBar()->showMessage(
-            tr("Still connecting on this pane — wait for that to finish or fail first."), 5000);
+    // syscall — refusing here is deliberately preferred to attempting to
+    // interrupt that blocking I/O. closeEvent() checks isConnecting()
+    // itself before ever calling this now (see its own doc comment on
+    // why disconnectPane() silently no-op'ing here once let the window
+    // close anyway with a worker thread still running), so this guard
+    // should never actually trigger on that path anymore — it stays here
+    // regardless, since the toolbar's Disconnect and a pane's own
+    // path-bar menu both still call this directly, without going through
+    // closeEvent() at all.
+    if (stillConnecting(targetPane))
         return;
-    }
 
     // Swap back to a plain LocalBackend. setBackend() handles tearing down
     // whatever was there before — including, if it was an SftpBackend, the
@@ -576,6 +591,30 @@ void MainWindow::disconnectPane(FilePaneWidget *targetPane)
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    // A real bug found by code review: disconnectPane() below silently
+    // no-ops (see its own doc comment) whenever a pane is still
+    // mid-connect, rather than tearing down that pane's worker QThread —
+    // but this function used to ignore that outcome and always accept
+    // the close regardless, by falling through to
+    // QMainWindow::closeEvent() unconditionally. Since main.cpp relies
+    // on the default quitOnLastWindowClosed, that let the whole app exit
+    // while a worker QThread parented to this window was still running —
+    // reintroducing the exact qFatal("QThread: Destroyed while thread is
+    // still running") crash this whole mechanism exists to prevent (see
+    // this class's own header doc comment). Refusing the close outright
+    // here — rather than attempting to interrupt the blocking connect()/
+    // SSH-handshake syscall — is the same "wait for it to finish or fail
+    // first" tradeoff startConnection()/disconnectPane() already make for
+    // the identical hazard via the shared stillConnecting() helper, just
+    // extended to cover window close too — checked for BOTH panes,
+    // short-circuiting on whichever is found connecting first (if both
+    // are, only that one's status message shows; either way the close is
+    // refused, which is the only thing that actually matters here).
+    if (stillConnecting(m_leftPane) || stillConnecting(m_rightPane)) {
+        event->ignore();
+        return;
+    }
+
     // Saved on every close rather than only on a "clean" exit — there's no
     // meaningfully different path here worth distinguishing, and this way
     // even a close during an active transfer/connection still remembers
@@ -585,11 +624,12 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
     // Same teardown as Disconnect (see MainWindow.h's doc comment on why
     // this needs to happen at all) — for BOTH panes now, since either can
-    // hold a thread-owning backend, not just the right one. Each call
-    // blocks briefly if that pane's thread needs to quit()/wait(); same
-    // tradeoff Disconnect already has mid-transfer, not a new one
-    // introduced here. The transient "Disconnected" status-bar message
-    // this also produces is harmless and ignorable during shutdown.
+    // hold a thread-owning backend, not just the right one. Neither call
+    // can hit the isConnecting() no-op path above (already checked, and
+    // nothing between here and there can start a new connection), so
+    // each one genuinely tears its pane down rather than silently no-op'ing.
+    // The transient "Disconnected" status-bar message this also produces
+    // is harmless and ignorable during shutdown.
     disconnectPane(m_leftPane);
     disconnectPane(m_rightPane);
     QMainWindow::closeEvent(event);
@@ -597,7 +637,6 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
 void MainWindow::onRefreshTriggered()
 {
-    m_leftPane->navigateTo(m_leftPane->currentDirectory());
-    m_rightPane->navigateTo(m_rightPane->currentDirectory());
+    refreshBothPanes();
     statusBar()->showMessage(tr("Refreshed"), 2000);
 }

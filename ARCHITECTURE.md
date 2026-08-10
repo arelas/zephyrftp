@@ -2261,17 +2261,16 @@ to drive FileZilla itself for a same-desktop comparison.
   `connectViaDialog()`/`siteManagerViaDialog()`/`disconnectPane()` helpers
   with it. "Disconnect" (toolbar, or a pane's own menu) swaps that pane
   back to `LocalBackend` via `disconnectPane()`.
-  Both `startConnection()` and `disconnectPane()` check
-  `targetPane->isConnecting()` first and refuse (a status-bar message
-  instead) if it's true — see `FilePaneWidget`'s entry above for the real
-  GUI-freeze bug this guards against (calling `setBackend()` again on a
-  pane whose previous connection attempt is still blocked in a worker
-  thread's synchronous handshake). `disconnectPane()`'s guard also
-  applies during `closeEvent()`'s own unconditional teardown calls for
-  both panes on app close — deliberately: refusing to tear down a
-  still-connecting pane there just leaves its worker thread to be
-  reclaimed by the OS at process exit (the window closes immediately
-  either way) rather than freezing the whole app on quit.
+  `startConnection()` and `disconnectPane()` both check
+  `targetPane->isConnecting()` first (via a shared `stillConnecting()`
+  helper — see below) and refuse (a status-bar message instead) if it's
+  true — see `FilePaneWidget`'s entry above for the real GUI-freeze bug
+  this guards against (calling `setBackend()` again on a pane whose
+  previous connection attempt is still blocked in a worker thread's
+  synchronous handshake). `closeEvent()` now checks the SAME thing
+  itself, directly, for both panes, before ever calling
+  `disconnectPane()` — see this entry's own bug list below for why that
+  used to be wrong.
   The menu bar's
   "Connection" menu (`buildMenuBar()`, next to Help) mirrors the toolbar's
   three (right-pane) actions — same `QAction`-triggered slots, no separate
@@ -2327,6 +2326,52 @@ to drive FileZilla itself for a same-desktop comparison.
   real worker threads, real sockets): closing the window doesn't crash —
   see the `TransferManager`/Known gaps entries for the rest of what that
   same manual pass did and didn't cover.
+  **Four more real bugs found by a dedicated code review of this file —
+  the second-largest source file in the project, never previously
+  reviewed on its own — all fixed:**
+  1. **`closeEvent()` had silently reintroduced the exact crash described
+     above, specifically for a pane still mid-connect.** The fix above
+     covers BOTH panes being torn down, but never accounted for
+     `disconnectPane()`'s own `isConnecting()` guard (added for a
+     genuinely different reason — see `startConnection()`'s entry) simply
+     no-op'ing when a pane is still mid-connect, rather than tearing down
+     its worker thread. `closeEvent()` never checked for that outcome and
+     always fell through to `QMainWindow::closeEvent(event)`, accepting
+     the close regardless — an earlier version of this very entry even
+     documented that as deliberate and safe ("the window closes
+     immediately either way... rather than freezing the whole app"),
+     which was wrong: since `main.cpp` relies on the default
+     `quitOnLastWindowClosed`, that let the whole app exit with a worker
+     `QThread` still running and still parented to the now-destroyed
+     window — the identical `qFatal("QThread: Destroyed while thread is
+     still running")` this whole mechanism exists to prevent. Fixed by
+     having `closeEvent()` check `isConnecting()` on both panes itself,
+     first, and call `event->ignore()` if either is true — refusing the
+     close outright rather than accepting it and hoping for the best,
+     same "wait for it to finish or fail first" tradeoff
+     `startConnection()`/`disconnectPane()` already make for the
+     identical hazard. Covered by `smoke-test`, using a fake backend
+     whose `connectToHost()` deliberately never resolves (avoids needing
+     a real hung connection or live server): confirms `window.close()`
+     returns `false` and the window stays open while a pane reports
+     `isConnecting()`, and returns `true` again once it doesn't.
+  2. The `isConnecting()`-guard-and-status-message pattern was
+     copy-pasted between `startConnection()` and `disconnectPane()` —
+     structurally part of why bug #1 above was possible at all, since
+     nothing enforced that a third call site (`closeEvent()`) couldn't
+     independently forget it. Extracted into a shared `stillConnecting()`
+     helper both now call, and `closeEvent()` uses too.
+  3. `connectViaDialog()`'s SFTP-public-key validation (empty
+     `privateKeyPath`) duplicated the identical three-part condition
+     already in `SiteManagerDialog::onConnectClicked()`, with no shared
+     helper — risking the two silently drifting if the rule ever
+     changed. Extracted to `ConnectionRequest::missingRequiredPrivateKeyPath()`,
+     next to that struct's existing `host()`/`useHomeDirectory()`-style
+     convenience accessors; both call sites now share it. Covered
+     directly in `protocol-selection-test`.
+  4. The two-line "re-list whatever both panes are showing" sequence was
+     duplicated verbatim in `onTransferSucceeded()` and
+     `onRefreshTriggered()`. Extracted to a private `refreshBothPanes()`.
 
 ## Design system
 

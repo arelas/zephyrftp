@@ -56,6 +56,40 @@ int main(int argc, char *argv[])
     };
 
     // ===================================================================
+    // ConnectionRequest::missingRequiredPrivateKeyPath() — shared by
+    // MainWindow::connectViaDialog() and SiteManagerDialog::
+    // onConnectClicked(), extracted after code review found the identical
+    // three-part condition duplicated at both call sites. Checked
+    // directly against the struct rather than through either dialog,
+    // since it's a pure function of ConnectionRequest's own fields.
+    // ===================================================================
+    {
+        ConnectionRequest sftpKeyNoPath;
+        sftpKeyNoPath.protocol = Protocol::Sftp;
+        sftpKeyNoPath.sftp.authMethod = SftpAuthMethod::PublicKey;
+        check("SFTP + key auth + empty path: missing",
+              sftpKeyNoPath.missingRequiredPrivateKeyPath());
+
+        ConnectionRequest sftpKeyWithPath;
+        sftpKeyWithPath.protocol = Protocol::Sftp;
+        sftpKeyWithPath.sftp.authMethod = SftpAuthMethod::PublicKey;
+        sftpKeyWithPath.sftp.privateKeyPath = QStringLiteral("/home/dave/.ssh/id_ed25519");
+        check("SFTP + key auth + a real path: not missing",
+              !sftpKeyWithPath.missingRequiredPrivateKeyPath());
+
+        ConnectionRequest sftpPassword;
+        sftpPassword.protocol = Protocol::Sftp;
+        sftpPassword.sftp.authMethod = SftpAuthMethod::Password;
+        check("SFTP + password auth (no key involved at all): not missing",
+              !sftpPassword.missingRequiredPrivateKeyPath());
+
+        ConnectionRequest ftpRequest;
+        ftpRequest.protocol = Protocol::Ftp;
+        check("plain FTP (privateKeyPath meaningless for this protocol): not missing",
+              !ftpRequest.missingRequiredPrivateKeyPath());
+    }
+
+    // ===================================================================
     // ConnectionDialog: protocol drives port, auth visibility, and the
     // shape of the resulting ConnectionRequest.
     // ===================================================================
