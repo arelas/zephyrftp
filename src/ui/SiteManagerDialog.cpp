@@ -1,6 +1,7 @@
 #include "SiteManagerDialog.h"
 #include "IconTheme.h"
 #include "FileDialogs.h"
+#include "ProtocolCombo.h"
 #include "../backends/CredentialStore.h"
 
 #include <QTreeWidget>
@@ -96,9 +97,7 @@ void SiteManagerDialog::buildUi()
     connect(m_groupCombo, &QComboBox::currentIndexChanged, this, &SiteManagerDialog::onFieldEdited);
 
     m_protocolCombo = new QComboBox(this);
-    m_protocolCombo->addItem(displayNameFor(Protocol::Sftp), int(Protocol::Sftp));
-    m_protocolCombo->addItem(displayNameFor(Protocol::Ftp),  int(Protocol::Ftp));
-    m_protocolCombo->addItem(displayNameFor(Protocol::Ftps), int(Protocol::Ftps));
+    ProtocolCombo::populate(m_protocolCombo);
     // Two connections, deliberately: onProtocolChanged() updates which
     // fields are visible, onFieldEdited() persists the change. Folding
     // both into one slot would tangle "what the form looks like" with

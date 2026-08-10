@@ -20,6 +20,12 @@ in the README), so anything may still change between 0.x releases.
   use of a given icon/color/size combination) — the source SVG was
   being parsed twice (once each for the normal and HiDPI versions)
   instead of once.
+- `PreferencesDialog.cpp`'s first dedicated code review found no
+  correctness bugs, but did find the Connect dialog, Site Manager, and
+  Preferences dialogs each hand-wrote an identical, three-way-duplicated
+  bit of protocol-combo-box setup code. Extracted to a shared helper so
+  a future new protocol only needs to be added in one place instead of
+  three.
 
 ## [0.6.15] — Fix a real crash-corruption bug found by code review of AppSettings
 

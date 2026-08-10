@@ -1,13 +1,13 @@
 #include "PreferencesDialog.h"
 #include "../AppSettings.h"
 #include "../backends/Protocol.h"
+#include "ProtocolCombo.h"
 
 #include <QFormLayout>
 #include <QVBoxLayout>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
-#include <QLabel>
 
 PreferencesDialog::PreferencesDialog(AppSettings *settings, QWidget *parent)
     : QDialog(parent)
@@ -24,12 +24,7 @@ PreferencesDialog::PreferencesDialog(AppSettings *settings, QWidget *parent)
         m_settings->setShowHiddenFiles(checked);
     });
 
-    // Same population pattern ConnectionDialog's protocol combo uses —
-    // display text from Protocol.h's shared displayNameFor(), the enum
-    // itself stashed as the item data rather than relying on index order.
-    m_defaultProtocolCombo->addItem(displayNameFor(Protocol::Sftp), QVariant::fromValue(int(Protocol::Sftp)));
-    m_defaultProtocolCombo->addItem(displayNameFor(Protocol::Ftp),  QVariant::fromValue(int(Protocol::Ftp)));
-    m_defaultProtocolCombo->addItem(displayNameFor(Protocol::Ftps), QVariant::fromValue(int(Protocol::Ftps)));
+    ProtocolCombo::populate(m_defaultProtocolCombo);
     const int currentIndex = m_defaultProtocolCombo->findData(QVariant::fromValue(int(m_settings->defaultProtocol())));
     if (currentIndex >= 0)
         m_defaultProtocolCombo->setCurrentIndex(currentIndex);

@@ -1,5 +1,6 @@
 #include "ConnectionDialog.h"
 #include "FileDialogs.h"
+#include "ProtocolCombo.h"
 
 #include <QFormLayout>
 #include <QVBoxLayout>
@@ -35,11 +36,7 @@ ConnectionDialog::ConnectionDialog(QWidget *parent)
 {
     setWindowTitle(tr("Connect to Server"));
 
-    // Order matters only for presentation; the stored data is the enum,
-    // not the index, so reordering here can't corrupt anything.
-    m_protocolCombo->addItem(displayNameFor(Protocol::Sftp), QVariant::fromValue(int(Protocol::Sftp)));
-    m_protocolCombo->addItem(displayNameFor(Protocol::Ftp),  QVariant::fromValue(int(Protocol::Ftp)));
-    m_protocolCombo->addItem(displayNameFor(Protocol::Ftps), QVariant::fromValue(int(Protocol::Ftps)));
+    ProtocolCombo::populate(m_protocolCombo);
 
     // Object names exist for one reason: tests locate these fields by
     // name rather than by position in findChildren()'s list, which would

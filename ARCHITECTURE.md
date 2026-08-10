@@ -1528,6 +1528,27 @@ to drive FileZilla itself for a same-desktop comparison.
   dark-theme token, confirming it doesn't repeat the earlier
   dialogs-ignoring-the-stylesheet bug now that a third dialog exists to
   potentially get it wrong again.
+  **A dedicated code review of this file found no correctness bugs — the
+  construction order (every `setChecked()`/`setCurrentIndex()` runs
+  before its `connect()`, so no spurious settings writes fire during
+  construction) and every `AppSettings` setter's own `if (old == new)
+  return;` guard were both already correct — but did find a real,
+  three-way duplication worth fixing:** `ConnectionDialog`,
+  `SiteManagerDialog`, and this dialog each hand-wrote the identical
+  three-`addItem()` protocol-combo population pattern. A fourth
+  `Protocol` value would have needed the same line added by hand at all
+  three call sites, with a silently-out-of-sync combo the cost of
+  missing one. Extracted to `ProtocolCombo::populate()`
+  (`src/ui/ProtocolCombo.h`, new) — deliberately NOT folded into
+  `Protocol.h` itself, since that header is included from
+  `AppSettings.h`, which is linked into Core-only targets like
+  `app-settings-test` (no `Qt6::Widgets`); a `QComboBox` dependency
+  there would have broken that build. Confirmed non-regressing via all
+  three dialogs' existing tests (`protocol-selection-test` especially,
+  which drives `ConnectionDialog`'s combo directly) plus a full local
+  suite run, all still passing. Also removed an unused `#include
+  <QLabel>` (this dialog never constructs one directly —
+  `QFormLayout::addRow(QString, QWidget*)` builds its own labels).
 - `HostKeyVerifier` — lives on the GUI thread for the app's lifetime.
   `SftpBackend`'s worker thread calls into it via
   `QMetaObject::invokeMethod(..., Qt::BlockingQueuedConnection)` to get a
