@@ -3,6 +3,7 @@
 #include <QStandardPaths>
 #include <QDir>
 #include <QFile>
+#include <QSaveFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 
@@ -98,9 +99,25 @@ void AppSettings::save() const
     obj[QStringLiteral("showTransfersOnStart")] = m_showTransfersOnStart;
     obj[QStringLiteral("showCommandsOnStart")] = m_showCommandsOnStart;
 
-    QFile file(filePath());
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+    // QSaveFile (not QFile + Truncate) — writes the new content to a
+    // temporary file first and only atomically replaces settings.json on
+    // a successful commit(), so a crash/power-loss/full-disk mid-write
+    // can never leave a truncated or half-written file in its place. That
+    // mattered more here than it might look: load() treats ANY parse
+    // failure as "corrupt or unexpected content — fail soft to defaults"
+    // (see its own comment), so a truncated file didn't just lose
+    // whichever single preference was being saved — it silently reset
+    // every saved preference (window geometry/state included) back to
+    // hardcoded defaults on the next launch. A real risk found by code
+    // review, not exercised by any test until app-settings-test's
+    // simulated-crash-mid-write regression (below) — building `dir +
+    // "settings.json"` directly here also avoids re-resolving
+    // AppConfigLocation a second time, which filePath() (already called
+    // once above via `dir`) would otherwise do on every single save().
+    QSaveFile file(dir + QStringLiteral("/settings.json"));
+    if (!file.open(QIODevice::WriteOnly))
         return;
 
     file.write(QJsonDocument(obj).toJson(QJsonDocument::Indented));
+    file.commit();
 }

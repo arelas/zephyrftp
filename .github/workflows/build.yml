@@ -69,16 +69,16 @@ jobs:
 
       # The ten EXCLUDE_FROM_ALL test targets CONTRIBUTING.md's "All ten
       # need to actually pass, not just build" rule covers, plus
-      # sort-and-commands-test, remote-to-remote-test, and move-entry-test
-      # — an eleventh, twelfth, and thirteenth separately-tracked target
-      # (see CONTRIBUTING.md's own subsections on them) that CI now also
-      # builds and runs even though none are folded into that "ten" count
-      # in the docs. Built here as .exe's; actually run (not just linked)
-      # in the next-but-one step.
+      # app-settings-test, sort-and-commands-test, remote-to-remote-test,
+      # and move-entry-test — an eleventh through fourteenth
+      # separately-tracked target (see CONTRIBUTING.md's own subsections
+      # on them) that CI now also builds and runs even though none are
+      # folded into that "ten" count in the docs. Built here as .exe's;
+      # actually run (not just linked) in the next-but-one step.
       - name: Build test suite
         run: >
           cmake --build build-win --target
-          smoke-test transfer-queue-test site-store-test navigation-test
+          smoke-test transfer-queue-test site-store-test app-settings-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
           move-entry-test
@@ -146,6 +146,7 @@ jobs:
           xvfb-run -a wine ./transfer-queue-test.exe
 
           xvfb-run -a wine ./site-store-test.exe
+          xvfb-run -a wine ./app-settings-test.exe
 
           xvfb-run -a wine ./navigation-test.exe
           xvfb-run -a wine ./transfer-pause-test.exe
@@ -227,7 +228,7 @@ jobs:
       - name: Build test suite
         run: >
           cmake --build build --target
-          smoke-test transfer-queue-test site-store-test navigation-test
+          smoke-test transfer-queue-test site-store-test app-settings-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
           move-entry-test
@@ -254,6 +255,7 @@ jobs:
           ./transfer-queue-test
 
           ./site-store-test
+          ./app-settings-test
 
           ./navigation-test
           ./transfer-pause-test
@@ -355,7 +357,7 @@ jobs:
       - name: Build test suite
         run: >
           cmake --build build --target
-          smoke-test transfer-queue-test site-store-test navigation-test
+          smoke-test transfer-queue-test site-store-test app-settings-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
           move-entry-test
@@ -383,6 +385,7 @@ jobs:
           ./transfer-queue-test
 
           ./site-store-test
+          ./app-settings-test
 
           ./navigation-test
           ./transfer-pause-test
@@ -463,7 +466,7 @@ jobs:
       - name: Build test suite
         run: >
           cmake --build build --target
-          smoke-test transfer-queue-test site-store-test navigation-test
+          smoke-test transfer-queue-test site-store-test app-settings-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
           move-entry-test
@@ -487,6 +490,7 @@ jobs:
           ./transfer-queue-test
 
           ./site-store-test
+          ./app-settings-test
 
           ./navigation-test
           ./transfer-pause-test

@@ -307,6 +307,14 @@ qt_add_executable(site-store-test EXCLUDE_FROM_ALL
 target_include_directories(site-store-test PRIVATE src)
 target_link_libraries(site-store-test PRIVATE Qt6::Core)
 
+# --- AppSettings persistence test (pure QCoreApplication, no GUI needed) ---
+qt_add_executable(app-settings-test EXCLUDE_FROM_ALL
+    src/app_settings_test.cpp
+    src/AppSettings.cpp
+)
+target_include_directories(app-settings-test PRIVATE src)
+target_link_libraries(app-settings-test PRIVATE Qt6::Core)
+
 # --- Navigation history test (back/forward/up, real LocalBackend + real temp dirs) ---
 qt_add_executable(navigation-test EXCLUDE_FROM_ALL
     src/navigation_test.cpp

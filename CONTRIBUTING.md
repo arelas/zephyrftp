@@ -624,6 +624,36 @@ Needs no fixtures or environment overrides beyond `QT_QPA_PLATFORM` — it
 builds and wipes its own scratch directory (`/tmp/move_entry_test`) at the
 top of `main()`, same convention `sort-and-commands-test` uses.
 
+### A fourteenth target: `app-settings-test`
+
+Same "additional, not folded into the fixed count" treatment as the
+three above — self-contained, `EXCLUDE_FROM_ALL`, added to all four
+`build.yml` jobs. `AppSettings`' first-ever test coverage of any kind:
+the full setter/save/load round trip for every persisted field, the
+documented fresh-start and corrupt-`settings.json` fallback-to-defaults
+behavior, and that a same-value `set()` call is a genuine no-op rather
+than silently re-writing defaults over an already-saved value. Also
+regression coverage for a real bug a code review found: `save()` used
+to write `settings.json` in place, so a crash/power-loss/full-disk
+mid-write could corrupt it — and since `load()` treats any parse
+failure as total corruption, a truncated file from interrupting the
+save of just ONE preference could silently reset every OTHER
+already-saved preference back to defaults too. Fixed with `QSaveFile`
+(temp file + atomic replace on `commit()`) in place of `QFile` — see
+ARCHITECTURE.md's `AppSettings` entry for why the crash-mid-write
+recovery itself isn't exercised by this test specifically (no seam to
+interrupt a private, always-committing `save()` through `AppSettings`'
+own public API) even though it was verified with a standalone probe
+before relying on it. Uses `site-store-test`'s same
+`QStandardPaths::setTestModeEnabled(true)` isolation, for the same
+reason — without it this would read/overwrite whatever `settings.json`
+a real developer actually has saved. Run it locally the same way:
+
+```
+cmake --build build --target app-settings-test
+QT_QPA_PLATFORM=offscreen ./build/app-settings-test
+```
+
 ## Live-server verification (SFTP public-key auth, FTP/FTPS, cancel/pause/resume)
 
 The ten targets above are deliberately self-contained — no external

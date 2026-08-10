@@ -1480,6 +1480,39 @@ to drive FileZilla itself for a same-desktop comparison.
   *filtered* set, while a separate `m_lastRawEntries` holds everything
   the last `listDirectory()` actually returned, so a live toggle can
   re-filter and redraw instantly without a pointless backend round-trip.
+  **A real bug found by a dedicated code review of this file — its
+  first, and its first-ever test coverage of any kind:** `save()` wrote
+  `settings.json` in place (`QFile::open(WriteOnly | Truncate)`), so a
+  crash, power loss, or a full disk mid-write could leave a truncated
+  file behind. That mattered more than it might for an ordinary
+  settings file: `load()`'s own "corrupt or unexpected content — fail
+  soft to defaults" policy treats ANY parse failure as total corruption,
+  so a truncated file from an interrupted write to just ONE preference
+  (say, window geometry on close) would silently reset every OTHER
+  already-saved preference back to hardcoded defaults on the next
+  launch too — not a hypothetical, since every setter in this class
+  calls `save()` on every single change, including live window
+  resizing. Fixed with `QSaveFile` (writes to a temporary file first,
+  only atomically replaces the target on a successful `commit()`) in
+  place of `QFile` — confirmed directly with a standalone probe, not
+  just assumed from documentation, that an abandoned `QSaveFile` (never
+  committed, simulating a crash) leaves the original file completely
+  untouched, while a committed one replaces it correctly. That specific
+  crash-mid-write recovery isn't exercised by an automated test —
+  `save()` is private and always commits on success from inside
+  `AppSettings`' own public API, so there's no seam to interrupt it
+  through short of adding a test-only hook that doesn't otherwise need
+  to exist — documented honestly as verified-by-probe rather than
+  test-covered, per this project's own "say so explicitly" rule (see
+  CONTRIBUTING.md). What the new `app-settings-test` DOES cover for
+  real: the full setter/save/load round trip for every field (the
+  actual regression risk of swapping write primitives), the documented
+  fresh-start and corrupt-file fallback-to-defaults behavior, and that a
+  same-value `set()` call is a genuine no-op rather than silently
+  re-writing defaults over a real saved value. Also fixed in the same
+  pass: `save()` was calling `QStandardPaths::writableLocation()` twice
+  per invocation (once directly, once again inside `filePath()`) —
+  minor, but redundant on every single preference change.
 - `PreferencesDialog` (`src/ui/PreferencesDialog.h/.cpp`) — a "Show
   hidden files" checkbox, a default-protocol combo box, and two more
   checkboxes added later ("Show Transfers pane on start", "Show Commands

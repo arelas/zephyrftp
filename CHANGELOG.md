@@ -8,6 +8,22 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A crash, power loss, or full disk while saving a preference (window
+  size/position, "Show hidden files," default protocol, or either
+  panel's on-start visibility) could wipe out ALL of your other
+  saved preferences, not just the one being written**, the next time
+  you launched the app. Settings are now written the safer way (a
+  temporary file, only swapped in once it's fully and correctly
+  written), so an interrupted save can no longer corrupt or lose
+  anything already saved.
+
+### Changed (developer-facing only, no shipped behavior)
+
+- `AppSettings.cpp` got its first-ever dedicated code review and its
+  first-ever automated test coverage (`app-settings-test`).
+
 ## [0.6.14] — Fix a real bug found by code review of CredentialStore
 
 ### Fixed
