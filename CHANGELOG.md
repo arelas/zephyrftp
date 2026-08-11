@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.6.16] — Fix real bugs found by code review of CommandsPaneWidget and HostKeyVerifier/CertificateVerifier
+
 ### Fixed
 
 - **Scrolling up in the Commands pane to re-read an earlier line, while
@@ -1271,7 +1273,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.15...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.16...HEAD
+[0.6.16]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.16
 [0.6.15]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.15
 [0.6.14]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.14
 [0.6.13]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.13
