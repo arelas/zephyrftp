@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.6.19] — Polish pass on navigation order and column headers
+
 ### Changed
 
 - **File panes' navigation order is now Back, Forward, Up, Home** — the
@@ -1376,7 +1378,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.18...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.19...HEAD
+[0.6.19]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.19
 [0.6.18]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.18
 [0.6.17]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.17
 [0.6.16]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.16

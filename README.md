@@ -4,7 +4,7 @@ A dual-pane SFTP client for Windows and Linux — browse your local files
 and a remote server side by side, then drag, drop, or double-click to
 move things between them. Think FileZilla or WinSCP, built fresh in Qt6.
 
-**Current version: 0.6.18 — alpha.** Real functionality, but real gaps
+**Current version: 0.6.19 — alpha.** Real functionality, but real gaps
 too — see [Known limitations](#known-limitations) before relying on
 this for anything you can't afford to get wrong. [Releases](https://github.com/arelas/zephyrftp/releases)
 has downloadable Windows and Linux builds; [CHANGELOG.md](CHANGELOG.md)
