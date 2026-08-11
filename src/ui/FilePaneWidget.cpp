@@ -259,6 +259,14 @@ void FilePaneWidget::buildUi()
     // is what should absorb leftover width instead.
     m_view->header()->setSectionResizeMode(ColName, QHeaderView::Interactive);
     m_view->setColumnWidth(ColName, 220);
+    // Same real bug, same fix as TransferQueueWidget's identical File
+    // column: with no upper bound, dragging Name wide enough pushes
+    // Size/Modified/Permissions past the visible area, unreachable
+    // (stretchLastSection actively avoids a horizontal scrollbar).
+    // QHeaderView has no per-section maximum, only this header-wide
+    // one — acceptable since Name is the only column anyone actually
+    // drags wider in practice.
+    m_view->header()->setMaximumSectionSize(500);
     // Clicking a header sorts by that column; QHeaderView/QTreeView's own
     // built-in click handling toggles ascending/descending on a second
     // click of the same section — no extra wiring needed for that part.

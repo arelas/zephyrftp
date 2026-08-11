@@ -24,6 +24,8 @@ in the README), so anything may still change between 0.x releases.
   horizontal scrollbar, so those columns became genuinely unreachable,
   not just scrolled out of view. Capped at a generous but bounded
   maximum instead.
+- **The same unbounded-width problem existed on both file panes' "Name"
+  column** — same cause, same fix.
 
 ### Changed
 
