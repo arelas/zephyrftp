@@ -22,6 +22,18 @@ QToolBar {
     padding: 4px 6px;
 }
 
+/* --zf-border, brightened — the toolbar grew enough icon groups (Sites/
+   Connect/Disconnect, Refresh, the Transfers/Commands view toggles,
+   Preferences/About) that the group boundaries needed to actually read
+   against QToolBar's own dark surface; the plain --zf-border value used
+   for every other divider in the app (QHeaderView, QSplitter) was too
+   close to that surface color to serve the same purpose here. */
+QToolBar::separator {
+    background-color: #3a3f4a;
+    width: 1px;
+    margin: 4px 6px;
+}
+
 QToolButton {
     background: transparent;
     border: none;
@@ -31,6 +43,16 @@ QToolButton {
 }
 QToolButton:hover {
     background-color: rgba(255, 255, 255, 12);   /* --zf-surface-hover, alpha approximated (QSS rgba alpha is 0-255) */
+}
+/* The Transfers/Commands toolbar buttons are checkable (they share the
+   View menu's own toggleViewAction()) — without this, a checked
+   QToolButton painted no differently from an unchecked one once the
+   rules above took over its box model, leaving no way to tell which
+   docks are currently visible from the toolbar alone. Same blue tint
+   QTreeView/QTableWidget selection and QMenu::item:selected already use
+   for "this is the active one", not a new color. */
+QToolButton:checked {
+    background-color: rgba(91, 141, 239, 26);   /* --zf-blue-tint */
 }
 
 QTreeView, QTableWidget {

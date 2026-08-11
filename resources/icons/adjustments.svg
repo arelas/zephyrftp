@@ -1,0 +1,32 @@
+<!--
+  Hand-drawn Tabler-style icon (matching this vendored set's own
+  currentColor/stroke-width/stroke-linecap conventions so it recolors
+  identically to every other icon via IconTheme::tintedIcon()), NOT
+  fetched from the real Tabler Icons source — no internet access
+  available to confirm pixel-exact path data, same disclosed limitation
+  as home.svg elsewhere in this set. A "three vertical sliders, each
+  with a round handle at a different height" preferences/settings
+  glyph — a widely recognized shape across icon sets generally, not
+  just Tabler's own "adjustments" icon specifically.
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M6 4l0 6" />
+  <path d="M6 14l0 6" />
+  <circle cx="6" cy="10" r="2" />
+  <path d="M12 4l0 2" />
+  <path d="M12 10l0 10" />
+  <circle cx="12" cy="8" r="2" />
+  <path d="M18 4l0 10" />
+  <path d="M18 18l0 2" />
+  <circle cx="18" cy="16" r="2" />
+</svg>

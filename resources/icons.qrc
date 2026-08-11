@@ -51,6 +51,8 @@
         <file>icons/player-pause.svg</file>
         <file>icons/player-play.svg</file>
         <file>icons/chevron-down-muted.svg</file>
+        <file>icons/adjustments.svg</file>
+        <file>icons/info-circle.svg</file>
         <file>icons/app-icon-16.png</file>
         <file>icons/app-icon-24.png</file>
         <file>icons/app-icon-32.png</file>

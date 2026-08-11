@@ -196,6 +196,42 @@ void MainWindow::buildToolbar()
     auto *refreshAction = toolbar->addAction(
         IconTheme::tintedIcon(":/icons/refresh.svg", IconTheme::Amber), tr("Refresh"));
     connect(refreshAction, &QAction::triggered, this, &MainWindow::onRefreshTriggered);
+
+    toolbar->addSeparator();
+
+    // The SAME QAction the View menu already uses (toggleViewAction() —
+    // see buildMenuBar()'s own comment on why this is a checkable action
+    // Qt keeps in sync with the dock's actual visibility both directions),
+    // not a second one — adding it here just gives that existing action a
+    // second, icon-bearing home, with no separate state to keep in sync.
+    // Gray/neutral, same reasoning Edit's context-menu icon uses: a
+    // visibility toggle has no inherent semantic color the way
+    // connect/disconnect/refresh do. QToolButton:checked in theme.qss is
+    // what actually makes "currently shown" visible here.
+    QAction *transfersToggle = m_transfersDock->toggleViewAction();
+    transfersToggle->setIcon(IconTheme::tintedIcon(":/icons/arrows-left-right.svg", IconTheme::Gray));
+    toolbar->addAction(transfersToggle);
+
+    QAction *commandsToggle = m_commandsDock->toggleViewAction();
+    commandsToggle->setIcon(IconTheme::tintedIcon(":/icons/terminal-2.svg", IconTheme::Gray));
+    toolbar->addAction(commandsToggle);
+
+    toolbar->addSeparator();
+
+    // Preferences/About: separate QActions from buildMenuBar()'s own
+    // (unlike the two toggles above, there's no shared checked-state to
+    // keep in sync for a plain one-shot dialog trigger — connecting two
+    // actions to the same slot is simpler than threading one shared
+    // QAction between the two build*() methods for no behavioral gain).
+    auto *preferencesAction = toolbar->addAction(
+        IconTheme::tintedIcon(":/icons/adjustments.svg", IconTheme::Gray), tr("Preferences..."));
+    connect(preferencesAction, &QAction::triggered, this, &MainWindow::onPreferencesTriggered);
+
+    // Blue — "primary / navigation / download / info" per IconTheme's own
+    // palette comment; About is the one place "info" applies.
+    auto *aboutAction = toolbar->addAction(
+        IconTheme::tintedIcon(":/icons/info-circle.svg", IconTheme::Blue), tr("About ZephyrFTP..."));
+    connect(aboutAction, &QAction::triggered, this, &MainWindow::onAboutTriggered);
 }
 
 void MainWindow::buildLayout()

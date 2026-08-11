@@ -1,0 +1,23 @@
+<!--
+  Hand-drawn Tabler-style icon (matching this vendored set's own
+  currentColor/stroke-width/stroke-linecap conventions), NOT fetched
+  from the real Tabler Icons source — no internet access available to
+  confirm pixel-exact path data, same disclosed limitation as home.svg
+  elsewhere in this set. A plain circle with an "i" (dot above, stem
+  below), the standard, widely recognized "info" glyph.
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0" />
+  <path d="M12 9h.01" />
+  <path d="M11 12h1v4h1" />
+</svg>

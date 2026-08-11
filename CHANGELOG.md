@@ -8,6 +8,15 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Changed
+
+- **The toolbar has four new icons**: the View menu's Transfers/Commands
+  toggles (the same checkable actions the menu already used — toggling
+  either from the toolbar now visibly highlights while its dock is
+  shown), Preferences, and About. Toolbar group dividers are slightly
+  brighter now too, so the new, busier icon groups still read as
+  distinct at a glance.
+
 ### Added
 
 - **Edit-in-place.** Right-click a file on a remote pane and choose Edit
