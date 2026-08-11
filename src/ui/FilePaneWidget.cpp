@@ -98,6 +98,7 @@ FilePaneWidget::FilePaneWidget(RemoteBackend *backend, QWidget *parent, AppSetti
     , m_view(nullptr)
     , m_backButton(nullptr)
     , m_forwardButton(nullptr)
+    , m_homeButton(nullptr)
     , m_upButton(nullptr)
     , m_pathBar(nullptr)
     , m_statusLabel(nullptr)
@@ -222,6 +223,11 @@ void FilePaneWidget::buildUi()
     m_forwardButton->setEnabled(false);
     connect(m_forwardButton, &QToolButton::clicked, this, &FilePaneWidget::goForward);
 
+    m_homeButton = new QToolButton(this);
+    m_homeButton->setIcon(IconTheme::tintedIcon(":/icons/home.svg", IconTheme::Gray));
+    m_homeButton->setToolTip(tr("Home"));
+    connect(m_homeButton, &QToolButton::clicked, this, &FilePaneWidget::goHome);
+
     m_upButton = new QToolButton(this);
     m_upButton->setIcon(IconTheme::tintedIcon(":/icons/corner-left-up.svg", IconTheme::Gray));
     m_upButton->setToolTip(tr("Up one level"));
@@ -233,6 +239,7 @@ void FilePaneWidget::buildUi()
     auto *pathRow = new QHBoxLayout;
     pathRow->addWidget(m_backButton);
     pathRow->addWidget(m_forwardButton);
+    pathRow->addWidget(m_homeButton);
     pathRow->addWidget(m_upButton);
     pathRow->addWidget(m_pathBar, 1);
     layout->addLayout(pathRow);
@@ -772,6 +779,25 @@ void FilePaneWidget::goForward()
 void FilePaneWidget::goUp()
 {
     navigateTo(parentOfPath(currentDirectory()));
+}
+
+void FilePaneWidget::goHome()
+{
+    // m_history[0] IS the home directory, by construction: resetHistory()
+    // clears it on every setBackend() call, and the very next successful
+    // listing — connectToHost()'s own connected()->navigateTo(QString())
+    // (see setBackend()'s own comment) — is always a "fresh" navigation,
+    // never a back/forward one, so onDirectoryListed() pushes it as the
+    // first entry. That's QDir::homePath() for LocalBackend (its
+    // m_currentPath starts there) and the server's resolved PWD/starting
+    // directory for SFTP/FTP (see ensureConnected()/ensureSession()'s own
+    // "useHomeDirectory" handling). No separate backend-level "home path"
+    // concept needed — this reuses history state that already exists.
+    if (m_history.isEmpty())
+        return;   // still connecting; nothing to go home to yet
+    if (m_navigationInFlight)
+        return;
+    navigateTo(m_history.first());
 }
 
 QString FilePaneWidget::parentOfPath(const QString &path)

@@ -69,14 +69,18 @@ public:
 
     void navigateTo(const QString &path);
 
-    // Back/forward/up navigation, matching any ordinary file manager.
+    // Back/forward/up/home navigation, matching any ordinary file manager.
     // Back/forward walk a per-pane history list; Up computes the parent
-    // of the current directory and navigates there — none of these
-    // require backend support, they're built entirely on top of the
-    // existing navigateTo()/currentDirectory().
+    // of the current directory and navigates there; Home returns to
+    // wherever this pane's backend first landed after connecting (the
+    // OS home directory for LocalBackend, the resolved starting/PWD
+    // directory for SFTP/FTP) — none of these require backend support,
+    // they're built entirely on top of the existing
+    // navigateTo()/currentDirectory().
     void goBack();
     void goForward();
     void goUp();
+    void goHome();
     bool canGoBack() const { return m_historyIndex > 0; }
     bool canGoForward() const { return m_historyIndex < m_history.size() - 1; }
 
@@ -227,6 +231,7 @@ private:
     FileTreeView *m_view;
     QToolButton *m_backButton;
     QToolButton *m_forwardButton;
+    QToolButton *m_homeButton;
     QToolButton *m_upButton;
     QLineEdit *m_pathBar;
     QAction *m_pathBarLeadingIcon = nullptr;   // owned by m_pathBar once added; tracked so it can be replaced

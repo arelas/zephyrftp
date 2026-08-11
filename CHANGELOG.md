@@ -8,6 +8,20 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Added
+
+- **A Home button on each file pane**, to the left of the existing "Up
+  one level" button — returns to wherever that pane's backend first
+  landed after connecting (your OS home directory for the local pane,
+  the server's resolved home/starting directory for SFTP/FTP/FTPS).
+
+### Changed
+
+- **File pane and transfer queue column headers are more readable**:
+  header text brightened to the same high-contrast color used
+  everywhere else in the app (was a dim secondary gray), and a faint
+  vertical divider now separates each column header from the next.
+
 ## [0.6.17] — Fix FTPS data connections rejected by strict TLS-session-reuse servers
 
 ### Fixed

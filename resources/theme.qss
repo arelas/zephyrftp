@@ -60,9 +60,10 @@ QPlainTextEdit {
 
 QHeaderView::section {
     background-color: #1a1d23;   /* --zf-surface */
-    color: #8790a0;               /* --zf-text-secondary */
+    color: #dfe4ea;               /* --zf-text-primary — brightened from text-secondary for readability */
     border: none;
     border-bottom: 1px solid #2a2e35;   /* --zf-border */
+    border-right: 1px solid #2a2e35;    /* --zf-border — faint divider between header columns */
     padding: 5px 8px;
     font-size: 11px;
 }
