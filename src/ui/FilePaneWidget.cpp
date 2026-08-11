@@ -98,8 +98,8 @@ FilePaneWidget::FilePaneWidget(RemoteBackend *backend, QWidget *parent, AppSetti
     , m_view(nullptr)
     , m_backButton(nullptr)
     , m_forwardButton(nullptr)
-    , m_homeButton(nullptr)
     , m_upButton(nullptr)
+    , m_homeButton(nullptr)
     , m_pathBar(nullptr)
     , m_statusLabel(nullptr)
     , m_model(new QStandardItemModel(this))
@@ -223,15 +223,15 @@ void FilePaneWidget::buildUi()
     m_forwardButton->setEnabled(false);
     connect(m_forwardButton, &QToolButton::clicked, this, &FilePaneWidget::goForward);
 
-    m_homeButton = new QToolButton(this);
-    m_homeButton->setIcon(IconTheme::tintedIcon(":/icons/home.svg", IconTheme::Gray));
-    m_homeButton->setToolTip(tr("Home"));
-    connect(m_homeButton, &QToolButton::clicked, this, &FilePaneWidget::goHome);
-
     m_upButton = new QToolButton(this);
     m_upButton->setIcon(IconTheme::tintedIcon(":/icons/corner-left-up.svg", IconTheme::Gray));
     m_upButton->setToolTip(tr("Up one level"));
     connect(m_upButton, &QToolButton::clicked, this, &FilePaneWidget::goUp);
+
+    m_homeButton = new QToolButton(this);
+    m_homeButton->setIcon(IconTheme::tintedIcon(":/icons/home.svg", IconTheme::Gray));
+    m_homeButton->setToolTip(tr("Home"));
+    connect(m_homeButton, &QToolButton::clicked, this, &FilePaneWidget::goHome);
 
     m_pathBar = new QLineEdit(this);
     connect(m_pathBar, &QLineEdit::returnPressed, this, &FilePaneWidget::onPathBarReturnPressed);
@@ -239,8 +239,8 @@ void FilePaneWidget::buildUi()
     auto *pathRow = new QHBoxLayout;
     pathRow->addWidget(m_backButton);
     pathRow->addWidget(m_forwardButton);
-    pathRow->addWidget(m_homeButton);
     pathRow->addWidget(m_upButton);
+    pathRow->addWidget(m_homeButton);
     pathRow->addWidget(m_pathBar, 1);
     layout->addLayout(pathRow);
 

@@ -8,6 +8,27 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Changed
+
+- **File panes' navigation order is now Back, Forward, Up, Home** — the
+  Home button (added last release) moves from between Forward and Up to
+  the rightmost position.
+- **The Commands pane now ends in a small footer line** ("N line(s)",
+  or "No output yet" when empty) instead of stopping abruptly at the
+  log's own edge — the same footer-line treatment every other pane
+  already has.
+
+### Fixed
+
+- **The Transfers panel's Direction/Status/Progress columns had the
+  identical off-screen-dragging bug File did, missed by the previous
+  fix.** That fix capped the whole header to one maximum width, which
+  stopped any SINGLE column from getting too wide — but Direction,
+  Status, and Progress could each still grow to that same generous
+  cap independently, and their combined width could still push later
+  columns unreachably off screen. Each column now has its own
+  appropriately-sized cap instead of one shared one.
+
 ## [0.6.18] — Add per-pane Home button; fix column headers pushing off-screen
 
 ### Added

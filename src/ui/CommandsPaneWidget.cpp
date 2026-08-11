@@ -6,6 +6,7 @@
 #include <QAction>
 #include <QFontDatabase>
 #include <QScrollBar>
+#include <QLabel>
 
 // Set via target_compile_definitions() in CMakeLists.txt for every target
 // that compiles this file — defended here anyway (same reasoning as
@@ -18,6 +19,7 @@
 CommandsPaneWidget::CommandsPaneWidget(QWidget *parent)
     : QWidget(parent)
     , m_log(new QPlainTextEdit(this))
+    , m_footerLabel(nullptr)
 {
     m_log->setReadOnly(true);
     m_log->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
@@ -33,6 +35,13 @@ CommandsPaneWidget::CommandsPaneWidget(QWidget *parent)
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(m_log);
+
+    // A proper bottom-of-pane division, matching every other pane in the
+    // app (FilePaneWidget's own m_statusLabel is the exact same widget,
+    // same styling, same position) — Commands was the one pane that
+    // just stopped at the log's own edge with nothing grounding it.
+    m_footerLabel = new QLabel(this);
+    layout->addWidget(m_footerLabel);
 
     // A blank pane on first launch reads as broken, not empty — this is
     // the one line that's never real protocol traffic (appendLine() below
@@ -63,6 +72,23 @@ void CommandsPaneWidget::appendLine(const QString &line)
     m_log->appendPlainText(line);
     if (wasAtBottom)
         scrollBar->setValue(scrollBar->maximum());
+    updateFooter();
+}
+
+void CommandsPaneWidget::updateFooter()
+{
+    // QPlainTextEdit::blockCount() is never 0 — an empty document still
+    // has exactly one (empty) block — so that specific case is handled
+    // separately rather than showing the misleading "1 line" right after
+    // Clear. Otherwise, blockCount() ignores the setMaximumBlockCount()
+    // cap on the count itself: it reports what's actually still in the
+    // document (i.e. <=5000 once that cap has started dropping old
+    // lines), which is exactly what "how much scrollback do I currently
+    // have" means here.
+    if (m_log->document()->isEmpty())
+        m_footerLabel->setText(tr("No output yet"));
+    else
+        m_footerLabel->setText(tr("%n line(s)", nullptr, m_log->blockCount()));
 }
 
 void CommandsPaneWidget::showContextMenu(const QPoint &pos)
@@ -70,7 +96,10 @@ void CommandsPaneWidget::showContextMenu(const QPoint &pos)
     QMenu *menu = m_log->createStandardContextMenu();
     menu->addSeparator();
     QAction *clearAction = menu->addAction(tr("Clear"));
-    connect(clearAction, &QAction::triggered, m_log, &QPlainTextEdit::clear);
+    connect(clearAction, &QAction::triggered, this, [this]() {
+        m_log->clear();
+        updateFooter();
+    });
     menu->exec(m_log->viewport()->mapToGlobal(pos));
     delete menu;
 }

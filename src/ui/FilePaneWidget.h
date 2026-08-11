@@ -231,8 +231,8 @@ private:
     FileTreeView *m_view;
     QToolButton *m_backButton;
     QToolButton *m_forwardButton;
-    QToolButton *m_homeButton;
     QToolButton *m_upButton;
+    QToolButton *m_homeButton;
     QLineEdit *m_pathBar;
     QAction *m_pathBarLeadingIcon = nullptr;   // owned by m_pathBar once added; tracked so it can be replaced
     QLabel *m_statusLabel;

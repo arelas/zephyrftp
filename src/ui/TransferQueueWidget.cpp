@@ -9,6 +9,7 @@
 #include <QAction>
 #include <QProgressBar>
 #include <QLabel>
+#include <QHash>
 #include <algorithm>
 
 namespace {
@@ -34,19 +35,39 @@ TransferQueueWidget::TransferQueueWidget(TransferManager *manager, QWidget *pare
     // applied to the file panes' Name column).
     m_table->horizontalHeader()->setSectionResizeMode(ColName, QHeaderView::Interactive);
     m_table->setColumnWidth(ColName, 220);
-    // A real bug found by manual testing: with no upper bound, dragging
-    // File's own right edge wide enough pushes Direction/Status/Progress/
-    // Speed entirely past the visible table area — and since
-    // setStretchLastSection() (below) actively avoids ever showing a
-    // horizontal scrollbar, those columns become genuinely unreachable,
-    // not just scrolled-out-of-view. QHeaderView has no per-section
-    // maximum, only this header-wide one — acceptable here since File is
-    // the only column anyone actually drags wider in practice (the other
-    // four hold short, fixed-shape content: an icon+text direction label,
-    // a status word, a progress bar, a speed reading), so a generous cap
-    // constrains the one column that needed it without meaningfully
-    // limiting the others.
-    m_table->horizontalHeader()->setMaximumSectionSize(500);
+    // A real bug found by manual testing, in two parts. First: with no
+    // upper bound, dragging File's own right edge wide enough pushes
+    // Direction/Status/Progress/Speed entirely past the visible table
+    // area — and since setStretchLastSection() (below) actively avoids
+    // ever showing a horizontal scrollbar, those columns become
+    // genuinely unreachable, not just scrolled out of view. Second,
+    // found when actually checking each OTHER column individually
+    // (not just File) rather than assuming a single fix covered them
+    // all: QHeaderView::setMaximumSectionSize() is one header-wide
+    // value applying to every section, so a cap generous enough for
+    // File's genuinely-variable-length filenames (500px) still let
+    // Direction/Status/Progress EACH independently grow that wide too
+    // — no single column exceeded the cap, but their combined width
+    // could still push later columns off screen the identical way.
+    // QHeaderView has no native per-section maximum, so this clamps
+    // each column to its OWN appropriate bound manually, immediately
+    // undoing any resize (drag or otherwise) that exceeds it —
+    // resizeSection() below triggers this same signal again, but with
+    // newSize now equal to the cap itself, so the recursion terminates
+    // after exactly one corrective step. Only File genuinely needs
+    // room for long names; Direction/Status hold a short icon+word,
+    // and Progress a progress bar that doesn't need to be enormous
+    // either. Speed (last, stretched) isn't in this map — its own
+    // width is already governed by setStretchLastSection().
+    connect(m_table->horizontalHeader(), &QHeaderView::sectionResized, this,
+            [this](int logicalIndex, int /*oldSize*/, int newSize) {
+        static const QHash<int, int> maxWidths{
+            {ColName, 500}, {ColDirection, 160}, {ColStatus, 160}, {ColProgress, 300}
+        };
+        const auto it = maxWidths.constFind(logicalIndex);
+        if (it != maxWidths.constEnd() && newSize > it.value())
+            m_table->horizontalHeader()->resizeSection(logicalIndex, it.value());
+    });
     // Unlike QTreeView (the file panes), QTableView/QTableWidget does NOT
     // default this to true — without it, Speed (the actual last column)
     // stays its own narrow natural width and the remaining header space

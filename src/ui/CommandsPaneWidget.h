@@ -3,6 +3,7 @@
 #include <QWidget>
 
 class QPlainTextEdit;
+class QLabel;
 
 // Live, read-only log of protocol traffic — modeled on FileZilla's message
 // log. Deliberately dumb: it has no idea which pane or backend a line came
@@ -26,5 +27,14 @@ private slots:
     void showContextMenu(const QPoint &pos);
 
 private:
+    // Refreshes m_footerLabel's line count — called after every append
+    // and after Clear, matching FilePaneWidget's own m_statusLabel
+    // (same widget, same styling via theme.qss's global QLabel rule,
+    // same bottom-of-layout position) rather than inventing a new
+    // footer treatment: every other pane in the app already ends in a
+    // small text line like this, and Commands was the one exception.
+    void updateFooter();
+
     QPlainTextEdit *m_log;
+    QLabel *m_footerLabel;
 };
