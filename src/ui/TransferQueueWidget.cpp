@@ -34,6 +34,19 @@ TransferQueueWidget::TransferQueueWidget(TransferManager *manager, QWidget *pare
     // applied to the file panes' Name column).
     m_table->horizontalHeader()->setSectionResizeMode(ColName, QHeaderView::Interactive);
     m_table->setColumnWidth(ColName, 220);
+    // A real bug found by manual testing: with no upper bound, dragging
+    // File's own right edge wide enough pushes Direction/Status/Progress/
+    // Speed entirely past the visible table area — and since
+    // setStretchLastSection() (below) actively avoids ever showing a
+    // horizontal scrollbar, those columns become genuinely unreachable,
+    // not just scrolled-out-of-view. QHeaderView has no per-section
+    // maximum, only this header-wide one — acceptable here since File is
+    // the only column anyone actually drags wider in practice (the other
+    // four hold short, fixed-shape content: an icon+text direction label,
+    // a status word, a progress bar, a speed reading), so a generous cap
+    // constrains the one column that needed it without meaningfully
+    // limiting the others.
+    m_table->horizontalHeader()->setMaximumSectionSize(500);
     // Unlike QTreeView (the file panes), QTableView/QTableWidget does NOT
     // default this to true — without it, Speed (the actual last column)
     // stays its own narrow natural width and the remaining header space

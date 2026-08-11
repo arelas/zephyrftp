@@ -15,6 +15,16 @@ in the README), so anything may still change between 0.x releases.
   landed after connecting (your OS home directory for the local pane,
   the server's resolved home/starting directory for SFTP/FTP/FTPS).
 
+### Fixed
+
+- **Dragging the Transfers panel's "File" column wide enough pushed
+  Direction/Status/Progress/Speed entirely off the right edge, with no
+  way to scroll back to them.** That column had no maximum width, and
+  the table's stretch-last-section behavior actively avoids showing a
+  horizontal scrollbar, so those columns became genuinely unreachable,
+  not just scrolled out of view. Capped at a generous but bounded
+  maximum instead.
+
 ### Changed
 
 - **File pane and transfer queue column headers are more readable**:
