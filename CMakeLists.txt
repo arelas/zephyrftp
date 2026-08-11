@@ -72,6 +72,7 @@ set(SOURCES
     src/ui/IconTheme.cpp
     src/ui/SiteManagerDialog.cpp
     src/ui/PreferencesDialog.cpp
+    src/ui/EditSessionManager.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
     src/backends/FtpBackend.cpp
@@ -106,6 +107,7 @@ set(HEADERS
     src/ui/IconTheme.h
     src/ui/SiteManagerDialog.h
     src/ui/PreferencesDialog.h
+    src/ui/EditSessionManager.h
     src/backends/RemoteBackend.h
     src/backends/RemoteEntry.h
     src/backends/LocalBackend.h
@@ -269,6 +271,7 @@ qt_add_executable(smoke-test EXCLUDE_FROM_ALL
     src/ui/IconTheme.cpp
     src/ui/SiteManagerDialog.cpp
     src/ui/PreferencesDialog.cpp
+    src/ui/EditSessionManager.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
     src/backends/FtpBackend.cpp   # MainWindow.cpp constructs one — see startConnection()
@@ -302,6 +305,7 @@ qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
     src/ui/IconTheme.cpp
     src/ui/SiteManagerDialog.cpp
     src/ui/PreferencesDialog.cpp
+    src/ui/EditSessionManager.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
     src/backends/FtpBackend.cpp   # MainWindow.cpp constructs one — see startConnection()
@@ -535,6 +539,32 @@ qt_add_executable(move-entry-test EXCLUDE_FROM_ALL
 )
 target_include_directories(move-entry-test PRIVATE src)
 target_link_libraries(move-entry-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
+
+# --- Edit-in-place test: EditSessionManager's download -> real
+# QFileSystemWatcher-detected save -> re-upload -> re-edit-without-
+# re-download -> teardown-deletes-temp-file lifecycle, against a real
+# LocalBackend standing in for "the remote" (see src/edit_session_test.cpp's
+# own header comment for why that's a legitimate stand-in here, same
+# reasoning navigation-test/transfer-pause-test already rely on for
+# their own LocalBackend-backed panes). Self-contained and
+# EXCLUDE_FROM_ALL like remote-to-remote-test/move-entry-test above,
+# same "additional, not folded into the fixed count" treatment.
+qt_add_executable(edit-session-test EXCLUDE_FROM_ALL
+    src/edit_session_test.cpp
+    src/AppSettings.cpp
+    src/ui/FilePaneWidget.cpp
+    src/ui/FileTreeView.cpp
+    src/ui/IconTheme.cpp
+    src/ui/EditSessionManager.cpp
+    src/backends/LocalBackend.cpp
+    src/backends/RemoteBackend.h
+    src/transfer/TransferManager.cpp
+    src/transfer/FolderEnumerator.cpp
+    resources/icons.qrc
+    resources/theme.qrc
+)
+target_include_directories(edit-session-test PRIVATE src)
+target_link_libraries(edit-session-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
 
 # --- Live-server verification harnesses (NOT part of the ten-target
 # self-contained test suite above — these need an external server

@@ -417,7 +417,7 @@ representative of any real desktop:
 
 ## Running the test suites
 
-Fifteen `EXCLUDE_FROM_ALL` CMake targets make up the required suite as
+Sixteen `EXCLUDE_FROM_ALL` CMake targets make up the required suite as
 of this writing — not part of a normal `make`, built and run
 explicitly, and all of them (not just a "core" subset) need to actually
 pass before a change is done. The count keeps growing as the project
@@ -634,6 +634,47 @@ QT_QPA_PLATFORM=offscreen ./build/move-entry-test
 Needs no fixtures or environment overrides beyond `QT_QPA_PLATFORM` — it
 builds and wipes its own scratch directory (`/tmp/move_entry_test`) at the
 top of `main()`, same convention `sort-and-commands-test` uses.
+
+### `edit-session-test`
+
+Same treatment as the targets above — self-contained, `EXCLUDE_FROM_ALL`,
+added to all four `build.yml` jobs. Covers `EditSessionManager`'s
+edit-in-place lifecycle end to end against a real `LocalBackend` standing
+in for "the remote" (see the test's own header comment for why that's a
+legitimate stand-in, same reasoning `navigation-test`/`transfer-pause-test`
+already rely on for their own `LocalBackend`-backed panes): a real
+download producing byte-exact temp file content, a real
+`QFileSystemWatcher`-detected save (writing new content directly to the
+temp path, the same thing an external editor's own save does) triggering
+a debounced re-upload that lands the new content back at the original
+path, re-editing an already-open file NOT triggering a second download,
+and session teardown actually deleting the temp file from disk. See
+`src/edit_session_test.cpp`'s own header comment and ARCHITECTURE.md's
+`EditSessionManager` entry for the full detail, including the two new
+`TransferDirection` values (`EditDownload`/`EditUpload`) and why this
+routes through `TransferManager` rather than talking to a `RemoteBackend`
+directly. Run it locally the same way:
+
+```
+cmake --build build --target edit-session-test
+QT_QPA_PLATFORM=offscreen ./build/edit-session-test
+```
+
+Needs no fixtures or environment overrides beyond `QT_QPA_PLATFORM` — it
+builds and wipes its own scratch directory (`/tmp/edit_session_test`) at
+the top of `main()`, same convention `move-entry-test`/`sort-and-commands-test`
+use. **Not covered, and documented as such rather than faked**: actually
+launching an external editor (`QProcess::startDetached()`/
+`QDesktopServices::openUrl()`) isn't something a headless test can verify
+beyond "the right command was invoked" — the test points
+`externalEditorCommand` at `/bin/true` specifically to exercise
+`launchEditor()`'s `QProcess` path without spawning anything that could
+hang or need a display, not to prove real editor integration. Verify
+that manually: configure a real editor command in Preferences, Edit a
+real file against a real local SFTP test server
+(`tools/local-test-servers/start-sftp-pubkey.sh`), confirm the editor
+opens, edit and save, confirm the change lands on the server, confirm
+re-editing the same file reuses the session without re-downloading.
 
 ### `app-settings-test`
 

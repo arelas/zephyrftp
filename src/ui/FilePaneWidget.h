@@ -158,6 +158,15 @@ signals:
     void siteManagerRequested(FilePaneWidget *pane);
     void disconnectRequested(FilePaneWidget *pane);
 
+    // "Edit" chosen from the right-click context menu for a single,
+    // non-directory entry on a REMOTE pane (see showContextMenu()'s own
+    // enabling logic — never emitted for a local pane or a multi-select).
+    // Carries `this` explicitly, same reasoning as connectRequested()
+    // above: MainWindow owns the EditSessionManager this routes to, and
+    // that manager's API takes the pane directly rather than relying on
+    // sender().
+    void editRequested(FilePaneWidget *pane, const RemoteEntry &entry);
+
 private slots:
     void onDirectoryListed(const QString &path, const QList<RemoteEntry> &entries);
     void onRowDoubleClicked(const QModelIndex &index);

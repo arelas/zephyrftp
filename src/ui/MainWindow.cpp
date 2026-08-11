@@ -5,6 +5,7 @@
 #include "PreferencesDialog.h"
 #include "TransferQueueWidget.h"
 #include "CommandsPaneWidget.h"
+#include "EditSessionManager.h"
 #include "HostKeyVerifier.h"
 #include "CertificateVerifier.h"
 #include "IconTheme.h"
@@ -47,6 +48,10 @@ MainWindow::MainWindow(QWidget *parent)
     m_transferManager = new TransferManager(this);
     m_hostKeyVerifier = new HostKeyVerifier(this);
     m_certificateVerifier = new CertificateVerifier(this);
+    m_editSessionManager = new EditSessionManager(m_transferManager, m_settings, this);
+    connect(m_editSessionManager, &EditSessionManager::editUploadSucceeded, this, [this](const QString &fileName) {
+        statusBar()->showMessage(tr("\"%1\" saved to server").arg(fileName), 5000);
+    });
 
     // Ordered before buildMenuBar(): the View menu's "Transfers"/"Commands"
     // entries are each dock's own toggleViewAction(), so both docks have
@@ -231,6 +236,9 @@ void MainWindow::buildLayout()
     connect(m_rightPane, &FilePaneWidget::siteManagerRequested, this, &MainWindow::onPaneSiteManagerRequested);
     connect(m_leftPane, &FilePaneWidget::disconnectRequested, this, &MainWindow::onPaneDisconnectRequested);
     connect(m_rightPane, &FilePaneWidget::disconnectRequested, this, &MainWindow::onPaneDisconnectRequested);
+
+    connect(m_leftPane, &FilePaneWidget::editRequested, this, &MainWindow::onPaneEditRequested);
+    connect(m_rightPane, &FilePaneWidget::editRequested, this, &MainWindow::onPaneEditRequested);
 }
 
 void MainWindow::buildTransferQueue()
@@ -423,6 +431,11 @@ void MainWindow::onPaneDisconnectRequested(FilePaneWidget *pane)
     disconnectPane(pane);
 }
 
+void MainWindow::onPaneEditRequested(FilePaneWidget *pane, const RemoteEntry &entry)
+{
+    m_editSessionManager->startEditing(pane, entry);
+}
+
 void MainWindow::connectViaDialog(FilePaneWidget *targetPane)
 {
     ConnectionDialog dialog(this);
@@ -553,6 +566,17 @@ void MainWindow::startConnection(const ConnectionRequest &request, FilePaneWidge
     });
 
     statusBar()->showMessage(tr("Connecting to %1...").arg(request.host()));
+    // Before the swap below, not after — see EditSessionManager::
+    // endSessionsForPane()'s own doc comment on why this needs to run
+    // BEFORE setBackend() takes effect, not as an afterthought: a
+    // pending edit session's re-upload dispatch re-fetches
+    // targetPane->backend() live, same as any other transfer, so a
+    // session left dangling past this point could otherwise silently
+    // redirect an edit's save to whatever NEW connection this pane ends
+    // up with (reachable here too, not just Disconnect — clicking
+    // Connect again on an already-connected pane is a real path, not
+    // just a hypothetical one).
+    m_editSessionManager->endSessionsForPane(targetPane);
     targetPane->setBackend(backend, thread);
 }
 
@@ -580,6 +604,10 @@ void MainWindow::disconnectPane(FilePaneWidget *targetPane)
     // closeEvent() at all.
     if (stillConnecting(targetPane))
         return;
+
+    // Same reasoning as startConnection()'s identical call — see
+    // EditSessionManager::endSessionsForPane()'s own doc comment.
+    m_editSessionManager->endSessionsForPane(targetPane);
 
     // Swap back to a plain LocalBackend. setBackend() handles tearing down
     // whatever was there before — including, if it was an SftpBackend, the
@@ -620,6 +648,13 @@ void MainWindow::closeEvent(QCloseEvent *event)
     // layout for next time.
     m_settings->setWindowGeometry(saveGeometry());
     m_settings->setWindowState(saveState());
+
+    // Belt-and-suspenders alongside disconnectPane()'s own
+    // endSessionsForPane() calls below — every live session's pane is
+    // always m_leftPane or m_rightPane in practice, so this is
+    // logically redundant with what's about to happen, but cheap and
+    // explicit rather than relying solely on that inference holding.
+    m_editSessionManager->endAllSessions();
 
     // Same teardown as Disconnect (see MainWindow.h's doc comment on why
     // this needs to happen at all) — for BOTH panes now, since either can

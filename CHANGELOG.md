@@ -8,6 +8,20 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Added
+
+- **Edit-in-place.** Right-click a file on a remote pane and choose Edit
+  to download it to a temporary local copy, open it in your editor of
+  choice, and have every save quietly re-uploaded back to the server in
+  the background. Re-opening a file that's already being edited just
+  brings your editor back to the front instead of downloading a second
+  copy. Shows up in the Transfers pane like any other transfer; a save
+  that can't be uploaded (connection dropped, say) shows a clear warning
+  with a Retry, rather than silently losing the edit — it stays safe on
+  disk either way. A new "External editor command" field in Preferences
+  configures which editor to use; left blank, your system's own default
+  application for that file type opens instead.
+
 ## [0.6.22] — View menu toggles are now the persisted dock-visibility source of truth
 
 ### Changed

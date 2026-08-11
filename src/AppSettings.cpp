@@ -42,6 +42,14 @@ void AppSettings::setWindowState(const QByteArray &state)
     save();
 }
 
+void AppSettings::setExternalEditorCommand(const QString &command)
+{
+    if (m_externalEditorCommand == command)
+        return;
+    m_externalEditorCommand = command;
+    save();
+}
+
 QString AppSettings::filePath()
 {
     return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
@@ -65,6 +73,7 @@ void AppSettings::load()
         obj.value(QStringLiteral("windowGeometry")).toString().toLatin1());
     m_windowState = QByteArray::fromBase64(
         obj.value(QStringLiteral("windowState")).toString().toLatin1());
+    m_externalEditorCommand = obj.value(QStringLiteral("externalEditorCommand")).toString();
 }
 
 void AppSettings::save() const
@@ -78,6 +87,7 @@ void AppSettings::save() const
     obj[QStringLiteral("defaultProtocol")] = protocolToKey(m_defaultProtocol);
     obj[QStringLiteral("windowGeometry")] = QString::fromLatin1(m_windowGeometry.toBase64());
     obj[QStringLiteral("windowState")] = QString::fromLatin1(m_windowState.toBase64());
+    obj[QStringLiteral("externalEditorCommand")] = m_externalEditorCommand;
 
     // QSaveFile (not QFile + Truncate) — writes the new content to a
     // temporary file first and only atomically replaces settings.json on

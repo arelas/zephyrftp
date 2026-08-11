@@ -39,6 +39,16 @@ public:
     QByteArray windowState() const { return m_windowState; }
     void setWindowState(const QByteArray &state);
 
+    // The command EditSessionManager launches to open a remote file's
+    // downloaded temp copy for editing (the file path is appended as
+    // its sole argument — no {file}-style template substitution).
+    // Empty (the default) means "use the OS's own default application
+    // association" instead, via QDesktopServices::openUrl(). No change
+    // signal — same reasoning as defaultProtocol above, nothing on
+    // screen needs to react live to this changing.
+    QString externalEditorCommand() const { return m_externalEditorCommand; }
+    void setExternalEditorCommand(const QString &command);
+
 signals:
     void showHiddenFilesChanged(bool value);
 
@@ -51,4 +61,5 @@ private:
     Protocol m_defaultProtocol = Protocol::Sftp;
     QByteArray m_windowGeometry;
     QByteArray m_windowState;
+    QString m_externalEditorCommand;
 };

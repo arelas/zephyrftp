@@ -2338,6 +2338,128 @@ to drive FileZilla itself for a same-desktop comparison.
      `onBackendFailed()`, with its real `errorMessage` blanked to an
      empty string. Fixed by clearing the flag in `onBackendPaused()`
      too.
+- `EditSessionManager` (`src/ui/EditSessionManager.h/.cpp`) —
+  edit-in-place: right-click a remote file → Edit downloads it to a
+  local temp file, opens it in an external editor, and re-uploads it on
+  every save. Added two new `TransferDirection` values for this,
+  `EditDownload`/`EditUpload` — the first directions where only one of
+  `sourcePane`/`destPane` is ever set (a download has no `destPane`,
+  the destination is a fixed local temp path, not another pane's
+  current directory; an upload has no `sourcePane`, for the mirror
+  reason), which required guarding `dispatchActiveItem()`'s previously
+  unconditional `item.sourcePane->backend()`/`item.destPane->backend()`
+  derefs. Two new `TransferManager` entry points,
+  `startEditDownload()`/`startEditUpload()`, build these items directly
+  rather than going through `enqueue()` — that method always requires
+  two real `FilePaneWidget`s and always runs a destination
+  `checkExists()` conflict check, neither of which fits here (an edit
+  download's destination is a fresh, guaranteed-unique temp path under
+  `<TempLocation>/zephyrftp-staging/`, `edit_`-prefixed to stay visually
+  distinct from a `RemoteToRemote` staging file in the same directory;
+  an edit upload's "conflict" is the file the user was just editing,
+  not a real one). Both set the existing
+  `TransferItem::skipConflictCheckOnDispatch` flag (previously only
+  used by `resumeItem()`) to skip that check, reused as-is rather than
+  reimplemented. Unlike `RemoteToRemote`, an edit download's temp file
+  deliberately survives its own item reaching `Done` — `cleanupTempFile()`
+  stays hard-gated to `RemoteToRemote` unchanged, and `EditSessionManager`
+  itself owns deleting the file once the edit session actually ends.
+
+  **Design decision: routes every download/upload through
+  `TransferManager`, never calls `RemoteBackend::downloadFile()`/
+  `uploadFile()` directly.** A wholly separate component doing that was
+  considered and rejected. `RemoteBackend`'s `transferProgress`/
+  `transferFinished`/`transferFailed`/`transferPaused` signals are
+  backend-instance-wide, not scoped per call, and `TransferManager` is
+  already the sole thing connected to them
+  (`TransferManager::connectToBackend()`), serializing exactly one
+  active item at a time per backend. A second, independent listener on
+  those same signals would race whatever `TransferManager` is
+  legitimately doing with the same backend at the same moment — the
+  same "two mechanisms claiming authority over one piece of state" bug
+  class this project has already hit and fixed once (`MainWindow`'s
+  Preferences dock-visibility override fighting `restoreState()`, fixed
+  the same week this feature was built). `TransferManager` is the
+  established single arbiter of backend I/O in this app; edit-in-place's
+  downloads/uploads are items *in* that same queue, not a second queue
+  running in parallel.
+
+  Session lifecycle (`EditSessionManager::Session`, keyed by
+  `(FilePaneWidget*, remote path)`): `startEditing()` re-launches the
+  editor on an already-open file's existing temp copy rather than
+  downloading it again. On a real download completion (observed via
+  `TransferManager::itemUpdated`, filtered by the item id this class
+  itself issued — every other item in the app, including ordinary
+  transfers, is simply ignored), it launches the configured editor
+  (`AppSettings::externalEditorCommand()`, empty by default — falls
+  back to `QDesktopServices::openUrl()` for the OS's own file
+  association; a non-empty command is run via
+  `QProcess::startDetached(command, {tempPath})`, the path appended as
+  the command's sole argument, no `{file}`-style template substitution)
+  and starts a `QFileSystemWatcher` on the temp file. **Known Qt
+  gotcha, defended against explicitly:** many editors save via
+  write-to-temp-then-rename, which silently drops the underlying OS
+  watch after the first change — `onFileChanged()` unconditionally
+  re-`addPath()`s the file on every fire regardless of whether it looks
+  like it's still being watched, the standard workaround. Debounced
+  ~400ms (a single-shot `QTimer` per session, restarted on each
+  `fileChanged`) before dispatching the re-upload, since some
+  editors/OSes fire more than one change event per save. A session can
+  have more than one upload in flight/queued at once (a second save
+  landing before the first save's upload finished is a real case, not
+  hypothetical — `TransferManager` just queues it behind the first, same
+  as any other pair of items would be), so item-id-to-session-key
+  tracking uses two `QHash<int, QString>` reverse lookups (download and
+  upload separately) rather than a single scalar per session.
+
+  A failed download surfaces as a `QMessageBox::warning` — the click did
+  nothing useful, this must be visible, not a silent Commands-pane log
+  line. **A failed upload is the more important case**: also a
+  `QMessageBox::warning`, stating the local temp path explicitly (the
+  edit isn't lost — it's still on disk) with a Retry button, since a
+  save silently failing to reach the server would otherwise look like
+  data loss the user has no way to recover from inside the app. The
+  watcher keeps running afterward regardless, so a further save still
+  attempts another upload on its own.
+
+  `MainWindow::startConnection()`/`disconnectPane()` both call
+  `EditSessionManager::endSessionsForPane()` immediately before their
+  own `targetPane->setBackend()` call — this, not a passive check, is
+  what actually prevents a pending edit session's re-upload from
+  silently redirecting to a NEW connection that pane ends up with
+  (reachable via Connect on an already-connected pane, not just
+  Disconnect). `startEditUpload()`'s own dispatch re-fetches
+  `destPane->backend()` live at the moment it actually runs — same as
+  every other direction — so without this proactive teardown, a save's
+  debounce timer firing in the narrow window before a reconnect
+  completes could otherwise upload someone's edited file to an entirely
+  unrelated server. `Session::backend` (a `QPointer<RemoteBackend>`,
+  same pattern `TransferItem::capturedDestBackend` already uses) is a
+  cheap secondary guard on top of that, not the primary defense.
+  `MainWindow::closeEvent()` also calls `endAllSessions()` before its
+  own per-pane teardown — logically redundant with what
+  `endSessionsForPane()` is about to do for both panes anyway, but
+  cheap and explicit rather than relying solely on that inference.
+
+  Verified by `edit-session-test` (`src/edit_session_test.cpp`) against
+  a real `LocalBackend` standing in for "the remote" (the same
+  "real, simple implementation over a mock" approach `navigation-test`/
+  `transfer-pause-test` already use for their own `LocalBackend`-backed
+  panes — `TransferManager`'s dispatch calls `RemoteBackend::downloadFile()`/
+  `uploadFile()` identically regardless of which concrete backend is
+  behind the interface) — a real download producing byte-exact temp
+  file content, a real `QFileSystemWatcher`-detected save triggering a
+  real debounced re-upload that lands the new content back at the
+  original path, re-editing an already-open file NOT triggering a
+  second download, and session teardown actually deleting the temp
+  file from disk. Editor-launching itself
+  (`QProcess::startDetached()`/`QDesktopServices::openUrl()`) isn't
+  something a headless test can verify beyond "the right command was
+  invoked" — the test points `externalEditorCommand` at `/bin/true`
+  specifically to exercise that code path without spawning anything
+  that could hang or need a display, not to prove real editor
+  integration; see CONTRIBUTING.md's own `edit-session-test` subsection
+  for what's verified manually instead.
 - `FolderEnumerator` (`src/transfer/FolderEnumerator.h/.cpp`) —
   recursively walks a folder via a backend's
   `listDirectoryForEnumeration()`, one directory at a time (not several

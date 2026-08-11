@@ -10,6 +10,7 @@ class CertificateVerifier;
 class QDockWidget;
 class AppSettings;
 class CommandsPaneWidget;
+class EditSessionManager;
 struct ConnectionRequest;
 
 // Top-level window: two FilePaneWidgets side by side (commander style),
@@ -64,6 +65,11 @@ private slots:
     void onPaneConnectRequested(FilePaneWidget *pane);
     void onPaneSiteManagerRequested(FilePaneWidget *pane);
     void onPaneDisconnectRequested(FilePaneWidget *pane);
+
+    // "Edit" chosen from a pane's own right-click context menu (see
+    // FilePaneWidget::editRequested()'s doc comment) — routes straight
+    // to m_editSessionManager.
+    void onPaneEditRequested(FilePaneWidget *pane, const RemoteEntry &entry);
 
     void onRefreshTriggered();
     void onTransferSucceeded();
@@ -175,4 +181,10 @@ private:
     // needs it too). Persists to settings.json on every change — see
     // AppSettings's own doc comment for why this isn't QSettings.
     AppSettings *m_settings = nullptr;
+    // Owned for the app's whole lifetime, parallel to m_transferManager
+    // (which it routes every download/upload through — see its own
+    // class doc comment for why it never talks to a RemoteBackend
+    // directly). Constructed after m_transferManager/m_settings, before
+    // either pane (both need to emit editRequested to it).
+    EditSessionManager *m_editSessionManager = nullptr;
 };

@@ -7,6 +7,7 @@
 #include <QVBoxLayout>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QLineEdit>
 #include <QDialogButtonBox>
 
 PreferencesDialog::PreferencesDialog(AppSettings *settings, QWidget *parent)
@@ -14,6 +15,7 @@ PreferencesDialog::PreferencesDialog(AppSettings *settings, QWidget *parent)
     , m_settings(settings)
     , m_showHiddenFilesCheck(new QCheckBox(tr("Show hidden files (dotfiles)"), this))
     , m_defaultProtocolCombo(new QComboBox(this))
+    , m_externalEditorCommandEdit(new QLineEdit(this))
 {
     setWindowTitle(tr("Preferences"));
 
@@ -31,9 +33,29 @@ PreferencesDialog::PreferencesDialog(AppSettings *settings, QWidget *parent)
         m_settings->setDefaultProtocol(protocol);
     });
 
+    // No {file}-style template substitution — a single command string,
+    // the file path is always just appended as its sole argument (see
+    // EditSessionManager::launchEditor()). A documented v1 limitation,
+    // not a half-finished feature.
+    m_externalEditorCommandEdit->setText(m_settings->externalEditorCommand());
+    m_externalEditorCommandEdit->setPlaceholderText(
+        tr("Leave blank to use your system's default application"));
+    m_externalEditorCommandEdit->setToolTip(
+        tr("The file path is appended to this command as its only argument "
+           "(e.g. \"code\", \"gedit\", \"notepad++\")."));
+    // editingFinished, not textChanged — this is the first free-text
+    // field in this dialog (every other field is a checkbox/combo, whose
+    // "changed" signal only ever fires on a genuine, complete choice);
+    // persisting on every keystroke would mean a settings.json write per
+    // character typed.
+    connect(m_externalEditorCommandEdit, &QLineEdit::editingFinished, this, [this]() {
+        m_settings->setExternalEditorCommand(m_externalEditorCommandEdit->text());
+    });
+
     auto *form = new QFormLayout;
     form->addRow(tr("Local && remote panes:"), m_showHiddenFilesCheck);
     form->addRow(tr("Default protocol for new connections:"), m_defaultProtocolCombo);
+    form->addRow(tr("External editor command:"), m_externalEditorCommandEdit);
 
     // QDialogButtonBox::Close is wired to reject() by Qt's own convention
     // (it's a RejectRole button) — accept() vs. reject() is meaningless

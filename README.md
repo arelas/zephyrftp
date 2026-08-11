@@ -91,11 +91,23 @@ tracks what's changed between them.
   disconnect/delete/error, blue = navigation/download, amber = caution)
   so you can read the state of things at a glance.
 - **Preferences** (Edit menu) — a "Show hidden files" toggle for both
-  panes, a default protocol for new connections, and whether the
-  Transfers and Commands panes should be visible on start (both default
-  to yes). Window size and panel layout (including either dock, if
-  you've moved, resized, or detached it) are also remembered across
-  restarts now, with no setting required.
+  panes, a default protocol for new connections, and the command used to
+  open a file for editing (see Edit-in-place below; leave it blank to
+  use your system's default application for that file type). Window
+  size and panel layout — including either dock (Transfers/Commands),
+  if you've moved, resized, closed, or detached it — are remembered
+  across restarts too, with no setting required: whatever the View
+  menu's Transfers/Commands toggles show when you close the app is
+  exactly what you'll see again next time.
+- **Edit-in-place** — right-click a file on a remote pane and choose
+  Edit to download it to a temporary local copy, open it in your editor
+  of choice, and have every save quietly re-uploaded back to the server
+  in the background. Re-opening the same file while it's already being
+  edited just brings up your editor again instead of downloading a
+  second copy. Shows up in the transfer queue like any other transfer,
+  and if a save can't be uploaded (connection dropped, say), you're
+  told clearly — with a Retry — rather than silently losing the edit,
+  which stays safe on disk either way.
 
 ## Download
 
@@ -205,6 +217,15 @@ rather than being half-implemented:
   pick it back up later. A purely local copy (between two folders on your
   own computer) can only be cancelled and retried, not paused, since
   there's nothing meaningful to interrupt mid-copy on a local transfer.
+- **Edit-in-place's editor command is a single command string, appended
+  the file path as its only argument — no `{file}`-style template
+  substitution.** Works for most editors launched from a terminal
+  (`code`, `gedit`, `notepad++`, ...); an editor that needs its own
+  specific argument order or flags around the path isn't supported yet.
+  It also doesn't detect if the same file is being edited somewhere
+  else at the same time (another ZephyrFTP window, a different tool
+  connected to the same server) — the last save wins, same as most
+  editors' own behavior with local files.
 
 ## For developers and tinkerers
 

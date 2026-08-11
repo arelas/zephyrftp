@@ -79,6 +79,20 @@ public:
     // to this pass.
     void moveFolder(FilePaneWidget *sourcePane, FilePaneWidget *destPane, const QString &folderName);
 
+    // Edit-in-place's two halves — see TransferDirection::EditDownload/
+    // EditUpload's own doc comment and EditSessionManager (src/ui/
+    // EditSessionManager.h/.cpp), the sole caller of both. Neither goes
+    // through enqueue(): that method always requires two real
+    // FilePaneWidget objects and always runs a destination conflict
+    // check, neither of which fits here (an edit download's destination
+    // is a fresh, guaranteed-unique temp path; an edit upload's
+    // "conflict" is the file the user was just editing, not a real one).
+    // Both return the new item's id so the caller can watch itemUpdated()
+    // for that specific id.
+    int startEditDownload(FilePaneWidget *sourcePane, const QString &fileName);
+    int startEditUpload(FilePaneWidget *destPane, const QString &localTempPath,
+                         const QString &remotePath, const QString &fileName);
+
     // True when both panes have a backend and both report the same,
     // non-empty connectionIdentity() — the precondition for both methods
     // above. Public so MainWindow can check it BEFORE ever calling
@@ -218,6 +232,16 @@ private:
     // QStandardPaths::TempLocation in a dedicated subdirectory, named with
     // the item's own unique id to prevent collisions.
     QString allocateTempFilePath(const TransferItem &item) const;
+
+    // Same staging directory/sweep-on-launch as allocateTempFilePath()
+    // above, but "edit_"-prefixed so an edit-in-place download's temp
+    // file is visually distinguishable from a RemoteToRemote one if
+    // someone inspects zephyrftp-staging/ directly — and, unlike
+    // allocateTempFilePath()'s callers, this one's result deliberately
+    // outlives the download item's own Done status (the user is about
+    // to start editing it); see EditSessionManager for the component
+    // that actually deletes it once editing ends.
+    QString allocateEditTempFilePath(const TransferItem &item) const;
 
     // No-op for every direction except RemoteToRemote (checked internally
     // via item.direction/tempFilePath). Called from onBackendFinished()

@@ -31,6 +31,17 @@ enum class TransferDirection {
     // explicitly (the "Move Selected" context-menu action), never a
     // silent substitution for an ordinary Transfer/drag.
     Move,
+    // Edit-in-place's two halves — see EditSessionManager (src/ui/
+    // EditSessionManager.h/.cpp) and TransferManager::startEditDownload()/
+    // startEditUpload(). Unlike every direction above, these are the
+    // first where only ONE of sourcePane/destPane is ever set: a
+    // download has no destPane (the destination is a fixed local temp
+    // path, not another pane's current directory), and an upload has no
+    // sourcePane (the source is that same temp path, not a pane
+    // selection). dispatchActiveItem() guards its usual
+    // sourcePane->backend()/destPane->backend() derefs accordingly.
+    EditDownload,   // remote source -> local temp file, for opening in an external editor
+    EditUpload,     // local temp file -> original remote path, after a save is detected
     Unsupported   // reserved for a genuine future dispatch failure — no
                   // longer reachable for remote-to-remote specifically
 };

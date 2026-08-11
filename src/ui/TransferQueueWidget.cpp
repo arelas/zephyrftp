@@ -112,6 +112,8 @@ QString TransferQueueWidget::directionText(TransferDirection direction)
     case TransferDirection::LocalToLocal:   return tr("local copy");
     case TransferDirection::RemoteToRemote: return tr("server -> server");
     case TransferDirection::Move:           return tr("move");
+    case TransferDirection::EditDownload:   return tr("opening for edit");
+    case TransferDirection::EditUpload:     return tr("saving edit");
     case TransferDirection::Unsupported:    return tr("unsupported");
     }
     return {};
@@ -193,6 +195,13 @@ QIcon TransferQueueWidget::statusIcon(const TransferItem &item)
     case TransferDirection::LocalToLocal:   path = ":/icons/arrows-left-right.svg"; break;
     case TransferDirection::RemoteToRemote: path = ":/icons/arrows-left-right.svg"; break;
     case TransferDirection::Move:           path = ":/icons/arrow-right.svg"; break;
+    // Reuses the plain download/upload arrows rather than inventing a
+    // dedicated "edit" icon — an EditDownload genuinely is a download
+    // (remote -> local temp file) and an EditUpload genuinely is an
+    // upload (local temp file -> remote), just triggered by opening a
+    // file for editing rather than a pane-to-pane transfer.
+    case TransferDirection::EditDownload:   path = ":/icons/arrow-down.svg"; break;
+    case TransferDirection::EditUpload:     path = ":/icons/arrow-up.svg"; break;
     case TransferDirection::Unsupported:    path = ":/icons/alert-triangle.svg"; break;
     }
 
@@ -211,6 +220,12 @@ QIcon TransferQueueWidget::statusIcon(const TransferItem &item)
             color = item.phase == TransferPhase::Uploading ? IconTheme::Green : IconTheme::Blue;
             break;
         case TransferDirection::Move: color = IconTheme::Blue; break;   // brief; matches its icon's "in-flight" reading
+        // Same colors their reused icons already carry elsewhere in this
+        // switch — Blue for a download (RemoteToLocal), Green for an
+        // upload (LocalToRemote) — not left to `default` below, per the
+        // LocalToLocal fix's own lesson just above.
+        case TransferDirection::EditDownload: color = IconTheme::Blue; break;
+        case TransferDirection::EditUpload: color = IconTheme::Green; break;
         // A real bug found by code review: LocalToLocal had no case here
         // (unlike directionText()/the icon-path switch above, which both
         // already handle it explicitly), so it silently fell into

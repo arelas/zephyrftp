@@ -178,6 +178,53 @@ void TransferManager::moveFolder(FilePaneWidget *sourcePane, FilePaneWidget *des
                                Q_ARG(QString, destPath), Q_ARG(int, requestId));
 }
 
+int TransferManager::startEditDownload(FilePaneWidget *sourcePane, const QString &fileName)
+{
+    TransferItem item;
+    item.id = m_nextId++;
+    item.fileName = fileName;
+    item.sourcePane = sourcePane;
+    item.destPane = nullptr;   // no destination pane — see TransferDirection::EditDownload's own doc comment
+    item.direction = TransferDirection::EditDownload;
+    item.sourcePath = joinPath(sourcePane->currentDirectory(), fileName);
+    item.destPath = allocateEditTempFilePath(item);
+    // A fresh, guaranteed-unique temp path can never conflict with
+    // anything — the same reasoning resumeItem() already established
+    // for this flag (see TransferItem::skipConflictCheckOnDispatch's own
+    // doc comment), reused as-is rather than reimplemented.
+    item.skipConflictCheckOnDispatch = true;
+
+    m_items.append(item);
+    emit itemAdded(m_items.last());
+
+    if (item.status == TransferStatus::Queued)
+        startNext();
+    return item.id;
+}
+
+int TransferManager::startEditUpload(FilePaneWidget *destPane, const QString &localTempPath,
+                                      const QString &remotePath, const QString &fileName)
+{
+    TransferItem item;
+    item.id = m_nextId++;
+    item.fileName = fileName;
+    item.sourcePane = nullptr;   // no source pane — the source is a fixed local temp path, not a pane selection
+    item.destPane = destPane;
+    item.direction = TransferDirection::EditUpload;
+    item.sourcePath = localTempPath;
+    item.destPath = remotePath;
+    // Overwriting the file the user was just editing isn't a real
+    // conflict — same reasoning as startEditDownload() above.
+    item.skipConflictCheckOnDispatch = true;
+
+    m_items.append(item);
+    emit itemAdded(m_items.last());
+
+    if (item.status == TransferStatus::Queued)
+        startNext();
+    return item.id;
+}
+
 void TransferManager::dispatchMoveEntry(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
                                          const QString &name)
 {
@@ -334,8 +381,13 @@ void TransferManager::dispatchActiveItem()
     m_smoothedSpeedBytesPerSec = 0.0;
     m_hasSpeedSample = false;
 
-    RemoteBackend *srcBackend = item.sourcePane->backend();
-    RemoteBackend *dstBackend = item.destPane->backend();
+    // A plain deref for every direction except EditDownload/EditUpload
+    // (see TransferDirection's own doc comment) — those two are the
+    // first where only one of sourcePane/destPane is ever set, so both
+    // lookups below have to tolerate a null pane rather than assume one
+    // like every earlier direction could.
+    RemoteBackend *srcBackend = item.sourcePane ? item.sourcePane->backend() : nullptr;
+    RemoteBackend *dstBackend = item.destPane ? item.destPane->backend() : nullptr;
 
     RemoteBackend *executor = nullptr;
     const char *methodName = nullptr;
@@ -394,6 +446,24 @@ void TransferManager::dispatchActiveItem()
             argB = item.destPath;
         }
         break;
+    case TransferDirection::EditDownload:
+        // remote source -> local temp file. No destPane involved — this
+        // is opening a file for editing, not a pane-to-pane copy.
+        executor = srcBackend;
+        methodName = "downloadFile";
+        argA = item.sourcePath;
+        argB = item.destPath;
+        break;
+    case TransferDirection::EditUpload:
+        // local temp file -> the original remote path. No sourcePane
+        // involved — this is the save-triggered re-upload half of
+        // edit-in-place, dispatched by EditSessionManager, not a
+        // pane-to-pane copy either.
+        executor = dstBackend;
+        methodName = "uploadFile";
+        argA = item.sourcePath;
+        argB = item.destPath;
+        break;
     case TransferDirection::Unsupported:
         // Shouldn't reach here — no direction is ever set to Unsupported
         // anymore (enqueue() now handles remote-to-remote via
@@ -447,6 +517,23 @@ QString TransferManager::allocateTempFilePath(const TransferItem &item) const
     // original filename stays visible alongside it for anyone inspecting
     // the staging directory mid-transfer or after a crash.
     return stagingDir + QStringLiteral("/%1_%2")
+        .arg(item.id)
+        .arg(QFileInfo(item.fileName).fileName());
+}
+
+QString TransferManager::allocateEditTempFilePath(const TransferItem &item) const
+{
+    const QString stagingDir = stagingDirPath();
+    QDir().mkpath(stagingDir);
+
+    // "edit_" prefix visually distinguishes this from a RemoteToRemote
+    // staging file in the same shared directory — both get swept
+    // identically by the constructor's startup sweep above, but this
+    // one deliberately outlives its own item's Done status (the user is
+    // about to start editing it); see allocateTempFilePath()'s own
+    // comment for the id-collision reasoning, which applies identically
+    // here.
+    return stagingDir + QStringLiteral("/edit_%1_%2")
         .arg(item.id)
         .arg(QFileInfo(item.fileName).fileName());
 }

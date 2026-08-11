@@ -4,6 +4,7 @@
 
 class QCheckBox;
 class QComboBox;
+class QLineEdit;
 class AppSettings;
 
 // A small preferences dialog — deliberately no OK/Cancel/Apply: every
@@ -21,4 +22,5 @@ private:
     AppSettings *m_settings;
     QCheckBox *m_showHiddenFilesCheck;
     QComboBox *m_defaultProtocolCombo;
+    QLineEdit *m_externalEditorCommandEdit;
 };

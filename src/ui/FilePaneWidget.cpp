@@ -633,6 +633,21 @@ void FilePaneWidget::showContextMenu(const QPoint &pos)
         IconTheme::tintedIcon(":/icons/edit.svg", IconTheme::Blue), tr("Rename..."));
     renameAction->setEnabled(selected.size() == 1);   // renaming several items to one name doesn't make sense
 
+    // Edit-in-place — downloads to a local temp file, opens it in an
+    // external editor, and re-uploads on every save (see
+    // EditSessionManager). Gray/app-window.svg rather than reusing
+    // Rename's edit.svg+Blue: this app has no separate "open externally"
+    // icon vendored, but the two actions sitting right next to each
+    // other in this same menu need to read as visually distinct, not
+    // just textually distinct. Remote-only (a local file already opens
+    // directly via the OS, no round-trip needed) and single-file only
+    // (multiple simultaneous edit sessions from one click isn't a
+    // real use case worth the added complexity).
+    QAction *editAction = menu.addAction(
+        IconTheme::tintedIcon(":/icons/app-window.svg", IconTheme::Gray), tr("Edit"));
+    editAction->setEnabled(selected.size() == 1 && !selected.first().isDir
+                            && !m_backend->isLocalFilesystem());
+
     QAction *deleteAction = menu.addAction(
         IconTheme::tintedIcon(":/icons/trash.svg", IconTheme::Red),
         selected.size() > 1 ? tr("Delete %1 Items").arg(selected.size()) : tr("Delete"));
@@ -654,6 +669,8 @@ void FilePaneWidget::showContextMenu(const QPoint &pos)
         promptAndCreateFolder(directory);
     else if (chosen == renameAction)
         promptAndRename(selected.first(), directory);
+    else if (chosen == editAction)
+        emit editRequested(this, selected.first());
     else if (chosen == deleteAction)
         confirmAndDelete(selected, directory);
     else if (chosen == refreshAction)
