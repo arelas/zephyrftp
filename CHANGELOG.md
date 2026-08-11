@@ -17,6 +17,8 @@ in the README), so anything may still change between 0.x releases.
   or "No output yet" when empty) instead of stopping abruptly at the
   log's own edge — the same footer-line treatment every other pane
   already has.
+- **Column headers are less tall** — vertical padding trimmed from 5px
+  to 3px on each side.
 
 ### Fixed
 

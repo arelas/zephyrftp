@@ -64,7 +64,7 @@ QHeaderView::section {
     border: none;
     border-bottom: 1px solid #2a2e35;   /* --zf-border */
     border-right: 1px solid #2a2e35;    /* --zf-border — faint divider between header columns */
-    padding: 5px 8px;
+    padding: 3px 8px;
     font-size: 11px;
 }
 
