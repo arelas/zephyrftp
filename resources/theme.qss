@@ -85,6 +85,17 @@ QLabel {
     font-size: 11px;
 }
 
+/* CommandsPaneWidget's bottom-of-pane divider — same token every other
+   divider line in the app already uses (QToolBar's own border-bottom,
+   QHeaderView::section's border-bottom/border-right). QFrame::HLine
+   paints via the palette by default, not a plain background fill, so
+   without this it wouldn't reliably read as a visible line against the
+   dark theme on every platform this app ships for. */
+QFrame#commandsDivider {
+    background-color: #2a2e35;   /* --zf-border */
+    border: none;
+}
+
 QPushButton {
     background: transparent;
     border: 1px solid #2a2e35;   /* --zf-border */

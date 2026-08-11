@@ -9,7 +9,6 @@
 #include <QAction>
 #include <QProgressBar>
 #include <QLabel>
-#include <QHash>
 #include <algorithm>
 
 namespace {
@@ -29,50 +28,41 @@ TransferQueueWidget::TransferQueueWidget(TransferManager *manager, QWidget *pare
     m_table->setColumnCount(5);
     m_table->setHorizontalHeaderLabels(
         {tr("File"), tr("Direction"), tr("Status"), tr("Progress"), tr("Speed")});
-    // Interactive like every other column — Stretch here used to make
-    // File's width purely a side effect of dragging the OTHER columns'
-    // handles, with no handle of its own to drag (same fix already
-    // applied to the file panes' Name column).
-    m_table->horizontalHeader()->setSectionResizeMode(ColName, QHeaderView::Interactive);
-    m_table->setColumnWidth(ColName, 220);
-    // A real bug found by manual testing, in two parts. First: with no
-    // upper bound, dragging File's own right edge wide enough pushes
-    // Direction/Status/Progress/Speed entirely past the visible table
-    // area — and since setStretchLastSection() (below) actively avoids
-    // ever showing a horizontal scrollbar, those columns become
-    // genuinely unreachable, not just scrolled out of view. Second,
-    // found when actually checking each OTHER column individually
-    // (not just File) rather than assuming a single fix covered them
-    // all: QHeaderView::setMaximumSectionSize() is one header-wide
-    // value applying to every section, so a cap generous enough for
-    // File's genuinely-variable-length filenames (500px) still let
-    // Direction/Status/Progress EACH independently grow that wide too
-    // — no single column exceeded the cap, but their combined width
-    // could still push later columns off screen the identical way.
-    // QHeaderView has no native per-section maximum, so this clamps
-    // each column to its OWN appropriate bound manually, immediately
-    // undoing any resize (drag or otherwise) that exceeds it —
-    // resizeSection() below triggers this same signal again, but with
-    // newSize now equal to the cap itself, so the recursion terminates
-    // after exactly one corrective step. Only File genuinely needs
-    // room for long names; Direction/Status hold a short icon+word,
-    // and Progress a progress bar that doesn't need to be enormous
-    // either. Speed (last, stretched) isn't in this map — its own
-    // width is already governed by setStretchLastSection().
-    connect(m_table->horizontalHeader(), &QHeaderView::sectionResized, this,
-            [this](int logicalIndex, int /*oldSize*/, int newSize) {
-        static const QHash<int, int> maxWidths{
-            {ColName, 500}, {ColDirection, 160}, {ColStatus, 160}, {ColProgress, 300}
-        };
-        const auto it = maxWidths.constFind(logicalIndex);
-        if (it != maxWidths.constEnd() && newSize > it.value())
-            m_table->horizontalHeader()->resizeSection(logicalIndex, it.value());
-    });
-    // Unlike QTreeView (the file panes), QTableView/QTableWidget does NOT
-    // default this to true — without it, Speed (the actual last column)
-    // stays its own narrow natural width and the remaining header space
-    // renders as a raw, unstyled gap instead of absorbing it.
-    m_table->horizontalHeader()->setStretchLastSection(true);
+    // File is the one column whose content (a filename/path) genuinely
+    // varies in length, so it's the one that should flex. Stretch mode
+    // makes Qt auto-manage its width to whatever's left once the other
+    // four (below) claim their own small, fixed space — growing the
+    // window gives File the extra room; shrinking the window takes room
+    // away from File specifically, never from the other four. A Stretch
+    // section has no user-draggable handle at all, which is deliberate:
+    // this REPLACES two earlier, increasingly complicated attempts at
+    // stopping columns from pushing each other off screen (a single
+    // header-wide max, then a per-column max — see CHANGELOG.md's
+    // history) with removing the dragging that caused the problem in
+    // the first place, once it was clear Direction/Status/Progress/Speed
+    // gained nothing from being resizable anyway (see below).
+    m_table->horizontalHeader()->setSectionResizeMode(ColName, QHeaderView::Stretch);
+    // Direction/Status/Progress/Speed: Fixed, not Interactive. Their
+    // content is short and fixed-shape (a 20px icon, a status word, a
+    // progress bar, a speed reading) — there's nothing a user gains by
+    // resizing them, only cosmetic fiddling, and leaving them fixed is
+    // exactly what makes File's own Stretch behavior above sufficient
+    // on its own, with no "compress the neighbor on drag" logic needed
+    // anywhere. Widths sized to comfortably fit each column's own
+    // header label plus its typical content, not the absolute longest
+    // possible string — Status in particular can occasionally run
+    // longer than this (e.g. "Failed: <server's own error text>", or
+    // the phase-aware "Paused - Downloading (1/2)"), and is expected to
+    // ellipsize in that case; its cell's tooltip carries the full text
+    // either way (see appendRow()/onItemUpdated() below).
+    m_table->horizontalHeader()->setSectionResizeMode(ColDirection, QHeaderView::Fixed);
+    m_table->setColumnWidth(ColDirection, 90);
+    m_table->horizontalHeader()->setSectionResizeMode(ColStatus, QHeaderView::Fixed);
+    m_table->setColumnWidth(ColStatus, 110);
+    m_table->horizontalHeader()->setSectionResizeMode(ColProgress, QHeaderView::Fixed);
+    m_table->setColumnWidth(ColProgress, 110);
+    m_table->horizontalHeader()->setSectionResizeMode(ColSpeed, QHeaderView::Fixed);
+    m_table->setColumnWidth(ColSpeed, 80);
     // The header row centers section labels by default (Fusion style);
     // "File" reads oddly centered over a column of left-aligned filenames
     // — Direction/Status/Progress/Speed stay centered, matching the
@@ -321,6 +311,11 @@ void TransferQueueWidget::appendRow(const TransferItem &item)
     auto *statusItem = new QTableWidgetItem(statusText(item));
     statusItem->setForeground(statusTextColor(item.status));
     statusItem->setTextAlignment(Qt::AlignCenter);
+    // Status's column width is fixed and modest (see the constructor's
+    // own comment) — this is what keeps the full text reachable for the
+    // occasional long one (a Failed item's own server error message)
+    // that ellipsizes in the cell itself.
+    statusItem->setToolTip(statusText(item));
     m_table->setItem(row, ColStatus, statusItem);
 
     // Inline progress bars (design decision #6 in the package's README:
@@ -368,7 +363,9 @@ void TransferQueueWidget::onItemUpdated(const TransferItem &item)
     // code path ever delivered itemUpdated for a row before ColStatus
     // was populated.
     if (auto *statusItem = m_table->item(row, ColStatus)) {
-        statusItem->setText(statusText(item));
+        const QString text = statusText(item);
+        statusItem->setText(text);
+        statusItem->setToolTip(text);
         statusItem->setForeground(statusTextColor(item.status));
     }
 

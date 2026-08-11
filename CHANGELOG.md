@@ -8,6 +8,27 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Changed
+
+- **The Transfers panel's column layout is now properly conserved,
+  not just capped.** Direction/Status/Progress/Speed no longer resize
+  at all — their content is short and fixed-shape (a small icon, a
+  status word, a progress bar, a speed reading), so there was nothing
+  to gain from letting them be dragged, only a route back to columns
+  crowding each other off screen. File is now the sole flexible
+  column: it absorbs all extra space when the window is wide, and is
+  the one column that shrinks first when the window narrows — the
+  other four stay put either way. This replaces the per-column
+  maximum-width clamps from the last two releases with something
+  structurally simpler: with only one resizable column and nothing
+  else draggable, there's no "columns pushing each other off screen"
+  class of bug left to have.
+- **The Commands pane's new bottom-of-pane element is a plain divider
+  line now, not a status bar.** The line-count text it briefly had
+  read as more chrome than this particular pane actually needed —
+  there's no ongoing summary worth showing the way the file panes'
+  own item-count footer has.
+
 ## [0.6.19] — Polish pass on navigation order and column headers
 
 ### Changed
