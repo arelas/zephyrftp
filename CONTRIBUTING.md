@@ -79,7 +79,8 @@ The Linux job (`build-linux`) is a plain native build on `ubuntu-latest`
 using the exact dependency line above, ships just the binary (dynamically
 linked against system Qt6/libssh2, not a bundled/portable build), and
 needs no wine/Xvfb at all since it's running native binaries directly.
-Both jobs actually run the full ten-target test suite, not just link it.
+Both jobs actually run the full required test suite (see "Running the
+test suites" below for the current count), not just link it.
 On a `v*` tag, the `release` job packages both (`zephyrftp-windows-x64.zip`,
 `zephyrftp-linux-x64.tar.gz`) onto the same GitHub Release. All of this
 has been confirmed on GitHub's own runners, not just locally — including
@@ -413,8 +414,16 @@ representative of any real desktop:
 
 ## Running the test suites
 
-Ten `EXCLUDE_FROM_ALL` CMake targets — not part of a normal `make`, built
-and run explicitly:
+Fifteen `EXCLUDE_FROM_ALL` CMake targets make up the required suite as
+of this writing — not part of a normal `make`, built and run
+explicitly, and all of them (not just a "core" subset) need to actually
+pass before a change is done. The count keeps growing as the project
+does; rather than renumbering everything and rewriting this whole
+section each time, new targets get their own short subsection further
+below instead. Don't trust "fifteen" to still be accurate by the time
+you're reading this — this paragraph is the one place that number lives,
+so if it's wrong, the fix is here, not a hunt through the rest of this
+file. The original ten, each with its own run command:
 
 ```
 cmake --build build --target smoke-test
@@ -517,7 +526,7 @@ calls `FtpBackend`'s two directory-listing parsers as pure functions
 against sample data, with no network I/O and no server. That narrowness
 is deliberate — it's not a live-server test and doesn't claim to be one.
 The rest of FTP/FTPS (and SFTP public-key auth) genuinely can be
-verified locally now, just not through this ten-target suite — see
+verified locally now, just not through this self-contained suite — see
 "Live-server verification" below. See this test's header comment and
 ARCHITECTURE.md's Known gaps for what's still unproven even after that.
 `protocol-selection-test` needs the same `setTestModeEnabled()`
@@ -528,28 +537,27 @@ your actual config directory. It constructs a real `ConnectionDialog`
 and drives its protocol combo, so it needs a `QApplication` and the
 offscreen platform, not just `QCoreApplication`.
 
-All ten need to actually pass — not just build — before a change is
+These ten, plus every target documented in the subsections immediately
+below, need to actually pass — not just build — before a change is
 considered done. See ARCHITECTURE.md's "Verification status" section for
 what each test actually proves and why it exists.
 
-### An eleventh, separately-tracked target: `sort-and-commands-test`
+### `sort-and-commands-test`
 
-Added after the "ten" above had already become a fixed, documented count
-in this file and CLAUDE.md — self-contained and `EXCLUDE_FROM_ALL` like
-the ten (no external server, no `podman`), but deliberately kept as an
-explicit eleventh rather than triggering a rename sweep of every
-"ten-target" reference across those files. Covers `CommandsPaneWidget`'s
-log and `FilePaneWidget`'s forwarding of `RemoteBackend::commandLogged`
-(via a minimal fake backend, same technique `transfer-pause-test`'s
-`FakePausableBackend` uses), and the file panes' default sort order,
-numeric Size sort, and `entryForRow()`'s row-independence after a real
+Added after the original ten above — self-contained and
+`EXCLUDE_FROM_ALL` like they are (no external server, no `podman`), and
+just as required; kept in its own subsection rather than folded into a
+renumbered list above, the pattern every later addition here follows
+too. Covers `CommandsPaneWidget`'s log and `FilePaneWidget`'s forwarding
+of `RemoteBackend::commandLogged` (via a minimal fake backend, same
+technique `transfer-pause-test`'s `FakePausableBackend` uses), and the
+file panes' default sort order, numeric Size sort, and
+`entryForRow()`'s row-independence after a real
 `QTreeView::sortByColumn()` call — see `src/sort_and_commands_test.cpp`'s
 own header comment and ARCHITECTURE.md's `CommandsPaneWidget` entry for
-the full detail. **CI now builds and runs it too** — all four
-`.github/workflows/build.yml` jobs' "Build test suite"/"Run test suite"
-steps include it alongside the ten, even though it isn't folded into
-that "ten" count in the prose here or in CLAUDE.md. Run it locally the
-same way:
+the full detail. All four `.github/workflows/build.yml` jobs' "Build
+test suite"/"Run test suite" steps include it. Run it locally the same
+way:
 
 ```
 cmake --build build --target sort-and-commands-test
@@ -561,11 +569,11 @@ builds and wipes its own scratch directory (`/tmp/sort_test`) at the top
 of `main()`, same convention `transfer-queue-test`/`folder-transfer-test`
 use.
 
-### A twelfth target: `remote-to-remote-test`
+### `remote-to-remote-test`
 
-Same "additional, not folded into the fixed count" treatment as
-`sort-and-commands-test` above — self-contained, `EXCLUDE_FROM_ALL`, added
-to all four `build.yml` jobs. Covers `TransferManager`'s remote-to-remote
+Same treatment as `sort-and-commands-test` above — self-contained,
+`EXCLUDE_FROM_ALL`, added to all four `build.yml` jobs. Covers
+`TransferManager`'s remote-to-remote
 staged-transfer orchestration (direction/phase assignment, the
 download-to-temp → upload-from-temp phase transition and
 `m_currentBackend` re-pointing, temp-file cleanup on success and on
@@ -586,11 +594,11 @@ same one the real app uses, cleaned up by the test itself (and by
 `TransferManager`'s own constructor, which sweeps any leftovers from a
 previous run on startup).
 
-### A thirteenth target: `move-entry-test`
+### `move-entry-test`
 
-Same "additional, not folded into the fixed count" treatment as
-`sort-and-commands-test`/`remote-to-remote-test` above — self-contained,
-`EXCLUDE_FROM_ALL`, added to all four `build.yml` jobs. Covers the
+Same treatment as `sort-and-commands-test`/`remote-to-remote-test`
+above — self-contained, `EXCLUDE_FROM_ALL`, added to all four
+`build.yml` jobs. Covers the
 server-side Move feature: `TransferManager::moveEligible()`'s
 `connectionIdentity()`-equality guard (both the eligible and ineligible
 cases), `moveEntry()`/`moveFolder()`'s request-id-correlated dispatch to a
@@ -624,11 +632,11 @@ Needs no fixtures or environment overrides beyond `QT_QPA_PLATFORM` — it
 builds and wipes its own scratch directory (`/tmp/move_entry_test`) at the
 top of `main()`, same convention `sort-and-commands-test` uses.
 
-### A fourteenth target: `app-settings-test`
+### `app-settings-test`
 
-Same "additional, not folded into the fixed count" treatment as the
-three above — self-contained, `EXCLUDE_FROM_ALL`, added to all four
-`build.yml` jobs. `AppSettings`' first-ever test coverage of any kind:
+Same treatment as the three above — self-contained, `EXCLUDE_FROM_ALL`,
+added to all four `build.yml` jobs. `AppSettings`' first-ever test
+coverage of any kind:
 the full setter/save/load round trip for every persisted field, the
 documented fresh-start and corrupt-`settings.json` fallback-to-defaults
 behavior, and that a same-value `set()` call is a genuine no-op rather
@@ -654,11 +662,10 @@ cmake --build build --target app-settings-test
 QT_QPA_PLATFORM=offscreen ./build/app-settings-test
 ```
 
-### A fifteenth target: `trust-prompt-test`
+### `trust-prompt-test`
 
-Same "additional, not folded into the fixed count" treatment as the
-four above — self-contained, `EXCLUDE_FROM_ALL`, added to all four
-`build.yml` jobs. Drives the REAL `QMessageBox` that
+Same treatment as the four above — self-contained, `EXCLUDE_FROM_ALL`,
+added to all four `build.yml` jobs. Drives the REAL `QMessageBox` that
 `HostKeyVerifier::confirmHostKey()`/`CertificateVerifier::confirmCertificate()`
 each pop, same live-dialog technique `conflict-resolution-test` uses
 (`QApplication::activeModalWidget()` while `exec()` is still blocking).
@@ -679,7 +686,7 @@ QT_QPA_PLATFORM=offscreen ./build/trust-prompt-test
 
 ## Live-server verification (SFTP public-key auth, FTP/FTPS, cancel/pause/resume)
 
-The ten targets above are deliberately self-contained — no external
+The targets above are all deliberately self-contained — no external
 server needed. `SftpBackend`'s public-key auth path, its real
 mid-transfer cancel/pause/resume, and all of `FtpBackend` used to be
 genuinely unverified as a result (see ARCHITECTURE.md's Known gaps):
@@ -760,8 +767,8 @@ vsftpd/proftpd/Dropbear, not pyftpdlib — each built from its own
 `Containerfile` and run in a throwaway `podman` container, for genuine
 vendor/implementation diversity rather than a Python stand-in this
 project fully controls. **`podman` is only needed for this specific
-piece** (same scoping as `wine` above — not needed for the build or the
-other ten targets at all):
+piece** (same scoping as `wine` above — not needed for the build or any
+of the self-contained targets above):
 
 ```
 tools/local-test-servers/start-vsftpd.sh
@@ -811,21 +818,22 @@ vendor diversity for exactly what's confirmed and what still isn't,
 even after this, plus Move/remote-to-remote's own entries there for what
 `verify-sftp-move`/`verify-ftp-move`/`verify-remote-to-remote-live`
 specifically confirm.
-These seven targets are `EXCLUDE_FROM_ALL` like the main
-ten but intentionally **not** part of that suite or CI — an
+These seven targets are `EXCLUDE_FROM_ALL` like the required suite
+above but intentionally **not** part of that suite or CI — an
 external-server precondition is a different category from "always runs
-the same way," which is the whole point of the other ten.
+the same way," which is the whole point of the required suite being
+self-contained.
 
 **Deliberately never added to CI, on purpose, not just left out for
-lack of time**: unlike the ten self-contained targets, these need an
-external server (or, for the vendor containers, `podman`) already
+lack of time**: unlike the required self-contained targets, these need
+an external server (or, for the vendor containers, `podman`) already
 running, and the vendor containers specifically add real per-run cost
 (building/starting three containers) that isn't worth paying on every
 push. The actual rule this project runs on: **local testing is the gate
 before pushing, not CI** — if you've touched `FtpBackend`/`SftpBackend`,
 run the relevant live-server and vendor-container harnesses locally
-first, the same way you'd run the ten-target suite, and only push once
-those pass. CI (the ten-target suite, on every push/PR/tag; the full
+first, the same way you'd run the required suite, and only push once
+those pass. CI (the required suite, on every push/PR/tag; the full
 platform build on tags) is there to catch environment drift and confirm
 what already passed locally still passes on GitHub's own runners — it
 is not a substitute for having run the fuller local suite first when

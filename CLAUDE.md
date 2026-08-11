@@ -14,11 +14,17 @@ Non-negotiables for this project:
   `site-store-test`'s raw-JSON key inspection (still enforces zero
   secrets in `sites.json`) and `CredentialStore` staying the only place
   a secret is ever written to disk.
-- **Tests before claims.** "It compiles" is not "it works." All ten
-  `EXCLUDE_FROM_ALL` test targets listed in CONTRIBUTING.md need to
-  actually pass, not just build, before a change is done. Where a claim
-  can't be tested in this environment, say so explicitly rather than
-  letting it read as verified.
+- **Tests before claims.** "It compiles" is not "it works." Every
+  self-contained `EXCLUDE_FROM_ALL` test target CONTRIBUTING.md's
+  "Running the test suites" section documents as required needs to
+  actually pass, not just build, before a change is done. Deliberately
+  not naming a count here: it started at ten, has grown several times
+  since (each addition documented in its own subsection there rather
+  than triggering a rename sweep), and will keep growing — check
+  CONTRIBUTING.md itself for the current, exact list rather than trusting
+  a number that will go stale again. Where a claim can't be tested in
+  this environment, say so explicitly rather than letting it read as
+  verified.
 - **Verify rather than assume.** Read the actual header/API/YAML before
   trusting an assumption about its shape — this codebase has been bitten
   repeatedly by exactly that shortcut (see CONTRIBUTING.md's "core

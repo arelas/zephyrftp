@@ -492,8 +492,9 @@ that way, it's flagged explicitly rather than left implied.
   "still not verified."** `tools/local-test-servers/` spins up
   throwaway local `sshd` (pubkey-only), FTP, and FTPS servers, and
   `verify-sftp-pubkey`/`verify-ftp-live` (`EXCLUDE_FROM_ALL` CMake
-  targets, not part of the main ten-target suite since they need those
-  external servers already running) drive real `SftpBackend`/`FtpBackend`
+  targets, not part of the required self-contained suite since they need
+  those external servers already running) drive real
+  `SftpBackend`/`FtpBackend`
   instances against them — real connect, list, download, upload, with
   content confirmed both from the client side and by reading files back
   directly off the server's own disk. The same local SFTP server also
@@ -1284,7 +1285,8 @@ to drive FileZilla itself for a same-desktop comparison.
      inside the existing `#ifdef _WIN32` block.
   **First-ever test coverage for this file**, added alongside: a new
   `verify-credential-store` target (in the `verify-*` live-service
-  family, not one of the ten self-contained `EXCLUDE_FROM_ALL` targets —
+  family, not one of the required self-contained `EXCLUDE_FROM_ALL`
+  targets —
   its "external precondition" is a real, already-in-use OS credential
   store rather than a disposable local server) exercises a full
   save/load/hasSecret/remove round trip, including non-ASCII id and
@@ -2547,13 +2549,11 @@ to drive FileZilla itself for a same-desktop comparison.
   shortcut around it), and — the specific regression this pins down —
   that `entryForRow()` still maps a view row to the correct entry once a
   sort has physically moved rows, rather than the pre-fix row-position
-  indexing that broke the instant rows moved. **Deliberately not folded
-  into "the ten-target suite"** CLAUDE.md/CONTRIBUTING.md already
-  establish as a fixed, documented count — self-contained and
-  `EXCLUDE_FROM_ALL` like the ten, but kept as an explicit eleventh,
-  separately-documented target rather than triggering a rename sweep
-  across every place that number appears; see CONTRIBUTING.md's "Running
-  the test suites" section for how to build and run it.
+  indexing that broke the instant rows moved. Just as required as every
+  other self-contained target, but documented in its own subsection in
+  CONTRIBUTING.md rather than folded into a renumbered list — see that
+  file's "Running the test suites" section for how to build and run it,
+  and for the current full count.
 - `MainWindow` — two `FilePaneWidget`s in a `QSplitter`, plus a
   `QDockWidget` at the bottom holding the transfer queue. Both panes start
   on `LocalBackend`; **either can now become remote independently**, not
@@ -2791,10 +2791,10 @@ above.
 ## Windows and Linux builds (CI)
 
 `.github/workflows/build.yml` produces both platforms' release binaries
-and, on a `v*` tag, attaches both to the same GitHub Release. Both build
-jobs actually run the full ten-target test suite as part of the job, not
-just link it — matching CONTRIBUTING.md's "all ten need to actually
-pass" rule for CI too, not only local development.
+and, on a `v*` tag, attaches both to the same GitHub Release. All four
+build jobs actually run the full required test suite as part of the
+job, not just link it — matching CONTRIBUTING.md's "these need to
+actually pass" rule for CI too, not only local development.
 
 **`build-windows`** cross-compiles with MinGW from a `fedora:44`
 container on `ubuntu-latest`, rather than building natively on
@@ -2891,7 +2891,7 @@ along the way — worth knowing about if it ever needs touching again.
   the LIST fallback, and a full encrypted transfer, all confirmed
   working, not just unit-tested in isolation.** `src/verify_ftp_live.cpp`
   (the `verify-ftp-live` `EXCLUDE_FROM_ALL` CMake target — not part of
-  the ten-target self-contained suite, since it needs external servers
+  the required self-contained suite, since it needs external servers
   already running) drives a real `FtpBackend` through five phases
   against five throwaway local servers
   (`tools/local-test-servers/start-ftp.sh`, `start-ftps.sh`,
@@ -3201,7 +3201,7 @@ along the way — worth knowing about if it ever needs touching again.
   throwaway local `sshd` (public-key-only, no system config touched —
   see the script's own header comment) and `src/verify_sftp_pubkey.cpp`
   (the `verify-sftp-pubkey` `EXCLUDE_FROM_ALL` target, same "not part of
-  the ten-target suite" reasoning as the FTP one above) drives a real
+  the required suite" reasoning as the FTP one above) drives a real
   `SftpBackend` through `connectToHost()` with `SftpAuthMethod::PublicKey`
   — including the real host-key trust-on-first-use prompt, driven the
   same way `conflict_resolution_test.cpp` drives a live `QMessageBox` —
@@ -3428,7 +3428,7 @@ along the way — worth knowing about if it ever needs touching again.
 - **`SftpBackend`'s real mid-transfer cancel and pause/resume are now
   confirmed against a real server, in both directions.**
   `verify_sftp_pause_cancel.cpp` (the `verify-sftp-pause-cancel`
-  `EXCLUDE_FROM_ALL` target, same "not part of the ten-target suite"
+  `EXCLUDE_FROM_ALL` target, same "not part of the required suite"
   reasoning as the other live-server harnesses) drives a real
   `SftpBackend` through a genuinely large (300MB) upload/download
   against `tools/local-test-servers/start-sftp-pubkey.sh`'s server,
