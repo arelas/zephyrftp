@@ -61,12 +61,15 @@ certificate each `start-*.sh` script copies out via `podman cp` and
 prints the path to). `proftpd.conf`'s `mod_tls` is left at its own
 default **strict TLS-session-reuse enforcement** (see that file's
 comment on why omitting `TLSOptions NoSessionReuseRequired` is what
-keeps it on) — the real, honest test of whether `FtpBackend`'s
-TLS-session-ticket reuse actually satisfies a strict server, and the
-answer is a clean, consistent no (confirmed via proftpd's own
-`TLSLog`, real evidence this project's TLS 1.3-ticket-based reuse
-doesn't read as genuine reuse to `mod_tls`'s check — a real,
-informative negative result, not previously known either way).
+keeps it on) — the real, honest test of whether `FtpBackend`'s TLS
+session reuse actually satisfies a strict server. It now genuinely
+does: `FtpTlsSocket` (raw OpenSSL, forced to TLS 1.2 — see
+`ARCHITECTURE.md`'s Known gaps entry) replaced the earlier
+`QSslSocket`-based attempt, which this same container's `TLSLog`
+first proved didn't satisfy `mod_tls`'s check at all. This container is
+what `verify-ftp-vendors`' `proftpd-ftps` phase runs a full
+list/download/upload round trip against, unmodified strict config and
+all.
 
 `vsftpd.conf` ships with `require_ssl_reuse=NO`, and that's a
 deliberate, documented trade, not an oversight: turning it on
@@ -158,16 +161,14 @@ QT_QPA_PLATFORM=offscreen ./build/verify-ftp-vendors    # needs start-vsftpd.sh 
 QT_QPA_PLATFORM=offscreen ./build/verify-sftp-vendors   # needs start-dropbear.sh
 ```
 
-`verify-ftp-vendors` currently exits non-zero, honestly — but only
-because of `proftpd-ftps`, which is *expected* to fail: proftpd's own
-strict TLS-session-reuse enforcement genuinely and correctly rejects
-this project's current reuse implementation (see ARCHITECTURE.md's
-Known Gaps — that rejection is the real, intended result this phase
-exists to confirm, not a bug). Its other three phases — plain FTP and
-FTPS against vsftpd, and plain FTP against proftpd — all pass, with the
-vsftpd-ftps phase completing a full real round trip (connect, list,
-download, upload, content verified both ways) over genuine FTPS against
-a real vendor server.
+`verify-ftp-vendors` now passes cleanly end to end, all four phases —
+plain FTP and FTPS against both vsftpd and proftpd, each completing a
+full real round trip (connect, list, download, upload, content
+verified both ways) over the real vendor server, including proftpd's
+own strict TLS-session-reuse enforcement (unrelaxed, default config).
+That used to be a documented, expected failure — see
+`ARCHITECTURE.md`'s Known gaps entry for the fix (`FtpTlsSocket`, raw
+OpenSSL) and the investigation that found it.
 
 All six drive the real backend classes directly
 (`src/verify_sftp_pubkey.cpp`, `src/verify_ftp_live.cpp`,
@@ -196,9 +197,11 @@ same protocol session instead of reading the container's filesystem
 directly. Exit code reflects pass/fail (see CONTRIBUTING.md's wine
 section for why exit code, not console text, is the reliable signal in
 general — not specific to these, but the same habit applies). These are
-deliberately **not** part of the ten-target `EXCLUDE_FROM_ALL` test
-suite or CI: they need an external server already running, which those
-ten are built specifically to avoid depending on.
+deliberately **not** part of the required, self-contained
+`EXCLUDE_FROM_ALL` test suite or CI (see CONTRIBUTING.md's "Running the
+test suites" for that list's current count): they need an external
+server already running, which that suite is built specifically to
+avoid depending on.
 
 ### `verify-sftp-throughput`: a real, non-loopback server only
 
