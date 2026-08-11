@@ -1446,13 +1446,25 @@ to drive FileZilla itself for a same-desktop comparison.
   `saveState()` blobs, base64-encoded into the same JSON file, read once
   at startup and written once from `MainWindow::closeEvent()` — no live
   propagation needed for either, unlike `showHiddenFiles`.
-  `showTransfersOnStart`/`showCommandsOnStart` (both default true) are
-  applied as an explicit override right after `restoreState()` runs in
-  `MainWindow`'s constructor — deliberately overriding whatever dock
-  visibility `restoreState()` itself just restored, since otherwise
-  reopening a dock once (even by accident) would make the saved layout
-  reopen it on every later launch too; turning the preference off is the
-  only way to keep a dock closed permanently.
+  Transfers/Commands dock visibility has no dedicated preference field
+  at all — each dock's own `toggleViewAction()` (the View menu's
+  "Transfers"/"Commands" entries, kept in sync by Qt with however the
+  dock was actually shown/hidden, whether via that menu entry or the
+  dock's own titlebar close button) is the sole source of truth,
+  persisted for free as part of the `windowState` blob `saveState()`
+  captures in `closeEvent()`. This replaced an earlier
+  `showTransfersOnStart`/`showCommandsOnStart` pair of preference
+  fields, settable only from `PreferencesDialog`, applied as an
+  explicit override right after `restoreState()` ran in `MainWindow`'s
+  constructor — which meant the live View-menu toggle never actually
+  controlled what reopened on the next launch, only that separate,
+  easy-to-forget-about checkbox did. Removed once it became clear
+  `restoreState()` alone already reproduces whatever dock-visibility
+  state existed at the moment `saveState()` ran — confirmed directly
+  with a disposable probe (two `QDockWidget`s, one hidden before
+  `saveState()`, a second window's fresh `restoreState()` call
+  reproducing exactly that visibility with no manual override needed)
+  before deleting the redundant mechanism.
   **A real, verified bug, not a hypothetical one:** the first working
   version filtered `showHiddenFiles` only in `FilePaneWidget`, on the
   theory that every backend returns dotfiles raw and the UI layer

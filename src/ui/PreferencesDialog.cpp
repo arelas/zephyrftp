@@ -14,8 +14,6 @@ PreferencesDialog::PreferencesDialog(AppSettings *settings, QWidget *parent)
     , m_settings(settings)
     , m_showHiddenFilesCheck(new QCheckBox(tr("Show hidden files (dotfiles)"), this))
     , m_defaultProtocolCombo(new QComboBox(this))
-    , m_showTransfersOnStartCheck(new QCheckBox(tr("Show Transfers pane on start"), this))
-    , m_showCommandsOnStartCheck(new QCheckBox(tr("Show Commands pane on start"), this))
 {
     setWindowTitle(tr("Preferences"));
 
@@ -33,21 +31,9 @@ PreferencesDialog::PreferencesDialog(AppSettings *settings, QWidget *parent)
         m_settings->setDefaultProtocol(protocol);
     });
 
-    m_showTransfersOnStartCheck->setChecked(m_settings->showTransfersOnStart());
-    connect(m_showTransfersOnStartCheck, &QCheckBox::toggled, this, [this](bool checked) {
-        m_settings->setShowTransfersOnStart(checked);
-    });
-
-    m_showCommandsOnStartCheck->setChecked(m_settings->showCommandsOnStart());
-    connect(m_showCommandsOnStartCheck, &QCheckBox::toggled, this, [this](bool checked) {
-        m_settings->setShowCommandsOnStart(checked);
-    });
-
     auto *form = new QFormLayout;
     form->addRow(tr("Local && remote panes:"), m_showHiddenFilesCheck);
     form->addRow(tr("Default protocol for new connections:"), m_defaultProtocolCombo);
-    form->addRow(tr("Docked panes:"), m_showTransfersOnStartCheck);
-    form->addRow(QString(), m_showCommandsOnStartCheck);
 
     // QDialogButtonBox::Close is wired to reject() by Qt's own convention
     // (it's a RejectRole button) — accept() vs. reject() is meaningless

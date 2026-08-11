@@ -21,6 +21,4 @@ private:
     AppSettings *m_settings;
     QCheckBox *m_showHiddenFilesCheck;
     QComboBox *m_defaultProtocolCombo;
-    QCheckBox *m_showTransfersOnStartCheck;
-    QCheckBox *m_showCommandsOnStartCheck;
 };

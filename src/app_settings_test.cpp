@@ -55,10 +55,6 @@ int main(int argc, char *argv[])
         check("fresh start (no file): showHiddenFiles defaults to false", !settings.showHiddenFiles());
         check("fresh start (no file): defaultProtocol defaults to Sftp",
               settings.defaultProtocol() == Protocol::Sftp);
-        check("fresh start (no file): showTransfersOnStart defaults to true",
-              settings.showTransfersOnStart());
-        check("fresh start (no file): showCommandsOnStart defaults to true",
-              settings.showCommandsOnStart());
     }
 
     // --- Round-trip every field through a real save() (via the public
@@ -70,16 +66,12 @@ int main(int argc, char *argv[])
         writer.setDefaultProtocol(Protocol::Ftp);
         writer.setWindowGeometry(QByteArray("fake-geometry-blob"));
         writer.setWindowState(QByteArray("fake-state-blob"));
-        writer.setShowTransfersOnStart(false);
-        writer.setShowCommandsOnStart(false);
 
         AppSettings reader;
         check("round-trip: showHiddenFiles", reader.showHiddenFiles() == true);
         check("round-trip: defaultProtocol", reader.defaultProtocol() == Protocol::Ftp);
         check("round-trip: windowGeometry", reader.windowGeometry() == QByteArray("fake-geometry-blob"));
         check("round-trip: windowState", reader.windowState() == QByteArray("fake-state-blob"));
-        check("round-trip: showTransfersOnStart", reader.showTransfersOnStart() == false);
-        check("round-trip: showCommandsOnStart", reader.showCommandsOnStart() == false);
     }
 
     // --- The file on disk is valid, well-formed JSON with the expected
@@ -94,8 +86,7 @@ int main(int argc, char *argv[])
         const QJsonObject obj = doc.object();
         check("settings.json has the expected keys",
               obj.contains("showHiddenFiles") && obj.contains("defaultProtocol")
-                  && obj.contains("windowGeometry") && obj.contains("windowState")
-                  && obj.contains("showTransfersOnStart") && obj.contains("showCommandsOnStart"));
+                  && obj.contains("windowGeometry") && obj.contains("windowState"));
     }
 
     // --- A change that toggles a value back to its already-in-memory

@@ -8,6 +8,18 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Changed
+
+- **Removed the "Show Transfers/Commands pane on start" checkboxes from
+  Preferences.** The View menu's Transfers/Commands toggles (and each
+  dock's own titlebar close button) are now the sole source of truth
+  for whether a dock reopens on the next launch — closing one and
+  restarting the app now genuinely remembers that, the same way window
+  size/position already does. Previously, that separate Preferences
+  checkbox silently overrode whatever the live toggle actually did,
+  so closing a dock via the View menu had no lasting effect unless the
+  matching checkbox was also unchecked by hand.
+
 ## [0.6.21] — Double-click to connect; fix dropdown-button corners
 
 ### Added

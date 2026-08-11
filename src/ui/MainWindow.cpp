@@ -66,15 +66,14 @@ MainWindow::MainWindow(QWidget *parent)
     // Restored last, after every dock/toolbar exists for restoreState() to
     // apply to — an empty QByteArray (first run, or settings.json not
     // written yet) is a documented safe no-op for both calls, so no
-    // isEmpty() guard is needed here.
+    // isEmpty() guard is needed here. restoreState() alone is also what
+    // makes each dock's own toggleViewAction() (the View menu's
+    // "Transfers"/"Commands" entries) the actual source of truth for
+    // whether it reopens on the next launch — whatever visibility state
+    // saveState() captured in closeEvent() is exactly what comes back
+    // here, no separate "show on start" preference needed on top of it.
     restoreGeometry(m_settings->windowGeometry());
     restoreState(m_settings->windowState());
-
-    // Explicit override of whatever dock visibility restoreState() just
-    // restored — see AppSettings::showTransfersOnStart()'s doc comment on
-    // why this needs to win rather than merely seed a first-run default.
-    m_transfersDock->setVisible(m_settings->showTransfersOnStart());
-    m_commandsDock->setVisible(m_settings->showCommandsOnStart());
 
     connect(m_transferManager, &TransferManager::transferSucceeded,
             this, &MainWindow::onTransferSucceeded);
