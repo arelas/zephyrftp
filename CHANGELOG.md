@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.6.22] — View menu toggles are now the persisted dock-visibility source of truth
+
 ### Changed
 
 - **Removed the "Show Transfers/Commands pane on start" checkboxes from
@@ -1433,7 +1435,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.21...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.22...HEAD
+[0.6.22]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.22
 [0.6.21]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.21
 [0.6.20]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.20
 [0.6.19]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.19
