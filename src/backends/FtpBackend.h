@@ -2,12 +2,11 @@
 
 #include "RemoteBackend.h"
 #include "FtpCredentials.h"
+#include "FtpTlsSocket.h"
 #include <QAtomicInteger>
 #include <QByteArray>
 #include <QMutex>
 
-class QSslSocket;
-class QTcpSocket;
 class QTcpServer;
 class CertificateVerifier;
 
@@ -54,23 +53,26 @@ class CertificateVerifier;
 // fingerprint rather than prompting again — a data connection
 // presenting a DIFFERENT certificate than the one just trusted is
 // treated as suspicious and fails closed with no prompt. See
-// verifyPeerCertificate().
+// verifyTlsPeer().
 //
-// Data connections also attempt real TLS session-ticket reuse (RFC 4217
-// permits servers to require it as an anti-hijacking measure): the
-// control connection's session ticket is captured and applied to each
-// data connection's QSslConfiguration before its own handshake. This is
-// a best-effort resumption attempt, not a guarantee — whether it
-// satisfies a genuinely strict server is unverified in this
-// environment (see ARCHITECTURE.md's Known gaps entry).
+// FTPS's control AND data connections are handled by FtpTlsSocket (raw
+// OpenSSL, forced to exactly TLS 1.2), NOT QSslSocket — see
+// FtpTlsSocket.h's own doc comment for why: a genuinely strict server's
+// RFC 4217 anti-hijacking check (data connections must demonstrably
+// reuse the control connection's TLS session) is NOT satisfied by
+// anything QSslSocket's public API can drive, confirmed directly
+// against a real proftpd container. Plain FTP is entirely unaffected —
+// its control and data connections still use QSslSocket purely as TCP,
+// via QtSocketAdapter (see FtpSocket.h), exactly as before FtpTlsSocket
+// existed.
 //
-// UNVERIFIED: none of this has been exercised against a real FTP or
-// FTPS server from this environment — no live server is reachable here,
-// the same limitation that applies to every SFTP-specific path in this
-// project. What IS verified directly: the protocol-level parsing logic
-// (multi-line reply parsing, MLSD parsing, best-effort LIST parsing)
-// against realistic sample data, in isolation from any actual network
-// I/O — see the dedicated test for exactly what that covers.
+// FTPS (and plain FTP) against real vendor servers (vsftpd, proftpd) is
+// exercised end to end by verify-ftp-vendors/verify-ftps-trust against
+// real local containers (tools/local-test-servers/) — see
+// ARCHITECTURE.md's Known Gaps entry for the full story, including the
+// one real, permanent, server-side limitation found there (vsftpd's
+// require_ssl_reuse=YES deadlocking under this specific container
+// environment, unrelated to this class's own TLS session handling).
 class FtpBackend : public RemoteBackend {
     Q_OBJECT
 public:
@@ -139,7 +141,7 @@ private:
     // doc comments for why the two modes need genuinely different
     // sequencing relative to the RETR/STOR/LIST/MLSD command.
     struct DataChannel {
-        QTcpSocket *socket = nullptr;
+        FtpSocket *socket = nullptr;
         QTcpServer *server = nullptr;
         bool active = false;
     };
@@ -172,16 +174,17 @@ private:
     // banner) and right after a TLS handshake completes.
     FtpReply readReply();
 
-    // Verifies socket's peer certificate against the TOFU cert store
-    // (control connections) or against this session's already-trusted
-    // fingerprint (data connections — see the class doc comment), then
-    // performs the TLS handshake. Returns whether the connection is
-    // now genuinely encrypted; *errorOut is set to a human-readable
-    // reason on failure (preferring the actual certificate problem over
-    // a generic socket error, same philosophy as ensureConnected()'s
-    // existing error messages). isDataConnection selects between the
-    // two trust models described above.
-    bool verifyPeerCertificate(QSslSocket *socket, bool isDataConnection, QString *errorOut);
+    // Applies the TOFU trust decision (control connections: against the
+    // known_certs.json store; data connections: must match this
+    // session's already-trusted fingerprint, no prompt — see the class
+    // doc comment) to an already-completed FtpTlsSocket::handshake()'s
+    // PeerInfo. Returns whether the certificate is trusted; *errorOut is
+    // set to a human-readable reason on failure. Called after the raw
+    // TLS handshake itself already succeeded (FtpTlsSocket always
+    // completes the handshake regardless of certificate trust — see
+    // FtpTlsSocket.h) — a false return here is what actually fails the
+    // connection closed.
+    bool verifyTlsPeer(const FtpTlsSocket::PeerInfo &info, bool isDataConnection, QString *errorOut);
 
     // Marshals a confirmCertificate() call onto the GUI thread and
     // blocks until it returns. Returns false if m_certificateVerifier is
@@ -215,11 +218,11 @@ private:
     // already-connected socket; for active/PORT, blocks
     // (waitForNewConnection()) until the server connects back, then
     // adopts that connection. Either way, then performs the TLS
-    // handshake via verifyPeerCertificate() if the session is
-    // PROT-P-protected. Returns nullptr and sets *errorOut on any
-    // failure; ownership of the returned socket transfers to the
-    // caller.
-    QTcpSocket *finalizeDataChannel(DataChannel *channel, QString *errorOut);
+    // handshake (via FtpTlsSocket::handshake() + verifyTlsPeer()) if
+    // the session is PROT-P-protected. Returns nullptr and sets
+    // *errorOut on any failure; ownership of the returned socket
+    // transfers to the caller.
+    FtpSocket *finalizeDataChannel(DataChannel *channel, QString *errorOut);
 
     // Lists a directory via MLSD (tried first) or LIST (fallback),
     // returning parsed entries. Shared by listDirectory(),
@@ -233,7 +236,7 @@ private:
 
     FtpCredentials m_credentials;
     CertificateVerifier *m_certificateVerifier = nullptr;   // GUI-thread object, not owned
-    QSslSocket *m_controlSocket = nullptr;
+    FtpSocket *m_controlSocket = nullptr;
     bool m_connected = false;
     bool m_dataProtected = false;   // true once PROT P has succeeded (FTPS data-channel encryption)
 
@@ -249,20 +252,11 @@ private:
     QString m_currentPath;
 
     // The control connection's own accepted certificate fingerprint
-    // (SHA-256, hex) for this session — set once verifyPeerCertificate()
-    // trusts it, compared against for every subsequent data connection
-    // rather than prompting again. Empty for plain FTP or before the
-    // control connection's handshake completes.
+    // (SHA-256, hex) for this session — set once verifyTlsPeer() trusts
+    // it, compared against for every subsequent data connection rather
+    // than prompting again. Empty for plain FTP or before the control
+    // connection's handshake completes.
     QString m_trustedCertFingerprint;
-
-    // Captured from the control connection right after its handshake,
-    // and refreshed on QSslSocket::newSessionTicketReceived() (TLS 1.3
-    // tickets commonly arrive asynchronously, after the handshake
-    // completes) — applied to each data connection's QSslConfiguration
-    // before its own handshake, a real attempt at the session reuse
-    // RFC 4217 permits servers to require. Empty until the control
-    // connection has a ticket to offer.
-    QByteArray m_controlSessionTicket;
 
     QAtomicInteger<bool> m_cancelRequested{false};
     QAtomicInteger<bool> m_pauseRequested{false};

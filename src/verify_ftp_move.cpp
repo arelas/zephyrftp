@@ -148,7 +148,25 @@ int main(int argc, char *argv[])
             return;
         if (!navigatedDestToUploads) {
             navigatedDestToUploads = true;
-            destPane->navigateTo(destPane->currentDirectory() + "/uploads");
+            // Deferred, not called synchronously from inside this SAME
+            // directoryListed emission — a real bug found by running this
+            // for real: this lambda is connected directly to destBackend's
+            // directoryListed BEFORE destPane->setBackend() runs (further
+            // down in main()), so it fires FIRST, ahead of
+            // FilePaneWidget::onDirectoryListed() (connected second) —
+            // which is the only thing that clears m_navigationInFlight
+            // after the initial connect-triggered navigation this same
+            // signal is delivering. Calling navigateTo() synchronously
+            // here hits that still-true guard and silently no-ops,
+            // leaving nothing to ever produce a second directoryListed —
+            // observed as a full hang, not a fast, diagnosable failure.
+            // Deferring to the next event-loop turn lets
+            // onDirectoryListed() run first, exactly matching how a real,
+            // separate user action (not nested inside signal delivery)
+            // would naturally call navigateTo().
+            QTimer::singleShot(0, [destPane]() {
+                destPane->navigateTo(destPane->currentDirectory() + "/uploads");
+            });
             return;
         }
         if (destListedCount < 2)

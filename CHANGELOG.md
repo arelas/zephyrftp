@@ -8,6 +8,53 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **FTPS data connections now genuinely satisfy a strict server's TLS
+  session-reuse requirement (RFC 4217's anti-hijacking check), closing
+  a limitation this project previously disclosed as unfixed.**
+  Confirmed against a real proftpd server (default `mod_tls` config,
+  strict reuse enforcement on) doing a full list/download/upload
+  session — every data connection, not just the first. FTPS's control
+  and data connections now use a from-scratch raw-OpenSSL TLS layer
+  (`FtpTlsSocket`, forced to TLS 1.2) instead of `QSslSocket`, since
+  Qt's own API has no way to drive the classic session resumption a
+  strict server's check actually recognizes. Plain FTP is unaffected.
+  See ARCHITECTURE.md's Known gaps entry for the full technical story,
+  including a real, non-obvious OpenSSL behavior found along the way
+  (a session object can only be used in one TLS handshake, ever, even
+  up-ref'd — fixed by deep-duplicating it before each reuse).
+- **`verify-ftp-move`'s FTP/FTPS move-to-another-directory test could
+  hang indefinitely** — a real signal-connection-ordering bug in the
+  test harness itself (calling `FilePaneWidget::navigateTo()`
+  synchronously from inside the same `directoryListed` signal delivery
+  that `FilePaneWidget`'s own internal handler needed to run first),
+  unrelated to `FtpBackend`. Fixed by deferring that call to the next
+  event-loop turn.
+
+### Changed (developer-facing only, no shipped behavior)
+
+- New build dependency: OpenSSL (direct, not just transitively through
+  Qt), needed by `FtpTlsSocket`. Discovered the same way this project's
+  existing libssh2 dependency already is — `find_package(OpenSSL CONFIG
+  REQUIRED)` for MSVC, `pkg_check_modules(... IMPORTED_TARGET openssl)`
+  for MinGW/Linux. No packaging changes needed on Linux (OpenSSL is
+  already a near-universal system dependency); the Windows build's
+  `collect-win-runtime.sh` needed no changes either — it already
+  discovers DLL dependencies by walking the built `.exe`'s import table,
+  not a hardcoded list.
+- `tools/local-test-servers/containers/proftpd.conf` gained
+  `AllowOverwrite on` — proftpd's default (off) rejected
+  `verify-ftp-vendors`' repeat-run STOR to an already-existing path with
+  a real, if here misleading, "Overwrite permission denied", found by
+  actually re-running that harness twice against the same
+  not-recreated-per-run container.
+- `verify_ftp_vendors.cpp`'s upload round-trip now uses a
+  per-server-tag remote filename — the plain and FTPS phases against
+  the SAME proftpd container used to share one hardcoded path, so the
+  FTPS phase's own upload could collide with a file the plain-FTP phase
+  had already created earlier in the same run.
+
 ## [0.6.16] — Fix real bugs found by code review of CommandsPaneWidget and HostKeyVerifier/CertificateVerifier
 
 ### Fixed

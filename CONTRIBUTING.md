@@ -13,14 +13,17 @@ cmake .. -DCMAKE_BUILD_TYPE=Debug
 make -j$(nproc)
 ```
 
-Every dependency below is the same seven things — a C++ toolchain,
+Every dependency below is the same eight things — a C++ toolchain,
 CMake, `pkg-config`, Qt6's base and SVG modules (dev/headers package),
-libssh2, and libsecret (`CredentialStore`'s Linux backend — the OS
-keychain SiteManagerDialog's "Save password" checkbox writes to; see
-ARCHITECTURE.md's `CredentialStore` entry) — just under each distro's
-own package names. None of this is needed for the MinGW/Windows build
-further down; that path uses the real Win32 Credential Manager API
-(`wincred.h`) instead, already present in the mingw sysroot.
+libssh2, OpenSSL (dev/headers package — `FtpTlsSocket`'s raw-OpenSSL
+FTPS TLS layer, see ARCHITECTURE.md's Known gaps entry on why `QSslSocket`
+alone can't do real TLS-session reuse), and libsecret (`CredentialStore`'s
+Linux backend — the OS keychain SiteManagerDialog's "Save password"
+checkbox writes to; see ARCHITECTURE.md's `CredentialStore` entry) —
+just under each distro's own package names. None of this is needed for
+the MinGW/Windows build further down; that path uses the real Win32
+Credential Manager API (`wincred.h`) instead, already present in the
+mingw sysroot.
 
 **Debian/Ubuntu** (`apt`), directly verified — a from-scratch container
 build with exactly this line, nothing assumed from a desktop machine
@@ -28,7 +31,7 @@ that already happened to have some of it installed:
 
 ```
 sudo apt install cmake build-essential qt6-base-dev qt6-svg-dev \
-    libssh2-1-dev libsecret-1-dev pkg-config
+    libssh2-1-dev libssl-dev libsecret-1-dev pkg-config
 ```
 
 `pkg-config` specifically isn't pulled in by `build-essential` on a
@@ -53,7 +56,7 @@ exact line, then a real `cmake`/`make` build and a real headless run
 just a successful link:
 
 ```
-sudo pacman -S --needed cmake base-devel qt6-base qt6-svg libssh2 libsecret pkgconf
+sudo pacman -S --needed cmake base-devel qt6-base qt6-svg libssh2 openssl libsecret pkgconf
 ```
 
 **openSUSE** (`zypper`), by package-name convention — **not directly
@@ -64,7 +67,7 @@ correction.
 
 ```
 sudo zypper install cmake gcc-c++ qt6-base-devel qt6-svg-devel \
-    libssh2-devel libsecret-devel pkg-config
+    libssh2-devel libopenssl-devel libsecret-devel pkg-config
 ```
 
 Both Windows and Linux release builds run via GitHub Actions
@@ -112,8 +115,8 @@ Useful for a faster local loop than waiting on GitHub Actions, and for
 diagnosing a CI failure without needing a CI run to do it. Same steps
 CI itself runs. Dependencies (Fedora):
 `mingw64-gcc-c++ mingw64-qt6-qtbase mingw64-qt6-qtsvg mingw64-libssh2
-mingw64-cmake wine` — `wine` is only needed for the local verification
-step below, not the build itself.
+mingw64-openssl mingw64-cmake wine` — `wine` is only needed for the
+local verification step below, not the build itself.
 
 ```
 mingw64-cmake -S . -B build-win

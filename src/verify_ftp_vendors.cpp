@@ -38,33 +38,29 @@
 // stand-in (verify_ftp_live.cpp), never a genuinely different vendor's
 // TLS implementation. The CA certificates each container's start script
 // copies out (start-vsftpd.sh/start-proftpd.sh) are pre-trusted here via
-// QSslConfiguration::setDefaultConfiguration() — the same pure-test-
-// harness pattern verify_ftp_live.cpp's runCaTrustedFtpsPhase() already
-// uses, appropriate here too since this is a plain QCoreApplication
-// harness with no GUI event loop for a TOFU dialog to run in.
+// the SSL_CERT_FILE env var (see trustVendorFtpsCa()) — appropriate
+// here too since this is a plain QCoreApplication harness with no GUI
+// event loop for a TOFU dialog to run in.
 //
-// vsftpd-ftps: a full real round trip now genuinely passes — connect,
-// list, download, upload, content verified both ways, over real FTPS
-// against a real vendor. Getting there found and fixed three real,
-// independent client-side bugs in FtpBackend.cpp's handling of a
-// server that closes a data connection uncleanly (no TLS close_notify)
-// once it's actually done with it, in both directions — see
-// ARCHITECTURE.md's Known Gaps for the full writeup, including why
-// vsftpd.conf deliberately ships with require_ssl_reuse left OFF (a
-// real, confirmed deadlock in vsftpd's own privilege-separated
-// architecture under this container environment when it's on, not a
-// FtpBackend bug — the reasoning and how to flip it back on for further
-// investigation are documented directly in that file).
-//
-// proftpd-ftps: EXPECTED to fail, honestly, not silently — proftpd's
-// own mod_tls is left at its default STRICT session-reuse enforcement
-// (see containers/proftpd.conf's comment), and this project's own
-// TLS-session-ticket-reuse implementation (FtpBackend.cpp's
-// m_controlSessionTicket) genuinely does not satisfy it, confirmed via
-// proftpd's own TLSLog ("client did not reuse TLS session, rejecting
-// data connection") — a real, negative, informative answer to whether a
-// genuinely strict server accepts this project's reuse attempt, not a
-// bug to fix. See ARCHITECTURE.md's Known Gaps for the full story.
+// vsftpd-ftps AND proftpd-ftps now BOTH genuinely pass a full round
+// trip — connect, list, download, upload, content verified both ways,
+// over real FTPS against a real vendor, including proftpd's mod_tls
+// left at its default STRICT session-reuse enforcement (see
+// containers/proftpd.conf's comment). Getting the vsftpd phase working
+// found and fixed three real, independent client-side bugs in
+// FtpBackend.cpp's handling of a server that closes a data connection
+// uncleanly (no TLS close_notify) once it's actually done with it, in
+// both directions; getting the proftpd phase working needed replacing
+// FTPS's TLS layer entirely (FtpTlsSocket, raw OpenSSL forced to TLS
+// 1.2, genuine SSL_SESSION reuse) after confirming Qt's QSslSocket has
+// no public API that can satisfy mod_tls's strict check — see
+// ARCHITECTURE.md's Known Gaps and FtpTlsSocket.h's own doc comment for
+// the full story either way. vsftpd.conf still deliberately ships with
+// require_ssl_reuse left OFF — a real, confirmed deadlock in vsftpd's
+// own privilege-separated architecture under this container environment
+// when it's on, unrelated to session-ticket reuse (identical hang with
+// reuse disabled entirely) and not something a client-side change can
+// fix; see that file's own comment.
 //
 // Run with:
 //   tools/local-test-servers/start-vsftpd.sh
@@ -91,12 +87,21 @@ void check(const char *label, bool condition)
 
 // Loads a CA certificate a start-*.sh script copied out of its
 // container (see verify_ftp_live.cpp's runCaTrustedFtpsPhase() for the
-// identical pattern this mirrors) and adds it to the process-wide
-// default QSslConfiguration, so a genuinely CA-signed leaf certificate
-// validates for real — pure test-harness code, FtpBackend itself is
-// never told about any extra CA. Returns false (and reports why) if the
-// scratch file isn't there, most likely because the matching start
-// script hasn't been run (or predates this CA-copying capability).
+// identical pattern this mirrors) and trusts it for real FTPS
+// connections — pure test-harness code, FtpBackend itself is never told
+// about any extra CA. Returns false (and reports why) if the scratch
+// file isn't there, most likely because the matching start script
+// hasn't been run (or predates this CA-copying capability).
+//
+// Sets the SSL_CERT_FILE env var (OpenSSL's own standard override,
+// respected by SSL_CTX_set_default_verify_paths() — see
+// FtpTlsSocket::handshake()) rather than (or in addition to) injecting
+// into QSslConfiguration's process-wide default: FTPS's control/data
+// connections are FtpTlsSocket (raw OpenSSL), not QSslSocket, so
+// nothing reads Qt's own CA list anymore. Read fresh by every
+// handshake(), so it's safe to call this again for a later phase with
+// a different CA — no cross-phase leftover trust the way a single
+// process-wide QSslConfiguration would risk.
 bool trustVendorFtpsCa(const char *tag, const char *scratchEnvVar, const char *defaultScratch)
 {
     const QString scratch = qEnvironmentVariable(scratchEnvVar, defaultScratch);
@@ -108,9 +113,7 @@ bool trustVendorFtpsCa(const char *tag, const char *scratchEnvVar, const char *d
     if (caCerts.isEmpty())
         return false;
 
-    QSslConfiguration config = QSslConfiguration::defaultConfiguration();
-    config.addCaCertificate(caCerts.first());
-    QSslConfiguration::setDefaultConfiguration(config);
+    qputenv("SSL_CERT_FILE", caCertPath.toUtf8());
     return true;
 }
 
@@ -127,6 +130,16 @@ bool runVendorRoundTripPhase(const char *tag, quint16 port, const QString &usern
     const QString localDownloadPath = QStringLiteral("/tmp/zephyrftp_verify_%1_download.txt").arg(tag);
     const QString localUploadSourcePath = QStringLiteral("/tmp/zephyrftp_verify_%1_upload_source.txt").arg(tag);
     const QString localRoundtripBackPath = QStringLiteral("/tmp/zephyrftp_verify_%1_roundtrip_back.txt").arg(tag);
+    // Remote path is tag-qualified too, not just the local scratch
+    // files — a real bug found by running this after the FTPS phases
+    // could finally reach it (previously never exercised: the TLS layer
+    // itself failed first): the "proftpd" (plain) and "proftpd-ftps"
+    // phases both target the SAME server/filesystem, so a shared,
+    // un-tagged remote path meant the second phase's STOR hit a file
+    // the first phase had already created in THIS SAME run — denied by
+    // proftpd's default AllowOverwrite off, a real server policy, not a
+    // client bug, but not what this phase means to test either.
+    const QString remoteUploadPath = QStringLiteral("uploads/verify_roundtrip_%1.txt").arg(tag);
     QFile::remove(localDownloadPath);
     QFile::remove(localRoundtripBackPath);
     {
@@ -168,7 +181,7 @@ bool runVendorRoundTripPhase(const char *tag, quint16 port, const QString &usern
         [&](const QString &fileName) {
             if (fileName == "sample.txt" && !downloadOk) {
                 downloadOk = true;
-                backend.uploadFile(localUploadSourcePath, "uploads/verify_roundtrip.txt", 0);
+                backend.uploadFile(localUploadSourcePath, remoteUploadPath, 0);
             } else if (fileName == localUploadSourcePath && !uploadOk) {
                 uploadOk = true;
                 // Self-contained container, no host-mounted scratch dir
@@ -176,8 +189,8 @@ bool runVendorRoundTripPhase(const char *tag, quint16 port, const QString &usern
                 // genuinely landed by downloading it back through the
                 // same session, not by reading the container's
                 // filesystem directly.
-                backend.downloadFile("uploads/verify_roundtrip.txt", localRoundtripBackPath, 0);
-            } else if (fileName == "uploads/verify_roundtrip.txt") {
+                backend.downloadFile(remoteUploadPath, localRoundtripBackPath, 0);
+            } else if (fileName == remoteUploadPath) {
                 roundtripDownloadOk = true;
                 loop.quit();
             }

@@ -960,13 +960,16 @@ to drive FileZilla itself for a same-desktop comparison.
   same as a changed SSH host key. Data connections reuse the control
   connection's already-trusted fingerprint instead of prompting again — a
   data connection presenting a DIFFERENT certificate fails closed with no
-  prompt, treated as suspicious rather than something to ask about. Data
-  connections also attempt real TLS session-ticket reuse
-  (`QSslConfiguration::sessionTicket()`/`setSessionTicket()`, refreshed on
-  `newSessionTicketReceived()`) before their own handshake — a real
-  best-effort attempt at the session reuse RFC 4217 permits servers to
-  require, not a guarantee (see Known gaps for what is and isn't
-  confirmed about it).
+  prompt, treated as suspicious rather than something to ask about.
+  FTPS's control AND data connections are handled by `FtpTlsSocket` (raw
+  OpenSSL, forced to exactly TLS 1.2), not `QSslSocket` — genuine,
+  confirmed TLS session reuse, not a best-effort attempt: RFC 4217
+  permits a server to require the data connection's TLS session to
+  demonstrably reuse the control connection's, and `QSslSocket`'s public
+  API has no way to drive that for real (see the TLS-session-reuse entry
+  below for the full story of why, and how this was actually confirmed
+  working end to end against a real strict server, not just a
+  self-hosted one).
   **Four real bugs found by a dedicated code review of this file's
   parsing/data-channel/TLS logic, all fixed:**
   1. **The data-connection certificate-pinning guarantee this entry
@@ -3000,77 +3003,90 @@ along the way — worth knowing about if it ever needs touching again.
   sequencing) also deleted the socket out from under its new owner — a
   dangling-pointer crash only a real accept-then-use cycle surfaced, not
   reasoning about the code.
-- **FTPS against real vendor servers is now fully working end to end
-  (vsftpd) — and confirmed, honestly, that this project's TLS
-  session-ticket reuse does NOT satisfy a genuinely strict server
-  (proftpd), plus three real client-side bugs found and fixed along the
-  way that a headless, single-shot test harness was never going to
-  surface.** The control connection's session ticket
-  (`QSslConfiguration::sessionTicket()`, refreshed on
-  `newSessionTicketReceived()` since TLS 1.3 tickets commonly arrive
-  post-handshake) is applied to each data connection's
-  `QSslConfiguration` before its own handshake — a real resumption
-  attempt, not a comment, addressing the RFC 4217 anti-hijacking
-  requirement some servers enforce. `verify-ftp-live`'s FTPS phases
-  (pyftpdlib, which doesn't enforce or even check reuse either way) had
-  been the only prior evidence, confirming non-regression but nothing
-  about whether a strict server would actually accept it.
+- **FTPS against real vendor servers is now fully working end to end —
+  vsftpd AND proftpd, including proftpd's strict TLS-session-reuse
+  enforcement, which used to be an honest, documented failure.** An
+  earlier pass through this exact problem found and documented a real,
+  negative result: this project's TLS-1.3-ticket-based reuse
+  (`QSslConfiguration::sessionTicket()`) does not read as genuine
+  session reuse to proftpd's `mod_tls` (`"client did not reuse TLS
+  session, rejecting data connection"`), and forcing TLS 1.2 through
+  Qt's own API didn't help either — `QSslSocket::newSessionTicketReceived()`
+  simply never fires under TLS 1.2, and neither `QSslConfiguration` nor
+  `QSslSocket` expose any way to drive classic TLS 1.2 session-ID/RFC
+  5077 ticket resumption directly (checked directly against Qt 6.11's
+  public headers, no `nativeHandle()`-style escape hatch either). That
+  investigation concluded a genuine fix needed raw OpenSSL, and left it
+  there as a real, disclosed limitation rather than attempting it
+  without solid evidence it would actually work.
 
-  `verify_ftp_vendors.cpp`'s two FTPS phases
-  (`tools/local-test-servers/containers/vsftpd.conf`;
-  `proftpd.conf`'s `mod_tls` left at its own default strict
-  session-reuse enforcement — see that file's comment on why omitting
-  `TLSOptions NoSessionReuseRequired` is what keeps it on) both confirm
-  the AUTH TLS handshake and CA-signed-certificate trust genuinely work
-  against a real vendor's TLS stack. What happened next, at the data
-  connection, took real investigation (strace against live containers,
-  an independent reference client, a deliberately controlled variable
-  elimination — not guessed at):
+  This session picked that back up and finished it. `FtpTlsSocket`
+  (`src/backends/FtpTlsSocket.h/.cpp`) is a from-scratch raw-OpenSSL TLS
+  layer, used for FTPS's control AND data connections in place of
+  `QSslSocket` (plain FTP is completely unaffected — still `QSslSocket`
+  used purely as TCP, via the small `QtSocketAdapter` forwarding wrapper
+  in `FtpSocket.h`). Forces exactly TLS 1.2 (confirmed, below, to be
+  what makes genuine session-ID resumption possible at all), performs
+  its own TOFU certificate verification (`SSL_VERIFY_NONE` at the TLS
+  layer — this project's real trust model is fingerprint pinning, not
+  CA-chain validation, so `SSL_get_verify_result()` is consulted
+  afterward purely to feed `FtpBackend::verifyTlsPeer()` the same
+  "problem description" role `QSslSocket::sslErrors()` used to serve —
+  see that method and `FtpTlsSocket::handshake()`), and captures/reuses
+  a real `SSL_SESSION` via `SSL_get1_session()`/`SSL_set_session()`.
+  Blocking I/O is a hand-rolled `poll()`/`WSAPoll()` retry loop directly
+  on the raw socket descriptor (same shape as `SftpBackend.cpp`'s
+  `waitForSocketReady()` for libssh2, since this class has no libssh2
+  involvement to delegate that to) — the same "let `QTcpSocket` own
+  DNS/connect/close, but never call its own read/write once something
+  else drives the fd directly" pattern `SftpBackend.cpp` already
+  established for the identical reason.
 
-  - **proftpd: a clean, consistent, real rejection — the actual answer
-    to "does our reuse satisfy a strict server."** Its own `TLSLog`
-    reports it directly — `"client did not reuse TLS session, rejecting
-    data connection"` — meaning this project's TLS-1.3-ticket-based
-    reuse does not read as genuine session reuse to `mod_tls`'s check
-    (most likely a real protocol-generation gap: `mod_tls`'s
-    reuse-detection predates TLS 1.3's PSK-based ticket resumption
-    model and may simply not recognize it as equivalent to the
-    session-ID-based reuse it was written to check for). A real,
-    negative, genuinely informative answer — not previously known
-    either way, and the container is deliberately left this way rather
-    than relaxed so this stays confirmed on every future run.
+  Getting from "does a single reused session satisfy proftpd's check at
+  all" (yes — confirmed first via a disposable, non-Qt raw-OpenSSL probe
+  with both a positive and a negative control, before writing any
+  production code) to "does a REAL session — list, download, upload, a
+  second download, all over one FTPS connection — actually work end to
+  end" took finding and fixing one more real, non-obvious bug:
 
-    **The obvious fix was tried and falsified.** Forcing max TLS
-    protocol version 1.2 on both the control and data `QSslSocket`s
-    (`QSslConfiguration::setProtocol(QSsl::TlsV1_2)`) — a real-world
-    workaround other FTPS clients use for exactly this class of
-    strict-reuse rejection, on the theory that classic TLS 1.2
-    session-ID/ticket resumption is what `mod_tls`'s check actually
-    recognizes — does *not* work, and not for a subtle reason: with TLS
-    1.2 forced, `QSslSocket::newSessionTicketReceived()` never fires at
-    all. Confirmed directly (temporary debug instrumentation, since
-    reverted) rather than assumed. That signal is TLS-1.3-only in Qt's
-    public API — the RFC 8446 post-handshake `NewSessionTicket`/PSK
-    mechanism specifically — and neither `QSslConfiguration` nor
-    `QSslSocket` expose any equivalent for classic TLS 1.2 session-ID or
-    RFC 5077 session-ticket resumption anywhere in Qt 6.11's public
-    headers (`qsslsocket.h`, `qsslconfiguration.h` — checked directly,
-    no `nativeHandle()`/`sslHandle()`-style escape hatch to the
-    underlying OpenSSL `SSL*` either). So capping to TLS 1.2 doesn't
-    trade an unrecognized-but-attempted resumption for a
-    recognized-and-working one — it removes resumption entirely, since
-    Qt gives the application no way to drive TLS 1.2's session
-    cache/session-ID resumption at all. Confirmed via proftpd's own
-    `TLSLog`: the control handshake correctly negotiates TLSv1.2, but
-    the data connection is still rejected with the identical "client
-    did not reuse TLS session" message. The change was fully reverted;
-    `FtpBackend.cpp` is back to its original state. A genuine fix would
-    require bypassing `QSslSocket` for the data connection's handshake
-    entirely (raw OpenSSL socket/BIO plumbing to call
-    `SSL_set_session()`/`SSL_get1_session()` directly) — a much larger
-    change than a config tweak, not yet attempted, and worth weighing
-    against just documenting this as a permanent limitation against
-    reuse-strict servers.
+  - **A `SSL_SESSION*` can only ever be used in ONE `SSL_connect()` call,
+    even up-ref'd, even re-fetched fresh — confirmed directly against a
+    real proftpd container, not documented anywhere obvious.** The
+    first data connection to reuse the control connection's session
+    always succeeded (`SSL_session_reused()==1`, real data came back);
+    every data connection after that — a second download, an upload —
+    silently fell back to a full, unresumed handshake
+    (`SSL_session_reused()==0`) and got the exact `"client did not
+    reuse TLS session, rejecting data connection"` rejection, even when
+    handed the identical, still-valid session object that had just
+    worked, or a session freshly re-captured from the connection that
+    HAD just resumed successfully. A disposable multi-connection raw
+    probe (no Qt, no app code — isolating this from any possible
+    `FtpTlsSocket` bug) reproduced it identically, ruling out a client
+    logic bug; three different proftpd-side session-cache
+    configurations (`TLSSessionCache`/`mod_tls_shmcache`,
+    `TLSSessionTickets on`) changed nothing. The actual fix, found via
+    the same probe: **deep-duplicate the session (DER
+    `i2d_SSL_SESSION`/`d2i_SSL_SESSION` round trip) into a genuinely
+    independent object immediately before every single
+    `SSL_set_session()` call**, rather than reusing (even via
+    `SSL_SESSION_up_ref()`) the same live object across multiple
+    handshakes — OpenSSL's client-side `SSL_SESSION` object evidently
+    picks up some internal "already used in a handshake" state on its
+    first use that a fresh, independently-parsed duplicate doesn't
+    carry. See `FtpTlsSocket::handshake()`'s own comment for where this
+    lives; `FtpBackend::finalizeDataChannel()` also rotates the control
+    connection's own cached session to each data connection's freshly
+    negotiated one afterward (harmless and occasionally load-bearing,
+    e.g. if a server DOES rotate tickets — not what actually fixed
+    this, but kept since it costs nothing).
+
+    `verify_ftp_vendors.cpp`'s `proftpd-ftps` phase (full list,
+    download, upload, download-back round trip, confirmed byte-for-byte)
+    passes reliably and repeatably against `containers/proftpd.conf`'s
+    unmodified, still-default strict `mod_tls` config (no
+    `NoSessionReuseRequired` relaxation) — the exact scenario the
+    earlier pass through this problem left as a documented failure.
   - **vsftpd: a full round trip (list, download, upload, content
     verified both ways) now genuinely completes — but only with
     `require_ssl_reuse` left off, and that's a deliberate, documented

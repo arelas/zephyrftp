@@ -26,9 +26,15 @@ OBJDUMP=x86_64-w64-mingw32-objdump
 # used throughout this project's own test suite) for platforms;
 # qsvgicon/qsvg because IconTheme renders vendored SVG icons; the
 # native style so the app doesn't fall back to Qt's generic Fusion
-# look; all three TLS backends since FtpBackend now drives FTPS
-# (explicit AUTH TLS) through QSslSocket and which backend Qt picks at
-# runtime isn't this script's call to make.
+# look; all three TLS backends kept for QSslSocket's own plugin-loading
+# machinery even though FTPS itself moved off QSslSocket to
+# FtpTlsSocket (raw OpenSSL, see FtpTlsSocket.h) — plain FTP's control
+# connection still uses QSslSocket as plain TCP, and which backend Qt
+# picks at runtime for whatever it DOES load isn't this script's call
+# to make. FtpTlsSocket's own OpenSSL usage is a direct DLL dependency
+# (libssl-3-x64.dll/libcrypto-3-x64.dll) picked up automatically by the
+# objdump-based walk below, not something this hardcoded list needs to
+# know about.
 PLUGIN_DLLS=(
     platforms/qwindows.dll
     platforms/qoffscreen.dll

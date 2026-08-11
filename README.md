@@ -174,15 +174,6 @@ rather than being half-implemented:
   own test stand-in), not just tested in isolation. Still newer and less
   battle-tested than SFTP; expect some rough edges against servers this
   hasn't specifically been tried against.
-- **FTPS data connections reusing the control connection's TLS session
-  is best-effort, and now confirmed NOT to satisfy every strict server.**
-  Some strict FTPS servers require this (RFC 4217) as an anti-hijacking
-  measure; ZephyrFTP attempts real session-ticket reuse, but a genuinely
-  strict real server (proftpd, configured to require it) confirmed
-  rejects this project's current reuse attempt — connecting still works,
-  but a data connection to that kind of server may fail where a more
-  established client would succeed. See ARCHITECTURE.md's Known gaps for
-  the full technical picture.
 - **Server-to-server transfers are now supported, but staged through a
   local temporary file rather than moving directly between the two
   servers.** Both panes can now connect independently — click either

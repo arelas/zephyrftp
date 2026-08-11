@@ -25,6 +25,23 @@ else()
     set(LIBSSH2_TARGET PkgConfig::LIBSSH2)
 endif()
 
+# OpenSSL discovery mirrors the libssh2 split immediately above, same
+# reasoning: MSVC+vcpkg ships a CMake config package, while MinGW
+# (native and Fedora's mingw64-cross toolchain) ships a standard .pc
+# file discoverable via pkg-config, same as Linux. Needed directly (not
+# just transitively through Qt) by FtpTlsSocket.cpp — FTPS's raw-OpenSSL
+# TLS layer, which exists because QSslSocket's public API can't drive
+# the classic TLS-1.2 session reuse a genuinely strict FTPS server can
+# require; see FtpTlsSocket.h's own doc comment.
+if(WIN32 AND NOT MINGW)
+    find_package(OpenSSL REQUIRED)
+    set(OPENSSL_TARGET OpenSSL::SSL)
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(OPENSSL REQUIRED IMPORTED_TARGET openssl)
+    set(OPENSSL_TARGET PkgConfig::OPENSSL)
+endif()
+
 # CredentialStore's OS-keychain backend: the Win32 Credential Manager
 # API (wincred.h) on Windows — part of advapi32, always present in the
 # Windows SDK / mingw sysroot, no separate discovery needed — or
@@ -58,6 +75,7 @@ set(SOURCES
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
     src/backends/FtpBackend.cpp
+    src/backends/FtpTlsSocket.cpp
     src/backends/SavedSite.cpp
     src/backends/CredentialStore.cpp
     src/transfer/TransferManager.cpp
@@ -124,6 +142,7 @@ target_link_libraries(zephyrftp PRIVATE
     Qt6::Concurrent
     Qt6::Svg
     ${LIBSSH2_TARGET}
+    ${OPENSSL_TARGET}
     ${CREDENTIAL_STORE_TARGET}
 )
 
@@ -253,6 +272,7 @@ qt_add_executable(smoke-test EXCLUDE_FROM_ALL
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
     src/backends/FtpBackend.cpp   # MainWindow.cpp constructs one — see startConnection()
+    src/backends/FtpTlsSocket.cpp
     src/backends/SavedSite.cpp
     src/backends/CredentialStore.cpp
     src/transfer/TransferManager.cpp
@@ -264,7 +284,7 @@ qt_add_executable(smoke-test EXCLUDE_FROM_ALL
 target_include_directories(smoke-test PRIVATE src)
 target_compile_definitions(smoke-test PRIVATE APP_VERSION="${PROJECT_VERSION}")
 target_link_libraries(smoke-test PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${CREDENTIAL_STORE_TARGET}
+    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${OPENSSL_TARGET} ${CREDENTIAL_STORE_TARGET}
 )
 
 # --- transfer queue functional test (moves a real file end-to-end) ---
@@ -285,6 +305,7 @@ qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
     src/backends/FtpBackend.cpp   # MainWindow.cpp constructs one — see startConnection()
+    src/backends/FtpTlsSocket.cpp
     src/backends/SavedSite.cpp
     src/backends/CredentialStore.cpp
     src/transfer/TransferManager.cpp
@@ -296,7 +317,7 @@ qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
 target_include_directories(transfer-queue-test PRIVATE src)
 target_compile_definitions(transfer-queue-test PRIVATE APP_VERSION="${PROJECT_VERSION}")
 target_link_libraries(transfer-queue-test PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${CREDENTIAL_STORE_TARGET}
+    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${OPENSSL_TARGET} ${CREDENTIAL_STORE_TARGET}
 )
 
 # --- SiteStore persistence test (pure QCoreApplication, no GUI needed) ---
@@ -412,11 +433,12 @@ target_link_libraries(conflict-resolution-test PRIVATE Qt6::Widgets Qt6::Network
 qt_add_executable(ftp-parsing-test EXCLUDE_FROM_ALL
     src/ftp_parsing_test.cpp
     src/backends/FtpBackend.cpp
+    src/backends/FtpTlsSocket.cpp
     src/backends/RemoteBackend.h
     src/ui/CertificateVerifier.cpp
 )
 target_include_directories(ftp-parsing-test PRIVATE src)
-target_link_libraries(ftp-parsing-test PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
+target_link_libraries(ftp-parsing-test PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network ${OPENSSL_TARGET})
 
 # Protocol-selection wiring: ConnectionDialog's protocol choice, and
 # SavedSite's persistence of it. Needs Widgets (it constructs a real
@@ -613,6 +635,7 @@ qt_add_executable(verify-ftp-move EXCLUDE_FROM_ALL
     src/ui/CertificateVerifier.cpp
     src/backends/LocalBackend.cpp
     src/backends/FtpBackend.cpp
+    src/backends/FtpTlsSocket.cpp
     src/backends/RemoteBackend.h
     src/transfer/TransferManager.cpp
     src/transfer/FolderEnumerator.cpp
@@ -621,7 +644,7 @@ qt_add_executable(verify-ftp-move EXCLUDE_FROM_ALL
 )
 target_include_directories(verify-ftp-move PRIVATE src)
 target_link_libraries(verify-ftp-move PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg
+    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${OPENSSL_TARGET}
 )
 
 # --- SSH-daemon diversity: real Dropbear (password auth), not just
@@ -659,11 +682,12 @@ target_link_libraries(verify-sftp-throughput PRIVATE
 qt_add_executable(verify-ftp-live EXCLUDE_FROM_ALL
     src/verify_ftp_live.cpp
     src/backends/FtpBackend.cpp
+    src/backends/FtpTlsSocket.cpp
     src/backends/RemoteBackend.h
     src/ui/CertificateVerifier.cpp
 )
 target_include_directories(verify-ftp-live PRIVATE src)
-target_link_libraries(verify-ftp-live PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
+target_link_libraries(verify-ftp-live PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network ${OPENSSL_TARGET})
 
 # --- FTPS certificate trust-on-first-use, against the real self-signed
 # test server (start-ftps.sh) — see src/verify_ftps_trust.cpp's own
@@ -672,10 +696,11 @@ qt_add_executable(verify-ftps-trust EXCLUDE_FROM_ALL
     src/verify_ftps_trust.cpp
     src/ui/CertificateVerifier.cpp
     src/backends/FtpBackend.cpp
+    src/backends/FtpTlsSocket.cpp
     src/backends/RemoteBackend.h
 )
 target_include_directories(verify-ftps-trust PRIVATE src)
-target_link_libraries(verify-ftps-trust PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent)
+target_link_libraries(verify-ftps-trust PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent ${OPENSSL_TARGET})
 
 # --- Real vendor-diversity verification: actual vsftpd/proftpd, not
 # pyftpdlib — see src/verify_ftp_vendors.cpp's own header comment. Needs
@@ -685,11 +710,12 @@ target_link_libraries(verify-ftps-trust PRIVATE Qt6::Widgets Qt6::Network Qt6::C
 qt_add_executable(verify-ftp-vendors EXCLUDE_FROM_ALL
     src/verify_ftp_vendors.cpp
     src/backends/FtpBackend.cpp
+    src/backends/FtpTlsSocket.cpp
     src/backends/RemoteBackend.h
     src/ui/CertificateVerifier.cpp
 )
 target_include_directories(verify-ftp-vendors PRIVATE src)
-target_link_libraries(verify-ftp-vendors PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
+target_link_libraries(verify-ftp-vendors PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network ${OPENSSL_TARGET})
 
 # --- CredentialStore against the REAL OS credential store — see
 # src/verify_credential_store.cpp's own header comment. Unlike every

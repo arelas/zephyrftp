@@ -19,10 +19,11 @@
 // fallback to trigger. (4) the same round trip again against a server
 // with PASV/EPSV disabled, forcing FtpBackend's real active/PORT
 // fallback. (5) the same round trip over FTPS, but with the server's
-// CA pre-trusted by this harness (QSslConfiguration, not a FtpBackend
-// change) — proves a full ENCRYPTED transfer completes when the
-// certificate genuinely validates, the one case (1)/(3)/(4) don't
-// cover and (2) deliberately doesn't reach.
+// CA pre-trusted by this harness (an SSL_CERT_FILE env var override,
+// not a FtpBackend change — see runCaTrustedFtpsPhase()) — proves a
+// full ENCRYPTED transfer completes when the certificate genuinely
+// validates, the one case (1)/(3)/(4) don't cover and (2) deliberately
+// doesn't reach.
 //
 // FtpBackend uses QTcpSocket/QSslSocket, both async/event-driven — no
 // worker thread needed here the way SftpBackend's blocking libssh2 API
@@ -195,12 +196,14 @@ bool runActiveModePhase()
 // "no full authenticated FTPS transfer has been verified — FtpBackend
 // has no override to trust a self-signed cert, by design, so this needs
 // a CA-trusted cert to test." Trusting the CA here is pure test-harness
-// code (QSslConfiguration's process-wide default), not a change to
-// FtpBackend itself — production code never gets told about this extra
-// CA. Because the cert now genuinely validates, sslErrors() never fires
-// and FtpBackend's certificate-TOFU logic never even runs — this proves
-// the plain success path (the one every REAL deployment with a proper
-// certificate would take) completes a full round trip end to end. ---
+// code (the SSL_CERT_FILE env var OpenSSL's own default-path loading
+// respects — see FtpTlsSocket::handshake()'s
+// SSL_CTX_set_default_verify_paths() call), not a change to FtpBackend
+// itself — production code never gets told about this extra CA. Because
+// the cert now genuinely validates, FtpBackend's certificate-TOFU logic
+// never even prompts — this proves the plain success path (the one
+// every REAL deployment with a proper certificate would take) completes
+// a full round trip end to end. ---
 bool runCaTrustedFtpsPhase()
 {
     const QString scratch = qEnvironmentVariable(
@@ -213,9 +216,7 @@ bool runCaTrustedFtpsPhase()
               "(start-ftps-trusted.sh must be running)", false);
         return false;
     }
-    QSslConfiguration config = QSslConfiguration::defaultConfiguration();
-    config.addCaCertificate(caCerts.first());
-    QSslConfiguration::setDefaultConfiguration(config);
+    qputenv("SSL_CERT_FILE", caCertPath.toUtf8());
 
     return runRoundTripPhase("FTPS-trusted", 2124, scratch,
                               "hello from the local ca-trusted ftps test server", /*useFtps=*/true);

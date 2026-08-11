@@ -42,21 +42,23 @@ jobs:
       image: fedora:44
 
     steps:
-      # mingw64-qt6-qtbase/qt6-qtsvg/libssh2 are the cross-compiled
-      # Windows-target libraries; qt6-qtbase-devel is the *host* Qt,
-      # needed because AUTOMOC/AUTORCC's moc/rcc must run natively at
-      # build time even though the rest of the toolchain targets
-      # Windows — CMake's cross-compile program search looks on the host
-      # PATH for exactly this reason. wine + xorg-x11-server-Xvfb are
-      # for actually running the built test suite, not just linking it
-      # (see the "Run test suite under wine" step below for why Xvfb
-      # specifically is needed). git isn't in the base fedora image;
-      # actions/checkout needs it.
+      # mingw64-qt6-qtbase/qt6-qtsvg/libssh2/openssl are the cross-compiled
+      # Windows-target libraries (openssl needed directly by FtpTlsSocket,
+      # FTPS's raw-OpenSSL TLS layer — see ARCHITECTURE.md's Known gaps
+      # entry); qt6-qtbase-devel is the *host* Qt, needed because
+      # AUTOMOC/AUTORCC's moc/rcc must run natively at build time even
+      # though the rest of the toolchain targets Windows — CMake's
+      # cross-compile program search looks on the host PATH for exactly
+      # this reason. wine + xorg-x11-server-Xvfb are for actually running
+      # the built test suite, not just linking it (see the "Run test
+      # suite under wine" step below for why Xvfb specifically is
+      # needed). git isn't in the base fedora image; actions/checkout
+      # needs it.
       - name: Install build dependencies
         run: |
           dnf install -y --setopt=install_weak_deps=False \
             git mingw64-gcc-c++ mingw64-qt6-qtbase mingw64-qt6-qtsvg \
-            mingw64-libssh2 mingw64-cmake qt6-qtbase-devel \
+            mingw64-libssh2 mingw64-openssl mingw64-cmake qt6-qtbase-devel \
             wine xorg-x11-server-Xvfb zip
 
       - uses: actions/checkout@v7
@@ -215,7 +217,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
-            cmake build-essential qt6-base-dev qt6-svg-dev libssh2-1-dev libsecret-1-dev pkg-config \
+            cmake build-essential qt6-base-dev qt6-svg-dev libssh2-1-dev libssl-dev libsecret-1-dev pkg-config \
             dpkg-dev file
 
       - uses: actions/checkout@v7
@@ -346,7 +348,7 @@ jobs:
         run: |
           dnf install -y --setopt=install_weak_deps=False \
             git cmake gcc-c++ qt6-qtbase-devel qt6-qtsvg-devel \
-            libssh2-devel libsecret-devel pkgconf-pkg-config rpm-build file
+            libssh2-devel openssl-devel libsecret-devel pkgconf-pkg-config rpm-build file
 
       - uses: actions/checkout@v7
 
@@ -455,7 +457,7 @@ jobs:
         run: |
           apt-get update -qq
           apt-get install -y -qq \
-            git cmake build-essential qt6-base-dev qt6-svg-dev libssh2-1-dev libsecret-1-dev \
+            git cmake build-essential qt6-base-dev qt6-svg-dev libssh2-1-dev libssl-dev libsecret-1-dev \
             pkg-config wget file libgl1-mesa-dev
 
       - uses: actions/checkout@v7
