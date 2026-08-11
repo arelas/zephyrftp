@@ -8,6 +8,24 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Added
+
+- **Double-clicking a saved site in the Site Manager now connects**,
+  same as selecting it and clicking Connect — a shortcut every similar
+  app offers. Double-clicking a folder item is excluded on purpose: it
+  has no site behind it, so it isn't treated as "connect."
+
+### Fixed
+
+- **Dropdown buttons (`QComboBox`) in the Site Manager and Connect to
+  Server dialogs now have rounded corners matching the input boxes
+  they sit in.** The default style drew the arrow subcontrol as its
+  own square-cornered panel, which visibly notched the two right-hand
+  corners of an otherwise-rounded box. Fixed by taking over that
+  subcontrol's styling entirely (removing its border, supplying a
+  small muted chevron glyph in its place) rather than leaving it to
+  the platform style's default painting.
+
 ## [0.6.20] — Transfers panel columns are now structurally conserved
 
 ### Changed

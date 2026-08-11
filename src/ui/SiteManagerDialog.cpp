@@ -56,6 +56,16 @@ void SiteManagerDialog::buildUi()
     m_tree->setHeaderHidden(true);
     m_tree->setIconSize(QSize(16, 16));
     connect(m_tree, &QTreeWidget::currentItemChanged, this, &SiteManagerDialog::onTreeSelectionChanged);
+    // Double-clicking a saved site is the same intent as selecting it and
+    // clicking Connect — a shortcut every similar app offers. Guarded to
+    // real sites only: double-clicking a folder item has no IdRole set, so
+    // it's excluded rather than falling through to onConnectClicked()'s own
+    // "no site selected" one-off-connection path, which isn't what a
+    // double-clicked folder means.
+    connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem *item, int) {
+        if (item && !item->data(0, IdRole).toString().isEmpty())
+            onConnectClicked();
+    });
 
     auto *newSiteButton = new QPushButton(tr("New Site"), this);
     newSiteButton->setIcon(IconTheme::tintedIcon(":/icons/folder-plus.svg", IconTheme::Green));

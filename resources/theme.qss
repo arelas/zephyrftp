@@ -80,6 +80,23 @@ QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
     border-color: #5b8def;       /* --zf-blue */
 }
 
+/* Without this, the default style draws the drop-down arrow subcontrol
+   with its own square-cornered frame, which doesn't respect the
+   QComboBox rule's border-radius above — the two right-hand corners of
+   the combo box read as squared off against the rounded box they sit
+   in. border: none merges it back into the same rounded outline — but
+   styling ::drop-down at all makes Qt stop painting its native arrow
+   glyph there, so ::down-arrow below has to supply one explicitly. */
+QComboBox::drop-down {
+    border: none;
+    width: 24px;
+}
+QComboBox::down-arrow {
+    image: url(:/icons/chevron-down-muted.svg);
+    width: 12px;
+    height: 12px;
+}
+
 QLabel {
     color: #8790a0;               /* --zf-text-secondary */
     font-size: 11px;
