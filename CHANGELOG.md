@@ -28,6 +28,9 @@ in the README), so anything may still change between 0.x releases.
   cap independently, and their combined width could still push later
   columns unreachably off screen. Each column now has its own
   appropriately-sized cap instead of one shared one.
+- **The file panes had the identical same-shared-cap gap on Size/
+  Modified**, for the same reason — same per-column fix applied there
+  too.
 
 ## [0.6.18] — Add per-pane Home button; fix column headers pushing off-screen
 

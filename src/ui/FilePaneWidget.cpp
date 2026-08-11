@@ -9,6 +9,7 @@
 #include <QHBoxLayout>
 #include <QToolButton>
 #include <QHeaderView>
+#include <QHash>
 #include <QDir>
 #include <QThread>
 #include <QMetaObject>
@@ -260,13 +261,27 @@ void FilePaneWidget::buildUi()
     m_view->header()->setSectionResizeMode(ColName, QHeaderView::Interactive);
     m_view->setColumnWidth(ColName, 220);
     // Same real bug, same fix as TransferQueueWidget's identical File
-    // column: with no upper bound, dragging Name wide enough pushes
-    // Size/Modified/Permissions past the visible area, unreachable
-    // (stretchLastSection actively avoids a horizontal scrollbar).
-    // QHeaderView has no per-section maximum, only this header-wide
-    // one — acceptable since Name is the only column anyone actually
-    // drags wider in practice.
-    m_view->header()->setMaximumSectionSize(500);
+    // column (see that file's own comment for the full story, including
+    // the follow-up that found this exact class of fix needs to be
+    // PER-column, not one header-wide cap): with no upper bound,
+    // dragging Name wide enough pushes Size/Modified/Permissions past
+    // the visible area, unreachable (stretchLastSection actively avoids
+    // a horizontal scrollbar). A single shared maximum generous enough
+    // for Name would still let Size/Modified EACH independently reach
+    // that same width and collectively cause the identical problem, so
+    // each gets its own appropriately-sized cap instead. Permissions
+    // (the actual last column) isn't in this map — its width is already
+    // governed by stretchLastSection, same reasoning Speed is excluded
+    // in TransferQueueWidget.
+    connect(m_view->header(), &QHeaderView::sectionResized, this,
+            [this](int logicalIndex, int /*oldSize*/, int newSize) {
+        static const QHash<int, int> maxWidths{
+            {ColName, 500}, {ColSize, 120}, {ColModified, 180}
+        };
+        const auto it = maxWidths.constFind(logicalIndex);
+        if (it != maxWidths.constEnd() && newSize > it.value())
+            m_view->header()->resizeSection(logicalIndex, it.value());
+    });
     // Clicking a header sorts by that column; QHeaderView/QTreeView's own
     // built-in click handling toggles ascending/descending on a second
     // click of the same section — no extra wiring needed for that part.
