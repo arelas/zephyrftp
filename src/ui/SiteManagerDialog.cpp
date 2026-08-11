@@ -646,6 +646,7 @@ void SiteManagerDialog::onConnectClicked()
     if (site) {
         commitFormToSelectedSite();   // capture any not-yet-committed edits first
         request = site->toConnectionRequest();
+        request.sourceSiteId = site->id;
     } else {
         // No saved site selected — the form is being used as a one-off,
         // unsaved connection. Built as a scratch SavedSite rather than

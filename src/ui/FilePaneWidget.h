@@ -6,6 +6,7 @@
 #include <QStringList>
 #include <QIcon>
 #include "../backends/RemoteBackend.h"
+#include "../backends/ConnectionDescriptor.h"
 
 class FileTreeView;
 class QLineEdit;
@@ -32,6 +33,20 @@ public:
     RemoteBackend *backend() const { return m_backend; }
     QString selectedEntryName() const;
     QString currentDirectory() const { return m_backend->currentPath(); }
+
+    // Identifying (never secret) fields for whichever connection
+    // setBackend() most recently attached — set by MainWindow::
+    // startConnection() right after it builds the backend, cleared back
+    // to a default-constructed (empty) descriptor by
+    // MainWindow::disconnectPane(). Used by TransferManager's queue-
+    // persistence save/reclaim (see TransferManager::saveQueueForShutdown()/
+    // tryReclaimPendingItems()) to describe/match "which server" a
+    // pane's connection is, across a restart. Deliberately NOT derived
+    // from RemoteBackend::connectionIdentity() after the fact — that
+    // string has no savedSiteId component and isn't worth parsing back
+    // apart.
+    ConnectionDescriptor connectionDescriptor() const { return m_connectionDescriptor; }
+    void setConnectionDescriptor(const ConnectionDescriptor &descriptor) { m_connectionDescriptor = descriptor; }
 
     // True from the moment setBackend() queues a thread-owning backend's
     // connectToHost() until that backend reports connected or
@@ -237,6 +252,10 @@ private:
     RemoteBackend *m_backend;
     QThread *m_backendThread = nullptr;   // null when backend has no thread of its own (e.g. LocalBackend)
     bool m_connecting = false;   // see isConnecting()'s own doc comment
+    // Default-constructed (isEmpty() == true) until MainWindow's
+    // startConnection() sets a real one — see connectionDescriptor()'s
+    // own doc comment above.
+    ConnectionDescriptor m_connectionDescriptor;
     FileTreeView *m_view;
     QToolButton *m_backButton;
     QToolButton *m_forwardButton;

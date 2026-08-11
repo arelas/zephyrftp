@@ -29,11 +29,34 @@ struct ConnectionRequest {
     SftpCredentials sftp;   // populated when protocol == Sftp
     FtpCredentials ftp;     // populated when protocol == Ftp or Ftps
 
+    // Which SavedSite this request was built from, if any — empty for a
+    // one-off connection through the plain ConnectionDialog. Populated by
+    // SiteManagerDialog::connectionRequestToConnect() (the only place
+    // that already knows which SavedSite the user picked); consumed by
+    // MainWindow::startConnection() to build the pane's own
+    // ConnectionDescriptor (see TransferManager's queue-persistence
+    // reclaim mechanism, which uses it to show a saved site's friendly
+    // name instead of a bare host for a pending item still waiting to
+    // reconnect).
+    QString sourceSiteId;
+
     // Convenience for status-bar messages and error text, which don't
     // care which protocol produced the host name.
     QString host() const
     {
         return protocol == Protocol::Sftp ? sftp.host : ftp.host;
+    }
+
+    // Same convenience as host() above — used by
+    // MainWindow::startConnection() to build a ConnectionDescriptor.
+    int port() const
+    {
+        return protocol == Protocol::Sftp ? sftp.port : ftp.port;
+    }
+
+    QString username() const
+    {
+        return protocol == Protocol::Sftp ? sftp.username : ftp.username;
     }
 
     // The starting-directory pair exists identically in both credential

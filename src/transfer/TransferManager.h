@@ -7,6 +7,7 @@
 #include <QPointer>
 #include "TransferItem.h"
 #include "FolderEnumerator.h"
+#include "TransferQueueStore.h"
 
 class RemoteBackend;
 
@@ -135,6 +136,46 @@ public:
     void resumeItem(int id);
 
     const QList<TransferItem> &items() const { return m_items; }
+
+    // Queue persistence — see TransferQueueStore's own doc comment and
+    // ARCHITECTURE.md's TransferQueueStore entry for the full design and
+    // its deliberate scope boundaries (clean-shutdown-only,
+    // RemoteToRemote/Move excluded, no auto-reconnect).
+    //
+    // Filters m_items down to direction ∈ {LocalToLocal, LocalToRemote,
+    // RemoteToLocal} and status ∈ {Queued, Paused, InProgress} (an
+    // InProgress item is written out exactly like a Paused one — its
+    // current bytesDone becomes the resume offset, the same mechanism
+    // resumeItem() already provides), builds each surviving item's
+    // connection descriptors from its pane(s), and writes them via
+    // TransferQueueStore::save(). Called from MainWindow::closeEvent(),
+    // alongside the existing window-state save.
+    void saveQueueForShutdown() const;
+
+    // Loads TransferQueueStore and restores each entry: a LocalToLocal
+    // item dispatches immediately against localExecutorPane (both panes
+    // always start on LocalBackend, and sourcePath/destPath are already-
+    // resolved absolute paths, so which FilePaneWidget object stands in
+    // as executor doesn't matter). A LocalToRemote/RemoteToLocal item's
+    // local side gets localExecutorPane immediately too; its remote side
+    // stays unset and the item's status becomes PendingReconnect until
+    // tryReclaimPendingItems() finds a matching connection. Called once
+    // from MainWindow's constructor, right after buildLayout() creates
+    // both panes.
+    void restorePersistedQueue(FilePaneWidget *localExecutorPane);
+
+    // Called whenever a pane's connection succeeds (MainWindow's
+    // startConnection(), via its existing RemoteBackend::connected
+    // handler) — scans every PendingReconnect item's stored
+    // pendingConnection against pane's own connectionDescriptor()
+    // (matched by savedSiteId when both have one, else by
+    // protocol+host+port+username). On a match, assigns the waiting
+    // side (inferred from the item's direction — see
+    // TransferItem::pendingConnection's own doc comment), flips status
+    // back to Queued/Paused, and calls startNext(). A single call can
+    // claim more than one pending item if several share the same
+    // connection.
+    void tryReclaimPendingItems(FilePaneWidget *pane);
 
 signals:
     void itemAdded(const TransferItem &item);

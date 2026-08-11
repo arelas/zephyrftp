@@ -8,6 +8,18 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Added
+
+- **The transfer queue now survives closing the app.** Anything still
+  queued, paused, or mid-transfer when you quit is there again next
+  time you launch. A transfer to/from a server shows "Waiting to
+  reconnect" until you reconnect to that same server, then picks back
+  up automatically from wherever it left off — never before, and never
+  with a password remembered or a connection attempted on the app's own
+  initiative. Only a normal quit is covered (a crash still loses the
+  queue), and server-to-server transfers aren't restored (see Known
+  limitations in the README for the full, honest boundary).
+
 ## [0.6.23] — Edit-in-place, and a toolbar worth having
 
 ### Changed

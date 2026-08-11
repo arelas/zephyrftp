@@ -72,19 +72,19 @@ jobs:
       # The ten EXCLUDE_FROM_ALL test targets CONTRIBUTING.md's "All ten
       # need to actually pass, not just build" rule covers, plus
       # app-settings-test, trust-prompt-test, sort-and-commands-test,
-      # remote-to-remote-test, move-entry-test, and edit-session-test —
-      # an eleventh through sixteenth separately-tracked target (see
-      # CONTRIBUTING.md's own subsections on them) that CI now also
-      # builds and runs even though none are folded into that "ten"
-      # count in the docs. Built here as .exe's; actually run (not just
-      # linked) in the next-but-one step.
+      # remote-to-remote-test, move-entry-test, edit-session-test, and
+      # queue-persistence-test — an eleventh through seventeenth
+      # separately-tracked target (see CONTRIBUTING.md's own subsections
+      # on them) that CI now also builds and runs even though none are
+      # folded into that "ten" count in the docs. Built here as .exe's;
+      # actually run (not just linked) in the next-but-one step.
       - name: Build test suite
         run: >
           cmake --build build-win --target
           smoke-test transfer-queue-test site-store-test app-settings-test trust-prompt-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
-          move-entry-test edit-session-test
+          move-entry-test edit-session-test queue-persistence-test
           -- -j$(nproc)
 
       # windeployqt isn't packaged for this cross toolchain at all (and
@@ -176,6 +176,7 @@ jobs:
           xvfb-run -a wine ./remote-to-remote-test.exe
           xvfb-run -a wine ./move-entry-test.exe
           xvfb-run -a wine ./edit-session-test.exe
+          xvfb-run -a wine ./queue-persistence-test.exe
 
       # Single-config generator (mingw64-cmake defaults to Unix
       # Makefiles) — unlike the old MSVC/Ninja multi-config setup, the
@@ -236,7 +237,7 @@ jobs:
           smoke-test transfer-queue-test site-store-test app-settings-test trust-prompt-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
-          move-entry-test edit-session-test
+          move-entry-test edit-session-test queue-persistence-test
           -- -j$(nproc)
 
       # Runs directly, no wine/xvfb — these are native Linux binaries, and
@@ -287,6 +288,7 @@ jobs:
           ./remote-to-remote-test
           ./move-entry-test
           ./edit-session-test
+          ./queue-persistence-test
 
       # Just the binary — this is the "plain tarball" approach, not a
       # bundled/portable build: it dynamically links against system
@@ -367,7 +369,7 @@ jobs:
           smoke-test transfer-queue-test site-store-test app-settings-test trust-prompt-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
-          move-entry-test edit-session-test
+          move-entry-test edit-session-test queue-persistence-test
           -- -j$(nproc)
 
       # Same reasoning as build-linux's own test-suite step: a genuinely
@@ -419,6 +421,7 @@ jobs:
           ./remote-to-remote-test
           ./move-entry-test
           ./edit-session-test
+          ./queue-persistence-test
 
       - name: Build .rpm package
         run: |
@@ -478,7 +481,7 @@ jobs:
           smoke-test transfer-queue-test site-store-test app-settings-test trust-prompt-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
-          move-entry-test edit-session-test
+          move-entry-test edit-session-test queue-persistence-test
           -- -j$(nproc)
 
       # Same reasoning as build-linux-rpm's own test-suite step: a
@@ -526,6 +529,7 @@ jobs:
           ./remote-to-remote-test
           ./move-entry-test
           ./edit-session-test
+          ./queue-persistence-test
 
       - name: Build AppImage
         run: |

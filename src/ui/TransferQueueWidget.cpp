@@ -1,5 +1,6 @@
 #include "TransferQueueWidget.h"
 #include "../transfer/TransferManager.h"
+#include "../backends/SavedSite.h"
 #include "IconTheme.h"
 
 #include <QTableWidget>
@@ -151,6 +152,23 @@ QString TransferQueueWidget::statusText(const TransferItem &item)
                                               : tr("Failed: %1").arg(item.errorMessage);
     case TransferStatus::Cancelled:   return tr("Cancelled");
     case TransferStatus::Skipped:     return tr("Skipped");
+    case TransferStatus::PendingReconnect: {
+        // Prefer the saved site's own display name over a bare host —
+        // only a live lookup when there IS a savedSiteId to resolve
+        // (restored from a plain, non-site connection otherwise), and
+        // only for this rare, low-frequency status, not a hot path.
+        QString label = item.pendingConnection.host;
+        if (!item.pendingConnection.savedSiteId.isEmpty()) {
+            const QList<SavedSite> sites = SiteStore::load();
+            for (const SavedSite &site : sites) {
+                if (site.id == item.pendingConnection.savedSiteId) {
+                    label = site.name;
+                    break;
+                }
+            }
+        }
+        return tr("Waiting to reconnect: %1").arg(label);
+    }
     }
     return {};
 }
@@ -177,6 +195,13 @@ QIcon TransferQueueWidget::statusIcon(const TransferItem &item)
         return IconTheme::tintedIcon(":/icons/x.svg", IconTheme::GrayMuted);
     if (item.status == TransferStatus::Paused)
         return IconTheme::tintedIcon(":/icons/player-pause.svg", IconTheme::Amber);
+    if (item.status == TransferStatus::PendingReconnect)
+        // Gray, not Amber — visually distinct from Paused: Paused means
+        // a live connection exists and this simply isn't running right
+        // now, PendingReconnect means no connection exists at all yet.
+        // plug.svg (not the direction-shaped icons below) since there's
+        // no data flowing in either direction to depict.
+        return IconTheme::tintedIcon(":/icons/plug.svg", IconTheme::Gray);
 
     // Queued or InProgress: a direction-shaped icon (the mockup doesn't
     // cover local-to-local, remote-to-remote, move, or unsupported
@@ -502,7 +527,8 @@ void TransferQueueWidget::showContextMenu(const QPoint &pos)
     QAction *cancelAction = menu.addAction(IconTheme::tintedIcon(":/icons/x.svg", IconTheme::Red), tr("Cancel"));
     cancelAction->setEnabled(!isMove
                               && (status == TransferStatus::Queued || status == TransferStatus::InProgress
-                                  || status == TransferStatus::Paused));
+                                  || status == TransferStatus::Paused
+                                  || status == TransferStatus::PendingReconnect));
     QAction *pauseAction = menu.addAction(
         IconTheme::tintedIcon(":/icons/player-pause.svg", IconTheme::Amber), tr("Pause"));
     pauseAction->setEnabled(status == TransferStatus::InProgress && pauseCapableDirection);

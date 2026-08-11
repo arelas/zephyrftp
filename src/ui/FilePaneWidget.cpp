@@ -141,6 +141,14 @@ void FilePaneWidget::setBackend(RemoteBackend *backend, QThread *thread)
 
     m_backend = backend;
     m_backendThread = thread;
+    // Reset unconditionally on every swap, not just Disconnect — a
+    // stale descriptor pointing at whatever was connected before would
+    // otherwise survive into a new connection (or a plain LocalBackend)
+    // until something explicitly overwrote it. MainWindow::
+    // startConnection() sets a real one right after this call returns;
+    // for every other setBackend() call (Disconnect, or a fresh pane at
+    // startup) an empty descriptor is exactly correct.
+    m_connectionDescriptor = ConnectionDescriptor();
     // Only a thread-owning backend's connectToHost() can actually block
     // long enough to matter — LocalBackend's runs synchronously on the GUI
     // thread and returns immediately either way, so there's nothing for a

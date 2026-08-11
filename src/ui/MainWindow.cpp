@@ -14,6 +14,7 @@
 #include "../backends/SftpBackend.h"
 #include "../backends/FtpBackend.h"
 #include "../backends/ConnectionRequest.h"
+#include "../backends/ConnectionDescriptor.h"
 #include "../backends/SftpCredentials.h"
 #include "../transfer/TransferManager.h"
 
@@ -67,6 +68,15 @@ MainWindow::MainWindow(QWidget *parent)
     // either build*() method — this is the one place both already exist.
     connect(m_leftPane, &FilePaneWidget::commandLogged, m_commandsPane, &CommandsPaneWidget::appendLine);
     connect(m_rightPane, &FilePaneWidget::commandLogged, m_commandsPane, &CommandsPaneWidget::appendLine);
+
+    // Right after buildLayout() creates both panes — a restored
+    // LocalToLocal item dispatches against m_leftPane immediately
+    // (paths are already-resolved absolute strings, so which pane
+    // stands in as executor doesn't matter); a restored LocalToRemote/
+    // RemoteToLocal item becomes PendingReconnect until a matching
+    // connection shows up (see TransferManager::restorePersistedQueue()'s
+    // own doc comment).
+    m_transferManager->restorePersistedQueue(m_leftPane);
 
     // Restored last, after every dock/toolbar exists for restoreState() to
     // apply to — an empty QByteArray (first run, or settings.json not
@@ -594,8 +604,13 @@ void MainWindow::startConnection(const ConnectionRequest &request, FilePaneWidge
     // the same reasoning FilePaneWidget::setBackend() already relies on
     // for its own connections to this backend.
     const QString host = request.host();
-    connect(backend, &RemoteBackend::connected, this, [this, host]() {
+    connect(backend, &RemoteBackend::connected, this, [this, host, targetPane]() {
         statusBar()->showMessage(tr("Connected to %1").arg(host), 5000);
+        // Any restored queue item still PendingReconnect and waiting for
+        // exactly this connection picks back up automatically from here
+        // — see TransferManager::tryReclaimPendingItems()'s own doc
+        // comment. A harmless no-op when there's nothing waiting.
+        m_transferManager->tryReclaimPendingItems(targetPane);
     });
     connect(backend, &RemoteBackend::connectionFailed, this, [this, host](const QString &reason) {
         statusBar()->showMessage(tr("Failed to connect to %1: %2").arg(host, reason), 8000);
@@ -614,6 +629,18 @@ void MainWindow::startConnection(const ConnectionRequest &request, FilePaneWidge
     // just a hypothetical one).
     m_editSessionManager->endSessionsForPane(targetPane);
     targetPane->setBackend(backend, thread);
+
+    // After setBackend(), not before — setBackend() itself resets the
+    // pane's connectionDescriptor() to empty on every swap (see its own
+    // comment in FilePaneWidget.cpp), so this has to be the last word.
+    // Non-secret fields only — see ConnectionDescriptor's own doc comment.
+    ConnectionDescriptor descriptor;
+    descriptor.savedSiteId = request.sourceSiteId;
+    descriptor.protocol = request.protocol;
+    descriptor.host = request.host();
+    descriptor.port = request.port();
+    descriptor.username = request.username();
+    targetPane->setConnectionDescriptor(descriptor);
 }
 
 void MainWindow::onDisconnectTriggered()
@@ -684,6 +711,14 @@ void MainWindow::closeEvent(QCloseEvent *event)
     // layout for next time.
     m_settings->setWindowGeometry(saveGeometry());
     m_settings->setWindowState(saveState());
+
+    // Must run BEFORE disconnectPane() below — it reads each surviving
+    // item's sourcePane/destPane connectionDescriptor(), which
+    // disconnectPane()'s own setBackend(new LocalBackend()) call would
+    // otherwise have already reset to empty by the time this ran. See
+    // TransferManager::saveQueueForShutdown()'s own doc comment for what
+    // actually gets persisted and what deliberately doesn't.
+    m_transferManager->saveQueueForShutdown();
 
     // Belt-and-suspenders alongside disconnectPane()'s own
     // endSessionsForPane() calls below — every live session's pane is

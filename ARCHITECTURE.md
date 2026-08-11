@@ -2338,6 +2338,124 @@ to drive FileZilla itself for a same-desktop comparison.
      `onBackendFailed()`, with its real `errorMessage` blanked to an
      empty string. Fixed by clearing the flag in `onBackendPaused()`
      too.
+- `TransferQueueStore` (`src/transfer/TransferQueueStore.h/.cpp`) —
+  queue persistence: whatever's still `Queued`/`Paused`/`InProgress` when
+  the app closes cleanly is written to `queue.json`
+  (`QStandardPaths::AppConfigLocation`, alongside `sites.json`/
+  `settings.json`) and restored on the next launch. Same
+  `SiteStore`-shaped stateless `load()`/`save()` pair, `QSaveFile`
+  atomic-write pattern `AppSettings::save()` already established (not
+  `SiteStore::save()`'s older plain-`QFile`+`Truncate` one — a truncated
+  `queue.json` mid-write would otherwise make `load()`'s "corrupt, fail
+  soft to empty" path silently discard a real, resumable queue instead
+  of failing loudly). Operates on `PersistedTransferItem`
+  (`TransferQueueStore.h`), a small struct distinct from `TransferItem`
+  itself — most of `TransferItem`'s fields (`sourcePane`/`destPane`,
+  `capturedDestBackend`, `tempFilePath`, `skipConflictCheckOnDispatch`)
+  are live-only and meaningless across a restart.
+
+  **Deliberate scope boundary — persisted only at clean shutdown
+  (`MainWindow::closeEvent()`), never continuously.** A crash still
+  loses the queue, same guarantee window geometry/dock state already
+  have — real continuous durability (a write on every progress tick)
+  is meaningfully more complex for a benefit nobody asked for.
+  **`RemoteToRemote`/`Move`/`EditDownload`/`EditUpload` items are never
+  persisted, regardless of status** — `TransferManager::
+  saveQueueForShutdown()`'s direction filter excludes them
+  unconditionally before even checking status. `RemoteToRemote`
+  specifically because preserving one mid-transfer would also mean
+  preserving its partially-downloaded local staging file and excluding
+  it from the constructor's existing `zephyrftp-staging/`
+  `removeRecursively()` sweep — real, avoidable complexity for the
+  newest, least battle-tested direction in the app; a `RemoteToRemote`
+  item still running at shutdown is simply dropped, same as a terminal
+  one. `Move` structurally never needs this: it already bypasses the
+  `Queued`/`m_activeIndex` pipeline entirely and resolves in one round
+  trip, so it's never sitting in a resumable state at shutdown to begin
+  with. Terminal items (`Done`/`Failed`/`Cancelled`/`Skipped`) aren't
+  persisted either — this is queue persistence, not a transfer history
+  feature.
+
+  **`FilePaneWidget::ConnectionDescriptor`** (`src/backends/
+  ConnectionDescriptor.h`) is the new piece this needed that didn't
+  exist before: protocol/host/port/username (and a `SavedSite.id` when
+  the connection came from one — `ConnectionRequest` gained a matching
+  `sourceSiteId` field, populated by `SiteManagerDialog::
+  connectionRequestToConnect()`), set on a pane by `MainWindow::
+  startConnection()` right after it builds the concrete backend, and
+  reset to empty by `FilePaneWidget::setBackend()` itself on every
+  swap (not left to each caller to remember). Never a password/
+  passphrase — same non-negotiable `SavedSite`/`sites.json` already
+  keep. Nothing tracked this before: `SavedSite::toConnectionRequest()`
+  already discarded which site a connection came from the moment a
+  backend was built, and `RemoteBackend::connectionIdentity()`'s own
+  `scheme://username@host:port` string has no `savedSiteId` component
+  worth parsing back apart even if it were reused for this.
+
+  **Restore/reclaim mechanism**, in `TransferManager`:
+  `restorePersistedQueue(localExecutorPane)` (called once from
+  `MainWindow`'s constructor, right after `buildLayout()` creates both
+  panes) dispatches a restored `LocalToLocal` item immediately — both
+  panes always start on `LocalBackend`, and `sourcePath`/`destPath` are
+  already-resolved absolute paths, so which `FilePaneWidget` object
+  stands in as executor genuinely doesn't matter. A restored
+  `LocalToRemote`/`RemoteToLocal` item's local side gets
+  `localExecutorPane` immediately too; its remote side stays `nullptr`
+  and the item's status becomes the new `TransferStatus::
+  PendingReconnect` — deliberately distinct from `Paused` (which means
+  a live connection exists, just not running right now;
+  `PendingReconnect` means no connection exists at all yet) — carrying
+  the connection it's waiting for in a new `TransferItem::
+  pendingConnection` field. `tryReclaimPendingItems(pane)`, called from
+  the same `RemoteBackend::connected` handler `MainWindow::
+  startConnection()` already had, matches every `PendingReconnect`
+  item's `pendingConnection` against the newly-connected pane's own
+  `connectionDescriptor()` — on protocol+host+port+username, NOT
+  `savedSiteId` (a reconnect via the plain `ConnectionDialog`, with no
+  site involved, to the exact same server an item's `pendingConnection`
+  does carry a `savedSiteId` for would otherwise never match, even
+  though it's genuinely the same server; `savedSiteId` is carried only
+  for `TransferQueueWidget::statusText()`'s friendly-name display, never
+  for matching — a refinement made during implementation after the
+  original savedSiteId-first design turned out to have exactly this
+  gap). A match assigns the waiting side (inferred from `direction`
+  alone: `RemoteToLocal`'s `sourcePane`, `LocalToRemote`'s `destPane` —
+  unambiguous, since only these two directions ever reach
+  `PendingReconnect`), flips status to `Queued`, sets
+  `skipConflictCheckOnDispatch` when `bytesDone > 0` (same flag/reasoning
+  `resumeItem()` already established — a nonzero `bytesDone` means the
+  destination already legitimately has this item's own earlier partial
+  content, not a real conflict), and calls `startNext()` — which passes
+  `bytesDone` through to the backend as the resume offset exactly the
+  way it already does for every other `Queued`/`Paused` item, no new
+  dispatch-layer logic needed. One reconnect can claim several pending
+  items at once if they share a connection.
+
+  **`MainWindow::startConnection()`/`disconnectPane()` both call
+  `EditSessionManager::endSessionsForPane()`-style proactive teardown**
+  — here, `saveQueueForShutdown()` specifically must run BEFORE
+  `disconnectPane()`'s own `setBackend(new LocalBackend())` calls in
+  `closeEvent()`, since that reset each pane's `connectionDescriptor()`
+  to empty; ordered correctly in `closeEvent()` (save first, then the
+  existing per-pane teardown).
+
+  **A real gap found and fixed during implementation, not by design
+  from the start:** `TransferManager::cancelItem()` had TWO separate
+  status gates, not one — the active-item branch (never applies to
+  `PendingReconnect`, which is never the active item) and a second,
+  independent `if (status == Queued || status == Paused)` gate on the
+  non-active path, which `PendingReconnect` didn't originally satisfy
+  either, silently falling through to the "nothing to cancel" case
+  reserved for terminal states. Caught by directly reading
+  `cancelItem()`'s actual code rather than assuming the active-index
+  check alone was sufficient — added to that second gate too.
+
+  Verified by `queue-persistence-test` (`src/queue_persistence_test.cpp`)
+  — see CONTRIBUTING.md's own subsection for the full detail, including
+  why it needs a small custom fake backend (not `LocalBackend`, which
+  ignores `resumeOffset` entirely) to prove the persisted `bytesDone`
+  genuinely reaches `downloadFile()` as a real resume offset, not just
+  that it round-trips through JSON.
 - `EditSessionManager` (`src/ui/EditSessionManager.h/.cpp`) —
   edit-in-place: right-click a remote file → Edit downloads it to a
   local temp file, opens it in an external editor, and re-uploads it on

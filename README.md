@@ -77,7 +77,12 @@ tracks what's changed between them.
 - **A real transfer queue** — see what's moving and how fast, pause a
   transfer to a server and pick it back up later without starting over,
   cancel something outright, or retry something that failed, all from
-  one place.
+  one place. **Survives closing the app, too**: anything still queued,
+  paused, or mid-transfer when you quit is there again next time you
+  launch — a transfer to/from a server picks back up automatically the
+  moment you reconnect to that server (shown as "Waiting to reconnect"
+  in the meantime), never before, and never with a password remembered
+  or a connection attempted on its own.
 - **A live Commands pane** — a real-time, read-only log of protocol
   traffic for both panes, modeled on FileZilla's own message log, docked
   between the toolbar and the file panes by default.
@@ -226,6 +231,17 @@ rather than being half-implemented:
   else at the same time (another ZephyrFTP window, a different tool
   connected to the same server) — the last save wins, same as most
   editors' own behavior with local files.
+- **Queue persistence only covers a normal quit, not a crash — and not
+  every kind of transfer.** The queue is written to disk when you close
+  the app; it isn't continuously saved while running, so a crash or a
+  forced quit still loses whatever was in flight, the same as before
+  this feature existed. Server-to-server transfers (both panes
+  connected to different servers) aren't restored either — they're
+  the newest, most complex kind of transfer this app supports, and
+  preserving one mid-transfer across a restart would mean also
+  preserving its partial local staging file; dropped rather than risked.
+  Finished, failed, cancelled, and skipped items aren't kept either —
+  this restores what was still pending, not a permanent history.
 
 ## For developers and tinkerers
 

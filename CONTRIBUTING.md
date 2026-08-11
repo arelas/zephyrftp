@@ -417,7 +417,7 @@ representative of any real desktop:
 
 ## Running the test suites
 
-Sixteen `EXCLUDE_FROM_ALL` CMake targets make up the required suite as
+Seventeen `EXCLUDE_FROM_ALL` CMake targets make up the required suite as
 of this writing — not part of a normal `make`, built and run
 explicitly, and all of them (not just a "core" subset) need to actually
 pass before a change is done. The count keeps growing as the project
@@ -675,6 +675,54 @@ real file against a real local SFTP test server
 (`tools/local-test-servers/start-sftp-pubkey.sh`), confirm the editor
 opens, edit and save, confirm the change lands on the server, confirm
 re-editing the same file reuses the session without re-downloading.
+
+### `queue-persistence-test`
+
+Same treatment as the targets above — self-contained, `EXCLUDE_FROM_ALL`,
+added to all four `build.yml` jobs. Covers `TransferQueueStore`'s
+save/load round trip and `TransferManager`'s restore/reclaim mechanism
+end to end: a `LocalToLocal` item restores and dispatches immediately
+with no reconnect needed; a `RemoteToLocal` item restores as
+`PendingReconnect`; a reconnect to a *different* server leaves it alone;
+a reconnect to the *matching* server claims it (and a second item
+sharing that same connection, in the same call) and resumes it from the
+persisted `bytesDone` — confirmed reaching `downloadFile()` as a real
+resume offset, not just round-tripping through JSON, via a small custom
+fake `RemoteBackend` (see the test's own header comment for why
+`LocalBackend` can't prove this specifically: it ignores `resumeOffset`
+entirely, since a real local copy is always a fresh, atomic
+`QFile::copy()`, never a partial resume). Also confirms
+`saveQueueForShutdown()`'s exclusions: a `Done` item and a
+`RemoteToRemote` item are both absent from what actually gets written,
+and a raw read of `queue.json`'s own text confirms no
+password/passphrase-shaped key ever appears in it — same explicit
+regression guard `site-store-test` already established for `sites.json`.
+See `src/queue_persistence_test.cpp`'s own header comment and
+ARCHITECTURE.md's `TransferQueueStore` entry for the full detail,
+including the real `cancelItem()` gap this work found and fixed along
+the way (a second, independent status gate that didn't originally
+recognize the new `PendingReconnect` status). Run it locally the same
+way:
+
+```
+cmake --build build --target queue-persistence-test
+QT_QPA_PLATFORM=offscreen ./build/queue-persistence-test
+```
+
+Needs no fixtures or environment overrides beyond `QT_QPA_PLATFORM` — it
+builds and wipes its own scratch directory (`/tmp/queue_persistence_test`)
+at the top of `main()`, same convention `edit-session-test`/
+`move-entry-test` use, and isolates `QStandardPaths::AppConfigLocation`
+via `setTestModeEnabled(true)` the same way `site-store-test`/
+`app-settings-test` already do (both `queue.json` and `sites.json` live
+there). **Not covered, and documented as such rather than faked**:
+losing the queue on an actual crash (only a clean `closeEvent()` is
+exercised — the deliberate scope boundary itself, not a test gap) and
+restoring a `RemoteToRemote` item (deliberately excluded from
+persistence entirely, nothing to restore). Verify the reconnect-and-
+resume flow manually against a real server: queue an upload/download,
+quit mid-transfer, relaunch, confirm it shows "Waiting to reconnect",
+reconnect to that same site, confirm it resumes and completes.
 
 ### `app-settings-test`
 

@@ -80,6 +80,7 @@ set(SOURCES
     src/backends/SavedSite.cpp
     src/backends/CredentialStore.cpp
     src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
     src/transfer/FolderEnumerator.cpp
     resources/icons.qrc
     resources/theme.qrc
@@ -117,6 +118,7 @@ set(HEADERS
     src/backends/CredentialStore.h
     src/transfer/TransferItem.h
     src/transfer/TransferManager.h
+    src/transfer/TransferQueueStore.h
 )
 
 qt_add_executable(zephyrftp ${SOURCES} ${HEADERS})
@@ -279,6 +281,7 @@ qt_add_executable(smoke-test EXCLUDE_FROM_ALL
     src/backends/SavedSite.cpp
     src/backends/CredentialStore.cpp
     src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
     src/transfer/FolderEnumerator.cpp
     resources/icons.qrc
     resources/theme.qrc
@@ -313,6 +316,7 @@ qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
     src/backends/SavedSite.cpp
     src/backends/CredentialStore.cpp
     src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
     src/transfer/FolderEnumerator.cpp
     resources/icons.qrc
     resources/theme.qrc
@@ -377,6 +381,7 @@ qt_add_executable(transfer-pause-test EXCLUDE_FROM_ALL
     src/backends/LocalBackend.cpp
     src/backends/RemoteBackend.h
     src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
     src/transfer/FolderEnumerator.cpp
     resources/icons.qrc
     resources/theme.qrc
@@ -403,6 +408,7 @@ qt_add_executable(folder-transfer-test EXCLUDE_FROM_ALL
     src/backends/LocalBackend.cpp
     src/backends/RemoteBackend.h
     src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
     src/transfer/FolderEnumerator.cpp
     resources/icons.qrc
     resources/theme.qrc
@@ -420,6 +426,7 @@ qt_add_executable(conflict-resolution-test EXCLUDE_FROM_ALL
     src/backends/LocalBackend.cpp
     src/backends/RemoteBackend.h
     src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
     src/transfer/FolderEnumerator.cpp
     resources/icons.qrc
     resources/theme.qrc
@@ -506,6 +513,7 @@ qt_add_executable(remote-to-remote-test EXCLUDE_FROM_ALL
     src/backends/LocalBackend.cpp
     src/backends/RemoteBackend.h
     src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
     src/transfer/FolderEnumerator.cpp
     resources/icons.qrc
     resources/theme.qrc
@@ -533,6 +541,7 @@ qt_add_executable(move-entry-test EXCLUDE_FROM_ALL
     src/backends/LocalBackend.cpp
     src/backends/RemoteBackend.h
     src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
     src/transfer/FolderEnumerator.cpp
     resources/icons.qrc
     resources/theme.qrc
@@ -559,12 +568,41 @@ qt_add_executable(edit-session-test EXCLUDE_FROM_ALL
     src/backends/LocalBackend.cpp
     src/backends/RemoteBackend.h
     src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
     src/transfer/FolderEnumerator.cpp
     resources/icons.qrc
     resources/theme.qrc
 )
 target_include_directories(edit-session-test PRIVATE src)
 target_link_libraries(edit-session-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
+
+# --- Queue persistence test: TransferQueueStore's save/load round trip,
+# TransferManager::restorePersistedQueue()'s LocalToLocal-dispatches-
+# immediately vs. LocalToRemote/RemoteToLocal-becomes-PendingReconnect
+# split, and tryReclaimPendingItems()'s reconnect-matching (including a
+# non-matching reconnect leaving an item PendingReconnect, and one
+# reconnect claiming several items at once) — against a real LocalBackend
+# standing in for "the remote" (see src/queue_persistence_test.cpp's own
+# header comment). Self-contained and EXCLUDE_FROM_ALL like
+# edit-session-test/move-entry-test above, same "additional, not folded
+# into the fixed count" treatment.
+qt_add_executable(queue-persistence-test EXCLUDE_FROM_ALL
+    src/queue_persistence_test.cpp
+    src/AppSettings.cpp
+    src/ui/FilePaneWidget.cpp
+    src/ui/FileTreeView.cpp
+    src/ui/IconTheme.cpp
+    src/backends/LocalBackend.cpp
+    src/backends/SavedSite.cpp
+    src/backends/RemoteBackend.h
+    src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
+    src/transfer/FolderEnumerator.cpp
+    resources/icons.qrc
+    resources/theme.qrc
+)
+target_include_directories(queue-persistence-test PRIVATE src)
+target_link_libraries(queue-persistence-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
 
 # --- Live-server verification harnesses (NOT part of the ten-target
 # self-contained test suite above — these need an external server
@@ -612,6 +650,7 @@ qt_add_executable(verify-sftp-move EXCLUDE_FROM_ALL
     src/backends/SftpBackend.cpp
     src/backends/RemoteBackend.h
     src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
     src/transfer/FolderEnumerator.cpp
     resources/icons.qrc
     resources/theme.qrc
@@ -639,6 +678,7 @@ qt_add_executable(verify-remote-to-remote-live EXCLUDE_FROM_ALL
     src/backends/SftpBackend.cpp
     src/backends/RemoteBackend.h
     src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
     src/transfer/FolderEnumerator.cpp
     resources/icons.qrc
     resources/theme.qrc
@@ -668,6 +708,7 @@ qt_add_executable(verify-ftp-move EXCLUDE_FROM_ALL
     src/backends/FtpTlsSocket.cpp
     src/backends/RemoteBackend.h
     src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
     src/transfer/FolderEnumerator.cpp
     resources/icons.qrc
     resources/theme.qrc

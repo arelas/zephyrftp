@@ -225,6 +225,154 @@ int TransferManager::startEditUpload(FilePaneWidget *destPane, const QString &lo
     return item.id;
 }
 
+void TransferManager::saveQueueForShutdown() const
+{
+    QList<PersistedTransferItem> toSave;
+    for (const TransferItem &item : m_items) {
+        // Scope boundary, deliberate — see this method's own header doc
+        // comment (TransferManager.h) and ARCHITECTURE.md's
+        // TransferQueueStore entry for the full reasoning on why
+        // RemoteToRemote/Move/EditDownload/EditUpload/Unsupported never
+        // reach here, and why a terminal item doesn't either.
+        if (item.direction != TransferDirection::LocalToLocal
+            && item.direction != TransferDirection::LocalToRemote
+            && item.direction != TransferDirection::RemoteToLocal)
+            continue;
+        if (item.status != TransferStatus::Queued && item.status != TransferStatus::Paused
+            && item.status != TransferStatus::InProgress)
+            continue;
+
+        PersistedTransferItem persisted;
+        persisted.fileName = item.fileName;
+        persisted.sourcePath = item.sourcePath;
+        persisted.destPath = item.destPath;
+        persisted.direction = item.direction;
+        persisted.bytesDone = item.bytesDone;
+        persisted.bytesTotal = item.bytesTotal;
+        if (item.sourcePane)
+            persisted.sourceConnection = item.sourcePane->connectionDescriptor();
+        if (item.destPane)
+            persisted.destConnection = item.destPane->connectionDescriptor();
+
+        // Defensive: a LocalToRemote/RemoteToLocal item's remote side
+        // should never actually have an empty descriptor (that pane
+        // wouldn't have produced this direction in the first place) —
+        // but an item with nothing to reconnect to on restore would be
+        // permanently, silently stuck PendingReconnect, so it's skipped
+        // here rather than persisted broken.
+        if (item.direction == TransferDirection::LocalToRemote && persisted.destConnection.isEmpty())
+            continue;
+        if (item.direction == TransferDirection::RemoteToLocal && persisted.sourceConnection.isEmpty())
+            continue;
+
+        toSave.append(persisted);
+    }
+    TransferQueueStore::save(toSave);
+}
+
+void TransferManager::restorePersistedQueue(FilePaneWidget *localExecutorPane)
+{
+    const QList<PersistedTransferItem> persisted = TransferQueueStore::load();
+    if (persisted.isEmpty())
+        return;
+
+    for (const PersistedTransferItem &entry : persisted) {
+        TransferItem item;
+        item.id = m_nextId++;
+        item.fileName = entry.fileName;
+        item.sourcePath = entry.sourcePath;
+        item.destPath = entry.destPath;
+        item.direction = entry.direction;
+
+        switch (entry.direction) {
+        case TransferDirection::LocalToLocal:
+            // A local copy has no meaningful byte-offset resume
+            // (LocalBackend::downloadFile()/uploadFile() ignore
+            // resumeOffset entirely — QFile::copy() is always a fresh,
+            // atomic, whole-file operation) — carrying over a stale
+            // bytesDone/bytesTotal here would just show misleading
+            // progress for a moment before the real copy resets it.
+            item.sourcePane = localExecutorPane;
+            item.destPane = localExecutorPane;
+            item.status = TransferStatus::Queued;
+            break;
+        case TransferDirection::LocalToRemote:
+            item.sourcePane = localExecutorPane;
+            item.bytesDone = entry.bytesDone;
+            item.bytesTotal = entry.bytesTotal;
+            item.status = TransferStatus::PendingReconnect;
+            item.pendingConnection = entry.destConnection;
+            break;
+        case TransferDirection::RemoteToLocal:
+            item.destPane = localExecutorPane;
+            item.bytesDone = entry.bytesDone;
+            item.bytesTotal = entry.bytesTotal;
+            item.status = TransferStatus::PendingReconnect;
+            item.pendingConnection = entry.sourceConnection;
+            break;
+        default:
+            continue;   // TransferQueueStore only ever persists these three directions
+        }
+
+        m_items.append(item);
+        emit itemAdded(m_items.last());
+    }
+
+    startNext();   // picks up any restored LocalToLocal items; a no-op if there are none
+}
+
+void TransferManager::tryReclaimPendingItems(FilePaneWidget *pane)
+{
+    const ConnectionDescriptor paneDescriptor = pane->connectionDescriptor();
+    if (paneDescriptor.isEmpty())
+        return;   // pane has no real connection (back to LocalBackend, or never connected) -- nothing to reclaim against
+
+    bool claimedAny = false;
+    for (TransferItem &item : m_items) {
+        if (item.status != TransferStatus::PendingReconnect)
+            continue;
+
+        // Matched on the same objective fields RemoteBackend::
+        // connectionIdentity() itself is built from — protocol/host/
+        // port/username — not on savedSiteId: a reconnect via the plain
+        // ConnectionDialog (no site involved) to the exact same server
+        // an item's pendingConnection DOES carry a savedSiteId for would
+        // otherwise never match, even though it's genuinely the same
+        // server. savedSiteId is carried for display purposes only
+        // (a friendly name instead of a bare host — see
+        // TransferQueueWidget::statusText()), never for matching.
+        const ConnectionDescriptor &pending = item.pendingConnection;
+        const bool matches = pending.protocol == paneDescriptor.protocol
+            && pending.host == paneDescriptor.host
+            && pending.port == paneDescriptor.port
+            && pending.username == paneDescriptor.username;
+        if (!matches)
+            continue;
+
+        if (item.direction == TransferDirection::RemoteToLocal)
+            item.sourcePane = pane;
+        else if (item.direction == TransferDirection::LocalToRemote)
+            item.destPane = pane;
+        else
+            continue;   // unreachable -- only these two directions ever reach PendingReconnect
+
+        item.status = TransferStatus::Queued;
+        // Same reasoning resumeItem() already established for this flag
+        // (TransferItem::skipConflictCheckOnDispatch's own doc comment):
+        // a nonzero bytesDone means the destination already legitimately
+        // has this item's own earlier partial content, not a real
+        // conflict to prompt about. A restored item that was still at
+        // byte 0 gets the normal fresh conflict check, same as any
+        // ordinary newly-Queued item.
+        item.skipConflictCheckOnDispatch = item.bytesDone > 0;
+        claimedAny = true;
+        emit itemUpdated(item);
+    }
+
+    if (claimedAny)
+        startNext();
+}
+
 void TransferManager::dispatchMoveEntry(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
                                          const QString &name)
 {
@@ -585,11 +733,13 @@ void TransferManager::cancelItem(int id)
         return;
     }
 
-    if (item.status == TransferStatus::Queued || item.status == TransferStatus::Paused) {
-        // Neither is actively running — Queued never started, Paused
-        // already stopped and isn't the active item anymore (m_activeIndex
-        // moved on when it paused) — so there's nothing to interrupt,
-        // just mark it done.
+    if (item.status == TransferStatus::Queued || item.status == TransferStatus::Paused
+        || item.status == TransferStatus::PendingReconnect) {
+        // None of the three is actively running — Queued never started,
+        // Paused already stopped and isn't the active item anymore
+        // (m_activeIndex moved on when it paused), PendingReconnect has
+        // no backend at all yet — so there's nothing to interrupt, just
+        // mark it done.
         item.status = TransferStatus::Cancelled;
         emit itemUpdated(item);
     }

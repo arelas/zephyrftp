@@ -2,6 +2,7 @@
 
 #include <QString>
 #include <QPointer>
+#include "../backends/ConnectionDescriptor.h"
 
 class FilePaneWidget;
 class RemoteBackend;
@@ -71,7 +72,20 @@ enum class TransferStatus {
     // distinct from Cancelled (a person explicitly stopped something
     // already running) and Failed (something went wrong) — this is
     // neither; it's the queue correctly doing what it was told.
-    Skipped
+    Skipped,
+    // Restored from a previous session (see TransferQueueStore/
+    // TransferManager::restorePersistedQueue()) but its remote side
+    // isn't connected yet — waiting for the user to reconnect a
+    // matching pane themselves (TransferManager::tryReclaimPendingItems()),
+    // never auto-reconnected. Deliberately distinct from Paused: Paused
+    // means a live connection exists and this is simply not the
+    // currently-running item; PendingReconnect means no connection
+    // exists at all yet. Only ever the direction's remote side (see
+    // TransferItem::pendingConnection's own doc comment) — the local
+    // side of a restored LocalToRemote/RemoteToLocal item is assigned a
+    // real pane immediately on restore, since LocalBackend needs no
+    // reconnection.
+    PendingReconnect
 };
 
 // One row in the transfer queue. Holds the source/dest pane pointers
@@ -141,4 +155,17 @@ struct TransferItem {
 
     FilePaneWidget *sourcePane = nullptr;
     FilePaneWidget *destPane = nullptr;
+
+    // Only meaningful for status == PendingReconnect — the connection
+    // this item's remote side is waiting for.
+    // TransferManager::tryReclaimPendingItems() matches a newly-
+    // connected pane's own ConnectionDescriptor against this one; which
+    // pointer (sourcePane for RemoteToLocal, destPane for LocalToRemote)
+    // gets filled in on a match is inferred from `direction` alone, not
+    // a separate flag — RemoteToRemote/Move/LocalToLocal/EditDownload/
+    // EditUpload never reach PendingReconnect in the first place (see
+    // TransferManager::saveQueueForShutdown()'s own doc comment on why
+    // persistence is scoped to LocalToLocal/LocalToRemote/RemoteToLocal
+    // only), so `direction` is always unambiguous here.
+    ConnectionDescriptor pendingConnection;
 };
