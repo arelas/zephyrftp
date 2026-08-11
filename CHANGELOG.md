@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.6.18] — Add per-pane Home button; fix column headers pushing off-screen
+
 ### Added
 
 - **A Home button on each file pane**, to the left of the existing "Up
@@ -1348,7 +1350,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.17...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.18...HEAD
+[0.6.18]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.18
 [0.6.17]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.17
 [0.6.16]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.16
 [0.6.15]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.15
