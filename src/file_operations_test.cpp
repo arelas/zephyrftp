@@ -373,16 +373,26 @@ int main(int argc, char *argv[])
 
     QTimer::singleShot(2900, &app, [&]() {
 #ifndef Q_OS_WIN
-        const QFileInfo info(base + "/chmod_target.txt");
-        const QFileDevice::Permissions p = info.permissions();
-        const bool ownerRW = (p & QFileDevice::ReadOwner) && (p & QFileDevice::WriteOwner)
-            && !(p & QFileDevice::ExeOwner);
-        const bool groupR = (p & QFileDevice::ReadGroup) && !(p & QFileDevice::WriteGroup)
-            && !(p & QFileDevice::ExeGroup);
-        const bool otherNone = !(p & QFileDevice::ReadOther) && !(p & QFileDevice::WriteOther)
-            && !(p & QFileDevice::ExeOther);
+        // See waitUntil()'s own doc comment — same class of fragility as
+        // Phase 11/13 above, now also observed here (real macOS CI,
+        // slower/colder than every Linux CI container this project has
+        // otherwise run on): the fixed 200ms gap between dispatching
+        // setPermissions() and reading permissions() back wasn't always
+        // enough for the queued call to actually land first.
+        auto currentPermissions = [&]() { return QFileInfo(base + "/chmod_target.txt").permissions(); };
+        auto matchesExpected = [&]() {
+            const QFileDevice::Permissions p = currentPermissions();
+            const bool ownerRW = (p & QFileDevice::ReadOwner) && (p & QFileDevice::WriteOwner)
+                && !(p & QFileDevice::ExeOwner);
+            const bool groupR = (p & QFileDevice::ReadGroup) && !(p & QFileDevice::WriteGroup)
+                && !(p & QFileDevice::ExeGroup);
+            const bool otherNone = !(p & QFileDevice::ReadOther) && !(p & QFileDevice::WriteOther)
+                && !(p & QFileDevice::ExeOther);
+            return ownerRW && groupR && otherNone;
+        };
+        waitUntil(matchesExpected);
         check("setPermissions: mode 0640 actually applied (owner rw, group r, other none)",
-              ownerRW && groupR && otherNone);
+              matchesExpected());
 #endif
 
         qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");

@@ -567,8 +567,7 @@ that had nothing to do with pause/resume itself. Fixed the same way as
 observed progress before pausing, not a longer fixed delay. The rest of
 this file's timeline still uses fixed wall-clock offsets from app
 start — a known, narrower flake risk than the one just fixed, tracked
-as a follow-up rather than a full rewrite in the same pass (see
-`project_macos_build.md` memory).
+as a follow-up rather than a full rewrite in the same pass.
 `file-operations-test` creates its own scratch tree under
 `/tmp/file_ops_test` and tests `LocalBackend` directly (not through the
 UI, since its prompts can't be driven headlessly) — see its own header
@@ -579,8 +578,16 @@ section below for both (root bypassing `chmod 000` in the
 container-based CI jobs; `QFile::link()` not producing a real symlink
 under `build-windows`'s `wine` job) rather than repeating the detail
 here. It also covers `setPermissions()` — a real `chmod` against a real
-temp file, confirmed by reading the mode back via `QFileInfo` — and, as
-pure-logic checks needing no I/O at all, `PermissionsDialog.h`'s
+temp file, confirmed by reading the mode back via `QFileInfo`. That
+readback used to trust a fixed 200ms gap after dispatching the queued
+`setPermissions()` call — this file's own `waitUntil()` was already
+used for two earlier, previously-observed flakes (see its own doc
+comment), but not yet backfilled here; a real macOS CI run (slower/
+colder than any Linux CI container) failed this exact check first,
+fixed the same way: `waitUntil()` polls the real permission bits
+before checking, rather than trusting the fixed delay to have been
+enough. And, as pure-logic checks needing no I/O at all,
+`PermissionsDialog.h`'s
 `permissionsStringToMode()`/`modeToPermissionsString()` round trips
 (hence this target's otherwise-GUI-free `Qt6::Widgets` link dependency
 now: those two free functions live in `PermissionsDialog.cpp`, but
