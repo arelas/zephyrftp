@@ -5,7 +5,7 @@ local files and a remote server side by side, then drag, drop, or
 double-click to move things between them. Think FileZilla or WinSCP,
 built fresh in Qt6.
 
-**Current version: 0.7.1 — alpha.** Real functionality, but real gaps
+**Current version: 0.7.2 — alpha.** Real functionality, but real gaps
 too — see [Known limitations](#known-limitations) before relying on
 this for anything you can't afford to get wrong. [Releases](https://github.com/arelas/zephyrftp/releases)
 has downloadable Windows, macOS, and Linux builds; [CHANGELOG.md](CHANGELOG.md)
@@ -119,6 +119,11 @@ tracks what's changed between them.
   to turn on. Two transfers that would use the *same* connection still
   run one after another, since a single SFTP/FTP session can't safely
   do two things at once.
+- **Bandwidth limit per transfer** — set a KB/s cap in Preferences
+  (blank/0 means unlimited, the default) and every SFTP/FTP transfer
+  paces itself down to that rate. Per-transfer, not one shared cap
+  across everything at once — two transfers running at the same time
+  can together use up to roughly twice the number you set.
 - **A live Commands pane** — a real-time, read-only log of protocol
   traffic for both panes, modeled on FileZilla's own message log, docked
   between the toolbar and the file panes by default.

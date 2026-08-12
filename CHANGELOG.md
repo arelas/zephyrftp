@@ -8,6 +8,22 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.2] — Bandwidth throttling
+
+### Added
+
+- **Bandwidth limit per transfer.** A new "Limit per transfer" field in
+  Preferences (KB/s, blank/0 means unlimited, the default) — every
+  SFTP/FTP transfer paces itself down to that rate. Per-transfer, not
+  one shared cap across every transfer at once: two transfers running
+  at the same time (see [0.7.1]'s concurrent transfers) can together use
+  up to roughly twice the configured number, since neither knows about
+  the other — the simpler of two ways to do this, chosen deliberately.
+  Local-to-local copies aren't throttled (nothing to pace — a local copy
+  is one uninterruptible OS call, the same reason it can't be paused
+  either). Takes effect on the next connection made after changing it,
+  not retroactively on one already open.
+
 ## [0.7.1] — Concurrent transfers
 
 ### Changed
@@ -1568,7 +1584,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.2
 [0.7.1]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.1
 [0.7.0]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.0
 [0.6.29]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.29
