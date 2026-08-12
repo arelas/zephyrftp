@@ -5,7 +5,7 @@ local files and a remote server side by side, then drag, drop, or
 double-click to move things between them. Think FileZilla or WinSCP,
 built fresh in Qt6.
 
-**Current version: 0.7.0 — alpha.** Real functionality, but real gaps
+**Current version: 0.7.1 — alpha.** Real functionality, but real gaps
 too — see [Known limitations](#known-limitations) before relying on
 this for anything you can't afford to get wrong. [Releases](https://github.com/arelas/zephyrftp/releases)
 has downloadable Windows, macOS, and Linux builds; [CHANGELOG.md](CHANGELOG.md)
@@ -113,6 +113,12 @@ tracks what's changed between them.
   moment you reconnect to that server (shown as "Waiting to reconnect"
   in the meantime), never before, and never with a password remembered
   or a connection attempted on its own.
+- **Transfers run concurrently when they don't conflict** — uploading
+  from one pane and downloading on the other now happen at the same
+  time instead of one waiting for the other, automatically, no setting
+  to turn on. Two transfers that would use the *same* connection still
+  run one after another, since a single SFTP/FTP session can't safely
+  do two things at once.
 - **A live Commands pane** — a real-time, read-only log of protocol
   traffic for both panes, modeled on FileZilla's own message log, docked
   between the toolbar and the file panes by default.

@@ -8,6 +8,20 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.1] — Concurrent transfers
+
+### Changed
+
+- **Transfers now run concurrently when they don't conflict.** Two
+  transfers that each involve a different connection — e.g. uploading
+  from the left pane while downloading on the right — now run at the
+  same time instead of one waiting for the other. Two transfers that
+  would use the *same* connection still run one after another, as
+  before: a single SFTP/FTP session can't safely do two things at once,
+  so that part is unchanged. Nothing to turn on — it's automatic, and
+  never runs more transfers at once than your panes actually have
+  distinct connections open.
+
 ## [0.7.0] — macOS build
 
 ### Added
@@ -1554,7 +1568,9 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.29...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.1
+[0.7.0]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.0
 [0.6.29]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.29
 [0.6.28]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.28
 [0.6.27]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.27
