@@ -544,7 +544,13 @@ SiteStore against real files, so without it, it writes — and its
 migration phase deliberately overwrites — whatever `sites.json` is in
 your actual config directory. It constructs a real `ConnectionDialog`
 and drives its protocol combo, so it needs a `QApplication` and the
-offscreen platform, not just `QCoreApplication`.
+offscreen platform, not just `QCoreApplication`. It also covers
+`parseQuickConnectString()` (`QuickConnectParser.h/.cpp`, the toolbar
+quick-connect field's parser) — pure-logic checks needing no
+`ConnectionDialog`/`QApplication` machinery at all, added here rather
+than a new target since this file already covers protocol-selection-
+adjacent logic and the function has no UI dependency of its own to
+justify a separate one.
 
 These ten, plus every target documented in the subsections immediately
 below, need to actually pass — not just build — before a change is

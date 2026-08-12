@@ -8,6 +8,7 @@ class TransferManager;
 class HostKeyVerifier;
 class CertificateVerifier;
 class QDockWidget;
+class QLineEdit;
 class AppSettings;
 class CommandsPaneWidget;
 class EditSessionManager;
@@ -75,6 +76,16 @@ private slots:
     void onTransferSucceeded();
     void onAboutTriggered();
     void onPreferencesTriggered();
+
+    // Fired by m_quickConnectEdit's returnPressed() — parses its text
+    // (QuickConnectParser.h), prompts inline for a password (matching
+    // SiteManagerDialog::onConnectClicked()'s own synchronous
+    // QInputDialog::getText(Password) pattern, no CredentialStore
+    // prefill since this is a one-off, not a saved site), then dispatches
+    // through the same startConnection() every other entry point uses.
+    // Always targets m_rightPane, same fixed-shortcut reasoning as the
+    // toolbar/Connection-menu's own Connect... action.
+    void onQuickConnectReturnPressed();
 
 private:
     void buildLayout();
@@ -187,4 +198,12 @@ private:
     // directly). Constructed after m_transferManager/m_settings, before
     // either pane (both need to emit editRequested to it).
     EditSessionManager *m_editSessionManager = nullptr;
+    // Constructed in buildMenuBar(), NOT buildToolbar() where it's
+    // actually displayed — buildMenuBar() runs before buildToolbar() in
+    // the constructor (docks must exist before the View menu reads their
+    // toggleViewAction(), see that ordering's own comment), and the View
+    // menu's quick-connect toggle needs this to already exist. addWidget()
+    // in buildToolbar() reparents it into the toolbar; QLineEdit doesn't
+    // care that its initial parent (this) differs from where it ends up.
+    QLineEdit *m_quickConnectEdit = nullptr;
 };

@@ -68,6 +68,10 @@ int main(int argc, char *argv[])
               settings.defaultProtocol() == Protocol::Sftp);
         check("fresh start (no file): proxyType defaults to None",
               settings.proxyType() == ProxyType::None);
+        check("fresh start (no file): quickConnectFieldVisible defaults to true "
+              "(shown by default — burying a new feature behind an opt-in toggle "
+              "would defeat the point of adding it)",
+              settings.quickConnectFieldVisible());
     }
 
     // --- Round-trip every field through a real save() (via the public
@@ -79,12 +83,14 @@ int main(int argc, char *argv[])
         writer.setDefaultProtocol(Protocol::Ftp);
         writer.setWindowGeometry(QByteArray("fake-geometry-blob"));
         writer.setWindowState(QByteArray("fake-state-blob"));
+        writer.setQuickConnectFieldVisible(false);   // deliberately the non-default value
 
         AppSettings reader;
         check("round-trip: showHiddenFiles", reader.showHiddenFiles() == true);
         check("round-trip: defaultProtocol", reader.defaultProtocol() == Protocol::Ftp);
         check("round-trip: windowGeometry", reader.windowGeometry() == QByteArray("fake-geometry-blob"));
         check("round-trip: windowState", reader.windowState() == QByteArray("fake-state-blob"));
+        check("round-trip: quickConnectFieldVisible", reader.quickConnectFieldVisible() == false);
     }
 
     // --- Proxy: type/host/port/username round-trip through settings.json
@@ -133,7 +139,8 @@ int main(int argc, char *argv[])
               obj.contains("showHiddenFiles") && obj.contains("defaultProtocol")
                   && obj.contains("windowGeometry") && obj.contains("windowState")
                   && obj.contains("proxyType") && obj.contains("proxyHost")
-                  && obj.contains("proxyPort") && obj.contains("proxyUsername"));
+                  && obj.contains("proxyPort") && obj.contains("proxyUsername")
+                  && obj.contains("quickConnectFieldVisible"));
         check("settings.json NEVER contains a proxyPassword key",
               !obj.contains("proxyPassword"));
     }
@@ -165,7 +172,8 @@ int main(int argc, char *argv[])
         AppSettings settings;
         check("corrupt settings.json: falls back to defaults instead of crashing",
               !settings.showHiddenFiles() && settings.defaultProtocol() == Protocol::Sftp
-                  && settings.proxyType() == ProxyType::None);
+                  && settings.proxyType() == ProxyType::None
+                  && settings.quickConnectFieldVisible());
     }
 
     QFile::remove(settingsPath);

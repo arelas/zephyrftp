@@ -35,6 +35,7 @@
 #include "ui/ConnectionDialog.h"
 #include "backends/SavedSite.h"
 #include "backends/ConnectionRequest.h"
+#include "backends/QuickConnectParser.h"
 
 int main(int argc, char *argv[])
 {
@@ -405,6 +406,78 @@ int main(int argc, char *argv[])
             check("a saved FTP site writes no password/passphrase/secret key to disk",
                   !anySecretKey);
         }
+    }
+
+    // ===================================================================
+    // parseQuickConnectString() — the toolbar quick-connect field's
+    // "[protocol://][user@]host[:port]" parser. Pure function, no
+    // dialog/widget involved.
+    // ===================================================================
+    {
+        const auto bare = parseQuickConnectString(QStringLiteral("example.com"), Protocol::Sftp);
+        check("bare host: ok", bare.ok);
+        check("bare host: protocol falls back to the passed-in default",
+              bare.protocol == Protocol::Sftp);
+        check("bare host: host parsed correctly", bare.host == "example.com");
+        check("bare host: port falls back to defaultPortFor(Sftp) == 22", bare.port == 22);
+        check("bare host: username is empty", bare.username.isEmpty());
+
+        const auto userHost = parseQuickConnectString(QStringLiteral("alice@example.com"), Protocol::Sftp);
+        check("user@host: ok", userHost.ok);
+        check("user@host: username parsed", userHost.username == "alice");
+        check("user@host: host parsed", userHost.host == "example.com");
+
+        const auto userHostPort = parseQuickConnectString(
+            QStringLiteral("alice@example.com:2222"), Protocol::Sftp);
+        check("user@host:port: ok", userHostPort.ok);
+        check("user@host:port: explicit port used, not the default",
+              userHostPort.port == 2222);
+
+        const auto sftpScheme = parseQuickConnectString(
+            QStringLiteral("sftp://alice@example.com"), Protocol::Ftp);
+        check("sftp:// scheme: ok", sftpScheme.ok);
+        check("sftp:// scheme: overrides the passed-in default protocol",
+              sftpScheme.protocol == Protocol::Sftp);
+        check("sftp:// scheme: default port follows the SCHEME's protocol (22), "
+              "not the caller's default (Ftp's 21)", sftpScheme.port == 22);
+
+        const auto ftpScheme = parseQuickConnectString(QStringLiteral("ftp://example.com"), Protocol::Sftp);
+        check("ftp:// scheme: ok and protocol overridden", ftpScheme.ok && ftpScheme.protocol == Protocol::Ftp);
+        check("ftp:// scheme: default port is 21", ftpScheme.port == 21);
+
+        const auto ftpsScheme = parseQuickConnectString(QStringLiteral("ftps://example.com"), Protocol::Sftp);
+        check("ftps:// scheme: ok and protocol overridden",
+              ftpsScheme.ok && ftpsScheme.protocol == Protocol::Ftps);
+        check("ftps:// scheme: default port is 21 (explicit FTPS, not implicit 990)",
+              ftpsScheme.port == 21);
+
+        const auto schemeCaseInsensitive = parseQuickConnectString(
+            QStringLiteral("SFTP://example.com"), Protocol::Ftp);
+        check("scheme matching is case-insensitive",
+              schemeCaseInsensitive.ok && schemeCaseInsensitive.protocol == Protocol::Sftp);
+
+        const auto unknownScheme = parseQuickConnectString(
+            QStringLiteral("gopher://example.com"), Protocol::Sftp);
+        check("unknown scheme: NOT ok (a clear error, not a silent fallback)", !unknownScheme.ok);
+        check("unknown scheme: errorMessage set", !unknownScheme.errorMessage.isEmpty());
+
+        const auto empty = parseQuickConnectString(QString(), Protocol::Sftp);
+        check("empty input: not ok", !empty.ok);
+
+        const auto whitespaceOnly = parseQuickConnectString(QStringLiteral("   "), Protocol::Sftp);
+        check("whitespace-only input: not ok (trimmed first)", !whitespaceOnly.ok);
+
+        const auto emptyHost = parseQuickConnectString(QStringLiteral("alice@"), Protocol::Sftp);
+        check("username with no host: not ok", !emptyHost.ok);
+
+        const auto badPort = parseQuickConnectString(QStringLiteral("example.com:notaport"), Protocol::Sftp);
+        check("non-numeric port: not ok", !badPort.ok);
+
+        const auto outOfRangePort = parseQuickConnectString(QStringLiteral("example.com:99999"), Protocol::Sftp);
+        check("out-of-range port (99999): not ok", !outOfRangePort.ok);
+
+        const auto zeroPort = parseQuickConnectString(QStringLiteral("example.com:0"), Protocol::Sftp);
+        check("port 0: not ok (1-65535 only)", !zeroPort.ok);
     }
 
     qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");

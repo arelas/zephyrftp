@@ -82,6 +82,16 @@ public:
     // attempt — see SftpCredentials::proxy/FtpCredentials::proxy.
     ProxyConfig resolvedProxyConfig() const;
 
+    // Whether the toolbar's quick-connect field (MainWindow) is shown —
+    // toggled from the View menu. Defaults to true: burying a new
+    // feature behind an opt-in toggle would defeat the point of adding
+    // it. No change signal — MainWindow owns both the View-menu QAction
+    // and the field itself and wires them directly in the same call
+    // stack, same reasoning as defaultProtocol/externalEditorCommand
+    // above (nothing else needs to react live to this changing).
+    bool quickConnectFieldVisible() const { return m_quickConnectFieldVisible; }
+    void setQuickConnectFieldVisible(bool visible);
+
 signals:
     void showHiddenFilesChanged(bool value);
 
@@ -99,4 +109,5 @@ private:
     QString m_proxyHost;
     int m_proxyPort = 1080;
     QString m_proxyUsername;
+    bool m_quickConnectFieldVisible = true;
 };

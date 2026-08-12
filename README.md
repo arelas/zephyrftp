@@ -43,6 +43,14 @@ tracks what's changed between them.
   plain file this app controls) — that prompt still appears every time,
   just pre-filled, so it's never a silent auto-connect. Leave the box
   unchecked and nothing changes from before.
+- **Quick connect** — a toolbar field for a fast one-off connection:
+  type `[protocol://][user@]host[:port]` (e.g. `alice@example.com` or
+  `ftps://bob@ftp.example.com:2121`) and press Enter. Protocol defaults
+  to whatever Preferences has set as your default protocol if you don't
+  specify one; you're prompted for the password right there, the same
+  way Site Manager's own Connect button asks for it. No Connect dialog
+  to open first. Hide it if you don't want it via View → Quick Connect
+  Field.
 - **Proxy support (SOCKS5 or HTTP CONNECT)** — set one in Preferences
   and every SFTP/FTP/FTPS connection goes through it, no per-site setup
   needed. For anyone behind a corporate network that requires an
@@ -270,6 +278,12 @@ rather than being half-implemented:
   tries first) — the rare fallback to active mode, where the *server*
   has to connect back to *you*, can't be proxied by anything on the
   client side, proxy or not.
+- **Quick connect is password-only and always targets the right pane.**
+  There's no way to specify a private key through the quick-connect
+  field — use Connect... for that, same as it's always worked. It also
+  always connects the right-hand pane, the same fixed shortcut the
+  toolbar's own Connect... button already uses, not whichever pane you
+  last clicked in.
 
 ## For developers and tinkerers
 

@@ -1686,6 +1686,10 @@ to drive FileZilla itself for a same-desktop comparison.
   `resolvedProxyConfig()` — see the `ProxyConfig` entry above for the
   full story, including why the password specifically does NOT follow
   this class's own `settings.json` pattern.
+  Also gained `quickConnectFieldVisible` (bool, default `true` —
+  see `MainWindow`'s entry above for the full story of why this field
+  exists at all: `QMainWindow::saveState()` doesn't capture an
+  arbitrary toolbar widget's visibility the way it does a dock's).
 - `PreferencesDialog` (`src/ui/PreferencesDialog.h/.cpp`) — a "Show
   hidden files" checkbox, a default-protocol combo box, and two more
   checkboxes added later ("Show Transfers pane on start", "Show Commands
@@ -3000,6 +3004,52 @@ to drive FileZilla itself for a same-desktop comparison.
   `connectViaDialog()`/`siteManagerViaDialog()`/`disconnectPane()` helpers
   with it. "Disconnect" (toolbar, or a pane's own menu) swaps that pane
   back to `LocalBackend` via `disconnectPane()`.
+  A third path into `startConnection()`, added later: the toolbar's
+  quick-connect `QLineEdit` (`m_quickConnectEdit`) — type
+  `[protocol://][user@]host[:port]`, press Enter,
+  `onQuickConnectReturnPressed()` parses it (`QuickConnectParser.h/.cpp`,
+  a pure free function — `parseQuickConnectString(input, defaultProtocol)`
+  — deliberately kept separate from `ConnectionDialog`/`SiteManagerDialog`
+  rather than teaching either widget a text-parsing mode), pops a
+  synchronous `QInputDialog::getText(QLineEdit::Password)` for the
+  password (mirroring `SiteManagerDialog::onConnectClicked()`'s own
+  established "click Connect, prompt for the password right then"
+  pattern — no `CredentialStore` prefill, since a quick-connect isn't a
+  saved site), builds a `ConnectionRequest` directly (no
+  `ConnectionDialog` involved at all — it has no public setters besides
+  `setProtocol()`, so pre-filling it for a "confirm and go" flow would
+  have needed new API surface this simpler direct-build avoids), and
+  calls the same `startConnection()` every other path already uses.
+  Deliberately narrow scope, matching the fixed-`m_rightPane` shortcut
+  above: password auth only (no way to fit a private-key path into a
+  one-line string — `Connect...` still exists for that), no IPv6
+  literal support (a bare `lastIndexOf(':')` port split is ambiguous
+  with `[::1]:port`, and quick-connect isn't the place to solve that).
+  `protocol://` is optional — `sftp`/`ftp`/`ftps`, case-insensitive; if
+  omitted, `AppSettings::defaultProtocol()` is used, the same accessor
+  `connectViaDialog()` already reads to preselect `ConnectionDialog`'s
+  own combo. The field itself is constructed in `buildMenuBar()`, not
+  `buildToolbar()` where it's actually shown — `buildMenuBar()` runs
+  first in the constructor (docks must exist before it reads their
+  `toggleViewAction()`s) and the View menu's own quick-connect toggle
+  (below) needs the field to already exist; `buildToolbar()` just
+  `addWidget()`s it in, which reparents it into the toolbar without
+  caring that its original parent was `this`.
+  The View menu's **Quick Connect Field** toggle is deliberately NOT a
+  `toggleViewAction()` the way Transfers/Commands are — there's no
+  `QDockWidget` here to own one, confirmed nothing like this (a plain
+  toolbar-embedded widget, or a manually-managed checkable `QAction`
+  controlling a non-dock widget's visibility) existed anywhere in this
+  codebase before. A new `AppSettings::quickConnectFieldVisible` bool
+  (default `true`) persists it — `QMainWindow::saveState()` only
+  captures `QToolBar`/`QDockWidget` layout, not an arbitrary child
+  widget's own visibility, so reusing the existing `windowState` blob
+  the way Transfers/Commands do wasn't an option here. Not duplicated
+  onto the toolbar itself (unlike Transfers/Commands' intentional
+  toolbar+menu pairing) — a toolbar icon toggling a toolbar *field*'s
+  own visibility read as more confusing than useful, and every
+  plausible icon choice would visually collide with the existing green
+  `plug.svg` **Connect...** action right next to the field.
   `startConnection()` and `disconnectPane()` both check
   `targetPane->isConnecting()` first (via a shared `stillConnecting()`
   helper — see below) and refuse (a status-bar message instead) if it's

@@ -16,6 +16,7 @@
 #include "../backends/ConnectionRequest.h"
 #include "../backends/ConnectionDescriptor.h"
 #include "../backends/SftpCredentials.h"
+#include "../backends/QuickConnectParser.h"
 #include "../transfer/TransferManager.h"
 
 // Set via target_compile_definitions() in CMakeLists.txt, from this
@@ -38,6 +39,8 @@
 #include <QMessageBox>
 #include <QDockWidget>
 #include <QCloseEvent>
+#include <QLineEdit>
+#include <QInputDialog>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -118,6 +121,21 @@ MainWindow::MainWindow(QWidget *parent)
 
 void MainWindow::buildMenuBar()
 {
+    // Constructed here, not in buildToolbar() where it actually lives —
+    // see this member's own doc comment (MainWindow.h) for why: the View
+    // menu's toggle below needs it to already exist, and buildMenuBar()
+    // runs before buildToolbar() in the constructor.
+    m_quickConnectEdit = new QLineEdit(this);
+    m_quickConnectEdit->setPlaceholderText(tr("user@host — Enter to connect"));
+    m_quickConnectEdit->setToolTip(
+        tr("Quick connect: [protocol://][user@]host[:port]\n"
+           "protocol is sftp, ftp, or ftps — defaults to your Preferences default protocol.\n"
+           "Password auth only; for a private key, use Connect... instead."));
+    m_quickConnectEdit->setFixedWidth(220);
+    m_quickConnectEdit->setVisible(m_settings->quickConnectFieldVisible());
+    connect(m_quickConnectEdit, &QLineEdit::returnPressed,
+            this, &MainWindow::onQuickConnectReturnPressed);
+
     // A real menu bar, not just the toolbar — the toolbar was never
     // meant to be the only way into every action (About specifically
     // has no natural toolbar icon; "info circle" would be one more icon
@@ -169,6 +187,24 @@ void MainWindow::buildMenuBar()
     commandsToggle->setText(tr("&Commands"));
     viewMenu->addAction(commandsToggle);
 
+    // NOT a toggleViewAction() — m_quickConnectEdit is a plain toolbar
+    // widget, not a QDockWidget, so there's no Qt-managed checkable
+    // action to reuse (confirmed no such widget existed anywhere in this
+    // codebase before this). A manually-managed checkable QAction instead,
+    // wired directly to the field's own setVisible() and persisted via
+    // AppSettings — View-menu only, not duplicated onto the toolbar the
+    // way Transfers/Commands are (a toolbar icon toggling a toolbar
+    // FIELD's own visibility read as more confusing than useful, and
+    // every plausible icon here would visually collide with the
+    // existing green plug.svg Connect... action right next to it).
+    QAction *quickConnectToggle = viewMenu->addAction(tr("&Quick Connect Field"));
+    quickConnectToggle->setCheckable(true);
+    quickConnectToggle->setChecked(m_settings->quickConnectFieldVisible());
+    connect(quickConnectToggle, &QAction::toggled, this, [this](bool visible) {
+        m_quickConnectEdit->setVisible(visible);
+        m_settings->setQuickConnectFieldVisible(visible);
+    });
+
     QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
     QAction *aboutAction = helpMenu->addAction(tr("&About ZephyrFTP..."));
     connect(aboutAction, &QAction::triggered, this, &MainWindow::onAboutTriggered);
@@ -193,6 +229,12 @@ void MainWindow::buildToolbar()
     auto *connectAction = toolbar->addAction(
         IconTheme::tintedIcon(":/icons/plug.svg", IconTheme::Green), tr("Connect..."));
     connect(connectAction, &QAction::triggered, this, &MainWindow::onConnectTriggered);
+
+    // Constructed back in buildMenuBar() (see m_quickConnectEdit's own
+    // doc comment in MainWindow.h for why) — addWidget() reparents it
+    // into this toolbar; its visibility was already set from
+    // AppSettings there too, so nothing further to sync here.
+    toolbar->addWidget(m_quickConnectEdit);
 
     auto *disconnectAction = toolbar->addAction(
         IconTheme::tintedIcon(":/icons/plug-connected-x.svg", IconTheme::Red), tr("Disconnect"));
@@ -455,6 +497,50 @@ void MainWindow::onConnectTriggered()
     // existing behavior (see startConnection()'s own comment on why this
     // stays a fixed shortcut rather than gaining a "which pane" concept).
     connectViaDialog(m_rightPane);
+}
+
+void MainWindow::onQuickConnectReturnPressed()
+{
+    const QuickConnectResult result =
+        parseQuickConnectString(m_quickConnectEdit->text(), m_settings->defaultProtocol());
+    if (!result.ok) {
+        statusBar()->showMessage(result.errorMessage, 5000);
+        return;
+    }
+
+    // Password-only auth — matching SiteManagerDialog::onConnectClicked()'s
+    // own QInputDialog::getText(Password) pattern exactly, but with no
+    // CredentialStore prefill: this is a one-off, not a saved site.
+    // Private-key auth still requires the full Connect dialog — a
+    // deliberate scope boundary, not an oversight (no reasonable way to
+    // fit a key path into a one-line quick-connect string).
+    bool ok = false;
+    const QString password = QInputDialog::getText(
+        this, tr("Connect"), tr("Password for %1@%2:").arg(result.username, result.host),
+        QLineEdit::Password, QString(), &ok);
+    if (!ok)
+        return;
+
+    ConnectionRequest request;
+    request.protocol = result.protocol;
+    if (result.protocol == Protocol::Sftp) {
+        request.sftp.host = result.host;
+        request.sftp.port = result.port;
+        request.sftp.username = result.username;
+        request.sftp.authMethod = SftpAuthMethod::Password;
+        request.sftp.password = password;
+    } else {
+        request.ftp.host = result.host;
+        request.ftp.port = result.port;
+        request.ftp.username = result.username;
+        request.ftp.password = password;
+        request.ftp.ftpsMode = protocolToFtpsMode(result.protocol);
+    }
+
+    // Same fixed-right-pane shortcut connectViaDialog() already uses —
+    // see startConnection()'s own comment.
+    startConnection(request, m_rightPane);
+    m_quickConnectEdit->clear();
 }
 
 void MainWindow::onSiteManagerTriggered()

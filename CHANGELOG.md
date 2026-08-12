@@ -8,6 +8,16 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Added
+
+- **Quick connect.** A toolbar field for a fast one-off connection:
+  type `[protocol://][user@]host[:port]` and press Enter — you're
+  prompted for the password right there, same as Site Manager's own
+  Connect button. No Connect dialog to open first. Hide it via View →
+  Quick Connect Field if you don't want it. Password-only (no
+  private-key auth) and always connects the right-hand pane, matching
+  the toolbar's existing Connect... shortcut.
+
 ## [0.6.26] — Proxy support (SOCKS5 / HTTP CONNECT)
 
 ### Added

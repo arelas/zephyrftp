@@ -62,6 +62,7 @@ set(SOURCES
     src/main.cpp
     src/AppSettings.cpp
     src/ui/MainWindow.cpp
+    src/backends/QuickConnectParser.cpp
     src/ui/FilePaneWidget.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
@@ -266,6 +267,7 @@ qt_add_executable(smoke-test EXCLUDE_FROM_ALL
     src/smoke_test.cpp
     src/AppSettings.cpp
     src/ui/MainWindow.cpp
+    src/backends/QuickConnectParser.cpp
     src/ui/FilePaneWidget.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
@@ -303,6 +305,7 @@ qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
     src/transfer_queue_test.cpp
     src/AppSettings.cpp
     src/ui/MainWindow.cpp
+    src/backends/QuickConnectParser.cpp
     src/ui/FilePaneWidget.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
@@ -491,6 +494,7 @@ qt_add_executable(protocol-selection-test EXCLUDE_FROM_ALL
     src/protocol_selection_test.cpp
     src/ui/ConnectionDialog.cpp
     src/backends/SavedSite.cpp
+    src/backends/QuickConnectParser.cpp
     src/backends/RemoteBackend.h
 )
 target_include_directories(protocol-selection-test PRIVATE src)
