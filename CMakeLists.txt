@@ -707,6 +707,32 @@ qt_add_executable(queue-persistence-test EXCLUDE_FROM_ALL
 target_include_directories(queue-persistence-test PRIVATE src)
 target_link_libraries(queue-persistence-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
 
+# --- Transfer concurrency test: TransferManager's per-backend-instance
+# concurrent scheduling (two items on DIFFERENT backend instances run
+# genuinely at the same time; two on the SAME instance still serialize;
+# cancelling one concurrently-active item doesn't affect another) — see
+# src/transfer_concurrency_test.cpp's own header comment. Self-contained
+# and EXCLUDE_FROM_ALL like queue-persistence-test above, same
+# "additional, not folded into the fixed count" treatment.
+qt_add_executable(transfer-concurrency-test EXCLUDE_FROM_ALL
+    src/transfer_concurrency_test.cpp
+    src/AppSettings.cpp
+    src/backends/CredentialStore.cpp
+    src/ui/FilePaneWidget.cpp
+    src/ui/PermissionsDialog.cpp
+    src/ui/FileTreeView.cpp
+    src/ui/IconTheme.cpp
+    src/backends/LocalBackend.cpp
+    src/backends/RemoteBackend.h
+    src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
+    src/transfer/FolderEnumerator.cpp
+    resources/icons.qrc
+    resources/theme.qrc
+)
+target_include_directories(transfer-concurrency-test PRIVATE src)
+target_link_libraries(transfer-concurrency-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
+
 # --- Live-server verification harnesses (NOT part of the ten-target
 # self-contained test suite above — these need an external server
 # already running, started via tools/local-test-servers/*.sh; see each

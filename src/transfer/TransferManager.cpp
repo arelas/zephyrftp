@@ -473,15 +473,36 @@ void TransferManager::startFolderFileTransfers(FilePaneWidget *sourcePane, FileP
 
 void TransferManager::startNext()
 {
-    if (m_activeIndex != -1)
-        return;   // already processing something; this item will get picked up when it finishes
-
+    // Scans the WHOLE queue on every call, not just the first Queued item
+    // found — a busy backend no longer blocks an unrelated item on a
+    // free backend from starting in the same pass. An item is claimed
+    // (an ActiveTransfer entry appended) the moment this loop commits to
+    // it, BEFORE its async conflict check even goes out — same ordering
+    // the old single m_activeIndex used, just scoped per-item now,
+    // closing the same double-dispatch race: without claiming first, two
+    // Queued items for the same backend could both pass the busy check
+    // in one scan before either's checkExists() resolves.
     for (int i = 0; i < m_items.size(); ++i) {
-        if (m_items[i].status != TransferStatus::Queued)
+        TransferItem &item = m_items[i];
+        if (item.status != TransferStatus::Queued)
             continue;
 
-        m_activeIndex = i;
-        TransferItem &item = m_items[i];
+        const QVarLengthArray<RemoteBackend *, 2> required = requiredBackendsForDispatch(item);
+        bool anyBusy = false;
+        for (RemoteBackend *backend : required) {
+            if (isBackendClaimed(backend)) {
+                anyBusy = true;
+                break;
+            }
+        }
+        if (anyBusy)
+            continue;   // try the next Queued item — a different backend might be free
+
+        ActiveTransfer active;
+        active.itemIndex = i;
+        for (RemoteBackend *backend : required)
+            active.claimedBackends.append(backend);
+        m_active.append(active);
 
         // A resumed item's destination conflict check already happened
         // (or was deliberately skipped for a good reason) the first time
@@ -490,8 +511,8 @@ void TransferManager::startNext()
         // wrong, not just redundant.
         if (item.skipConflictCheckOnDispatch) {
             item.skipConflictCheckOnDispatch = false;
-            dispatchActiveItem();
-            return;
+            dispatchActiveItem(i);
+            continue;   // keep scanning — another free backend might have a Queued item too
         }
 
         // Check the destination for a conflict before doing anything
@@ -500,34 +521,45 @@ void TransferManager::startNext()
         // clean, or the conflict is resolved as Overwrite.
         RemoteBackend *destBackend = item.destPane->backend();
         ensureExistsCheckConnected(destBackend);
-        m_pendingFileConflictCheckId = m_nextConflictCheckId++;
+        const int requestId = m_nextConflictCheckId++;
+        m_pendingFileConflictChecks.insert(requestId, i);
         QMetaObject::invokeMethod(destBackend, "checkExists", Qt::QueuedConnection,
-                                   Q_ARG(QString, item.destPath), Q_ARG(int, m_pendingFileConflictCheckId));
-        return;
+                                   Q_ARG(QString, item.destPath), Q_ARG(int, requestId));
+        // keep scanning rather than returning — a different Queued item
+        // on a different, still-free backend can start in this same pass
     }
 
-    // Nothing left to run — a fresh batch of transfers should get fresh
-    // conflict decisions rather than silently inheriting a choice from
-    // an unrelated earlier transfer.
-    m_activeIndex = -1;
-    m_fileConflictResolution = ConflictResolution::Ask;
-    m_directoryConflictResolution = ConflictResolution::Ask;
+    // Nothing left to run anywhere — a fresh batch of transfers should
+    // get fresh conflict decisions rather than silently inheriting a
+    // choice from an unrelated earlier transfer. m_active must be empty
+    // too, not just "no Queued items": an item can be claimed and mid
+    // conflict-check (no ActiveTransfer removed yet) without being
+    // Queued anymore.
+    if (m_active.isEmpty()) {
+        m_fileConflictResolution = ConflictResolution::Ask;
+        m_directoryConflictResolution = ConflictResolution::Ask;
+    }
 }
 
-void TransferManager::dispatchActiveItem()
+void TransferManager::dispatchActiveItem(int itemIndex)
 {
-    if (m_activeIndex < 0 || m_activeIndex >= m_items.size())
+    if (itemIndex < 0 || itemIndex >= m_items.size())
         return;
 
-    TransferItem &item = m_items[m_activeIndex];
+    const int activeIdx = activeIndexForItem(itemIndex);
+    if (activeIdx < 0)
+        return;   // defensive — startNext() always creates the ActiveTransfer entry before calling this
+    ActiveTransfer &active = m_active[activeIdx];
+
+    TransferItem &item = m_items[itemIndex];
     item.status = TransferStatus::InProgress;
     item.speedBytesPerSec = 0;
     emit itemUpdated(item);
 
-    m_speedSampleTimer.start();
-    m_speedSampleBytesAtLastSample = item.bytesDone;   // nonzero when resuming a Paused item
-    m_smoothedSpeedBytesPerSec = 0.0;
-    m_hasSpeedSample = false;
+    active.speedSampleTimer.start();
+    active.speedSampleBytesAtLastSample = item.bytesDone;   // nonzero when resuming a Paused item
+    active.smoothedSpeedBytesPerSec = 0.0;
+    active.hasSpeedSample = false;
 
     // A plain deref for every direction except EditDownload/EditUpload
     // (see TransferDirection's own doc comment) — those two are the
@@ -635,12 +667,13 @@ void TransferManager::dispatchActiveItem()
             : tr("Internal error: no backend to execute this transfer");
         cleanupTempFile(item);   // no-op unless phase 1 already downloaded to a temp file (the RemoteToRemote case above)
         emit itemUpdated(item);
-        m_activeIndex = -1;
+        m_active.removeAt(activeIdx);
         startNext();   // try the next queued item instead of getting stuck
         return;
     }
 
-    connectToBackend(executor);
+    active.currentExecutor = executor;
+    ensureTransferSignalsConnected(executor);
     // item.bytesDone doubles as the resume offset — 0 for a fresh
     // item, nonzero when re-starting a previously Paused one (see
     // resumeItem(), which deliberately does NOT reset bytesDone the
@@ -659,11 +692,11 @@ QString TransferManager::allocateTempFilePath(const TransferItem &item) const
     const QString stagingDir = stagingDirPath();
     QDir().mkpath(stagingDir);
 
-    // The item's own unique id prevents any collision between concurrently-
-    // queued RemoteToRemote items (even though only one ever actually
-    // executes at a time, per this class's serial-processing design); the
-    // original filename stays visible alongside it for anyone inspecting
-    // the staging directory mid-transfer or after a crash.
+    // The item's own unique id prevents any collision between
+    // concurrently-queued RemoteToRemote items — including two that are
+    // now genuinely executing at the same time, on two different backend
+    // pairs; the original filename stays visible alongside it for anyone
+    // inspecting the staging directory mid-transfer or after a crash.
     return stagingDir + QStringLiteral("/%1_%2")
         .arg(item.id)
         .arg(QFileInfo(item.fileName).fileName());
@@ -703,31 +736,33 @@ void TransferManager::cancelItem(int id)
 
     TransferItem &item = m_items[idx];
 
-    if (idx == m_activeIndex) {
-        if (m_currentBackend) {
+    const int activeIdx = activeIndexForItem(idx);
+    if (activeIdx >= 0) {
+        ActiveTransfer &active = m_active[activeIdx];
+        if (active.currentExecutor) {
             // Currently running — ask the executing backend to stop, and
             // remember to report the resulting transferFailed as Cancelled
             // rather than Failed once it arrives.
-            m_activeItemCancelled = true;
-            m_currentBackend->requestCancel();
+            active.cancelled = true;
+            active.currentExecutor->requestCancel();
         } else {
-            // A real bug: m_currentBackend (a QPointer) can go null if the
+            // A real bug: currentExecutor (a QPointer) can go null if the
             // active item's backend is destroyed/swapped mid-transfer —
             // e.g. Disconnect on a pane with a transfer running against
             // it. There's no backend left to ask to stop, and no
             // transferFailed/transferPaused signal is ever coming to
             // resolve this item — without handling this case, the item
-            // AND m_activeIndex would stay stuck InProgress forever,
-            // permanently blocking every later item via startNext()'s
-            // `if (m_activeIndex != -1) return;` guard. Resolve it
-            // directly instead of waiting for a response that can't
-            // arrive, the same terminal state onBackendFailed() would
-            // have produced for a cancel.
+            // AND its ActiveTransfer entry would stay stuck InProgress
+            // forever, permanently blocking any other Queued item that
+            // needs one of its claimedBackends. Resolve it directly
+            // instead of waiting for a response that can't arrive, the
+            // same terminal state onBackendFailed() would have produced
+            // for a cancel.
             item.status = TransferStatus::Cancelled;
             item.speedBytesPerSec = 0;
             cleanupTempFile(item);
             emit itemUpdated(item);
-            m_activeIndex = -1;
+            m_active.removeAt(activeIdx);
             startNext();
         }
         return;
@@ -736,10 +771,9 @@ void TransferManager::cancelItem(int id)
     if (item.status == TransferStatus::Queued || item.status == TransferStatus::Paused
         || item.status == TransferStatus::PendingReconnect) {
         // None of the three is actively running — Queued never started,
-        // Paused already stopped and isn't the active item anymore
-        // (m_activeIndex moved on when it paused), PendingReconnect has
-        // no backend at all yet — so there's nothing to interrupt, just
-        // mark it done.
+        // Paused already stopped and has no ActiveTransfer entry anymore
+        // (removed when it paused), PendingReconnect has no backend at
+        // all yet — so there's nothing to interrupt, just mark it done.
         item.status = TransferStatus::Cancelled;
         emit itemUpdated(item);
     }
@@ -757,8 +791,8 @@ void TransferManager::retryItem(int id)
         && item.status != TransferStatus::Skipped)
         return;
 
-    // A Move item is never TransferManager's "active item" and never
-    // reaches this Queued/m_activeIndex pipeline in the first place (see
+    // A Move item never becomes an ActiveTransfer entry and never
+    // reaches this Queued/m_active pipeline in the first place (see
     // moveEntry()'s own doc comment) — re-queuing one here would hit
     // dispatchActiveItem(), which has no case for TransferDirection::Move
     // and would fail it again with a misleading generic "no backend to
@@ -803,11 +837,15 @@ void TransferManager::retryItem(int id)
 void TransferManager::pauseItem(int id)
 {
     const int idx = indexById(id);
-    if (idx < 0 || idx != m_activeIndex)
-        return;   // only the currently-running item can be paused
+    if (idx < 0)
+        return;
+    const int activeIdx = activeIndexForItem(idx);
+    if (activeIdx < 0)
+        return;   // only a currently-claimed (running or mid-conflict-check) item can be paused
 
-    if (m_currentBackend)
-        m_currentBackend->requestPause();
+    const ActiveTransfer &active = m_active[activeIdx];
+    if (active.currentExecutor)
+        active.currentExecutor->requestPause();
     // No status change here — onBackendPaused() makes that transition
     // once the backend actually confirms it stopped. Setting Paused
     // eagerly here would show a status the transfer hasn't reached yet.
@@ -841,34 +879,95 @@ void TransferManager::resumeItem(int id)
     startNext();
 }
 
-void TransferManager::connectToBackend(RemoteBackend *backend)
+void TransferManager::ensureTransferSignalsConnected(RemoteBackend *backend)
 {
-    // Disconnect only the four transfer signals THIS method connected below
-    // — not a wildcard disconnect(m_currentBackend, nullptr, this, nullptr)
-    // (a real bug this fixes: that wiped out every connection the old
-    // backend had to `this`, including entryMoved/entryMoveFailed from
-    // ensureMoveConnected() for an in-flight Move still running against
-    // that same backend object, e.g. a Move to a server that's also
-    // m_currentBackend for an ordinary transfer — the Move's response
-    // would arrive with nothing listening, leaving its TransferItem stuck
-    // InProgress forever). existsChecked/entryMoved/entryMoveFailed are
-    // deliberately left alone here; they're Qt::UniqueConnection and
-    // requestId-correlated, so leaving them connected across backends is
-    // safe (see ensureExistsCheckConnected()/ensureMoveConnected()'s own
-    // comments) — unlike these four, which must not double-deliver.
-    if (m_currentBackend) {
-        disconnect(m_currentBackend, &RemoteBackend::transferProgress, this, &TransferManager::onBackendProgress);
-        disconnect(m_currentBackend, &RemoteBackend::transferFinished, this, &TransferManager::onBackendFinished);
-        disconnect(m_currentBackend, &RemoteBackend::transferFailed, this, &TransferManager::onBackendFailed);
-        disconnect(m_currentBackend, &RemoteBackend::transferPaused, this, &TransferManager::onBackendPaused);
+    // Qt::UniqueConnection — safe to call every time an item is
+    // dispatched to this backend, even repeatedly across many transfers
+    // over the backend's lifetime. Routing no longer depends on "whichever
+    // backend is currently THE one" (there can be several at once now);
+    // the four onBackend*() slots below resolve sender() against
+    // m_active's currentExecutor fields instead, so a connection left on
+    // an idle backend simply has nothing to route when (if ever) it fires.
+    connect(backend, &RemoteBackend::transferProgress, this, &TransferManager::onBackendProgress,
+            Qt::UniqueConnection);
+    connect(backend, &RemoteBackend::transferFinished, this, &TransferManager::onBackendFinished,
+            Qt::UniqueConnection);
+    connect(backend, &RemoteBackend::transferFailed, this, &TransferManager::onBackendFailed,
+            Qt::UniqueConnection);
+    connect(backend, &RemoteBackend::transferPaused, this, &TransferManager::onBackendPaused,
+            Qt::UniqueConnection);
+}
+
+QVarLengthArray<RemoteBackend *, 2> TransferManager::requiredBackendsForDispatch(const TransferItem &item) const
+{
+    QVarLengthArray<RemoteBackend *, 2> result;
+
+    RemoteBackend *srcBackend = item.sourcePane ? item.sourcePane->backend() : nullptr;
+    RemoteBackend *dstBackend = item.destPane ? item.destPane->backend() : nullptr;
+
+    switch (item.direction) {
+    case TransferDirection::LocalToRemote:
+    case TransferDirection::LocalToLocal:
+    case TransferDirection::EditUpload:
+        if (dstBackend)
+            result.append(dstBackend);
+        break;
+    case TransferDirection::RemoteToLocal:
+    case TransferDirection::EditDownload:
+        if (srcBackend)
+            result.append(srcBackend);
+        break;
+    case TransferDirection::RemoteToRemote:
+        // Both backends claimed up front, for the item's whole two-phase
+        // lifetime — see ActiveTransfer::claimedBackends' own doc comment
+        // for why. A freshly-Queued (or retried) RemoteToRemote item is
+        // always phase == Downloading; the phase-2 re-dispatch from
+        // onBackendFinished() doesn't go through startNext()/this helper
+        // at all, so phase is never Uploading here.
+        if (srcBackend)
+            result.append(srcBackend);
+        if (dstBackend && dstBackend != srcBackend)
+            result.append(dstBackend);
+        break;
+    case TransferDirection::Move:
+    case TransferDirection::Unsupported:
+        // Move never reaches startNext() (see moveEntry()'s doc comment);
+        // Unsupported is never assigned. Defensive only.
+        break;
     }
 
-    connect(backend, &RemoteBackend::transferProgress, this, &TransferManager::onBackendProgress);
-    connect(backend, &RemoteBackend::transferFinished, this, &TransferManager::onBackendFinished);
-    connect(backend, &RemoteBackend::transferFailed, this, &TransferManager::onBackendFailed);
-    connect(backend, &RemoteBackend::transferPaused, this, &TransferManager::onBackendPaused);
+    return result;
+}
 
-    m_currentBackend = backend;
+bool TransferManager::isBackendClaimed(RemoteBackend *backend) const
+{
+    if (!backend)
+        return false;
+    for (const ActiveTransfer &active : m_active) {
+        if (active.claimedBackends.contains(backend))
+            return true;
+    }
+    return false;
+}
+
+int TransferManager::activeIndexForExecutor(RemoteBackend *backend) const
+{
+    if (!backend)
+        return -1;
+    for (int i = 0; i < m_active.size(); ++i) {
+        if (m_active[i].currentExecutor == backend)
+            return i;
+    }
+    return -1;
+}
+
+int TransferManager::activeIndexForItem(int itemIndex) const
+{
+    for (int i = 0; i < m_active.size(); ++i) {
+        if (m_active[i].itemIndex == itemIndex)
+            return i;
+    }
+    return -1;
 }
 
 void TransferManager::ensureExistsCheckConnected(RemoteBackend *backend)
@@ -1028,15 +1127,19 @@ void TransferManager::onDestinationExistsChecked(const QString &path, bool exist
         return;
     }
 
-    if (requestId == m_pendingFileConflictCheckId) {
-        m_pendingFileConflictCheckId = -1;
-        if (m_activeIndex < 0 || m_activeIndex >= m_items.size())
-            return;   // active item disappeared somehow — defensive, shouldn't happen
+    const auto fileConflictIt = m_pendingFileConflictChecks.find(requestId);
+    if (fileConflictIt != m_pendingFileConflictChecks.end()) {
+        const int itemIndex = fileConflictIt.value();
+        m_pendingFileConflictChecks.erase(fileConflictIt);
+        if (itemIndex < 0 || itemIndex >= m_items.size())
+            return;   // defensive, shouldn't happen
+        if (activeIndexForItem(itemIndex) < 0)
+            return;   // item was cancelled while this check was in flight — its ActiveTransfer is already gone
 
-        TransferItem &item = m_items[m_activeIndex];
+        TransferItem &item = m_items[itemIndex];
 
         if (!exists) {
-            dispatchActiveItem();
+            dispatchActiveItem(itemIndex);
             return;
         }
 
@@ -1047,6 +1150,12 @@ void TransferManager::onDestinationExistsChecked(const QString &path, bool exist
             proceed = false;
         } else {
             bool applyToAll = false;
+            // askConflict()'s QMessageBox::exec() pumps the event loop —
+            // another concurrently-active item can finish/fail/pause and
+            // be removed from m_active while this is up, which would
+            // shift indices for anything captured beforehand. Nothing
+            // here is captured across this call for that reason;
+            // activeIndexForItem(itemIndex) below is looked up fresh.
             proceed = askConflict(QFileInfo(item.destPath).fileName(), /*isDirectory=*/false, applyToAll);
             if (applyToAll) {
                 m_fileConflictResolution =
@@ -1055,12 +1164,14 @@ void TransferManager::onDestinationExistsChecked(const QString &path, bool exist
         }
 
         if (proceed) {
-            dispatchActiveItem();
+            dispatchActiveItem(itemIndex);
         } else {
             item.status = TransferStatus::Skipped;
             item.speedBytesPerSec = 0;
             emit itemUpdated(item);
-            m_activeIndex = -1;
+            const int activeIdx = activeIndexForItem(itemIndex);
+            if (activeIdx >= 0)
+                m_active.removeAt(activeIdx);
             startNext();
         }
         return;
@@ -1073,11 +1184,14 @@ void TransferManager::onDestinationExistsChecked(const QString &path, bool exist
 
 void TransferManager::onBackendProgress(const QString &fileName, qint64 bytesDone, qint64 bytesTotal)
 {
-    Q_UNUSED(fileName);   // only one transfer active at a time, so no need to match by name
-    if (m_activeIndex < 0 || m_activeIndex >= m_items.size())
-        return;
+    Q_UNUSED(fileName);   // routed by sender() below, not by name
+    auto *backend = qobject_cast<RemoteBackend *>(sender());
+    const int activeIdx = activeIndexForExecutor(backend);
+    if (activeIdx < 0)
+        return;   // no ActiveTransfer currently executing on this backend — stale/unrelated, ignore
 
-    TransferItem &item = m_items[m_activeIndex];
+    ActiveTransfer &active = m_active[activeIdx];
+    TransferItem &item = m_items[active.itemIndex];
     item.bytesDone = bytesDone;
     item.bytesTotal = bytesTotal;
 
@@ -1085,31 +1199,31 @@ void TransferManager::onBackendProgress(const QString &fileName, qint64 bytesDon
     // progress signal — SFTP's read/write loop emits one per 32KB chunk,
     // which on a fast connection would be far too frequent to be a
     // meaningful "live" number rather than noise.
-    const qint64 elapsedMs = m_speedSampleTimer.isValid() ? m_speedSampleTimer.elapsed() : 0;
+    const qint64 elapsedMs = active.speedSampleTimer.isValid() ? active.speedSampleTimer.elapsed() : 0;
     if (elapsedMs >= 250) {
-        const qint64 bytesSinceLastSample = bytesDone - m_speedSampleBytesAtLastSample;
+        const qint64 bytesSinceLastSample = bytesDone - active.speedSampleBytesAtLastSample;
         const double rawSpeed = (bytesSinceLastSample * 1000.0) / elapsedMs;
 
-        // Exponential moving average across samples — see m_smoothedSpeedBytesPerSec's
-        // doc comment for why. alpha = 0.3 is a fairly standard middle
-        // ground (e.g. in the same range curl and several download
-        // managers use for their own live rate display): responsive
-        // enough to reflect a real speed change within a couple of
-        // seconds, calm enough that single-window noise doesn't dominate
-        // what's shown. The very first sample after a (re)start has
-        // nothing to blend with, so it's taken as-is rather than
-        // artificially damped toward zero.
-        if (!m_hasSpeedSample) {
-            m_smoothedSpeedBytesPerSec = rawSpeed;
-            m_hasSpeedSample = true;
+        // Exponential moving average across samples — see
+        // ActiveTransfer::smoothedSpeedBytesPerSec's own doc comment for
+        // why. alpha = 0.3 is a fairly standard middle ground (e.g. in
+        // the same range curl and several download managers use for
+        // their own live rate display): responsive enough to reflect a
+        // real speed change within a couple of seconds, calm enough that
+        // single-window noise doesn't dominate what's shown. The very
+        // first sample after a (re)start has nothing to blend with, so
+        // it's taken as-is rather than artificially damped toward zero.
+        if (!active.hasSpeedSample) {
+            active.smoothedSpeedBytesPerSec = rawSpeed;
+            active.hasSpeedSample = true;
         } else {
             constexpr double kSmoothingAlpha = 0.3;
-            m_smoothedSpeedBytesPerSec = kSmoothingAlpha * rawSpeed
-                + (1.0 - kSmoothingAlpha) * m_smoothedSpeedBytesPerSec;
+            active.smoothedSpeedBytesPerSec = kSmoothingAlpha * rawSpeed
+                + (1.0 - kSmoothingAlpha) * active.smoothedSpeedBytesPerSec;
         }
-        item.speedBytesPerSec = static_cast<qint64>(m_smoothedSpeedBytesPerSec);
-        m_speedSampleBytesAtLastSample = bytesDone;
-        m_speedSampleTimer.restart();
+        item.speedBytesPerSec = static_cast<qint64>(active.smoothedSpeedBytesPerSec);
+        active.speedSampleBytesAtLastSample = bytesDone;
+        active.speedSampleTimer.restart();
     }
 
     emit itemUpdated(item);
@@ -1118,20 +1232,26 @@ void TransferManager::onBackendProgress(const QString &fileName, qint64 bytesDon
 void TransferManager::onBackendFinished(const QString &fileName)
 {
     Q_UNUSED(fileName);
-    if (m_activeIndex < 0 || m_activeIndex >= m_items.size())
+    auto *backend = qobject_cast<RemoteBackend *>(sender());
+    const int activeIdx = activeIndexForExecutor(backend);
+    if (activeIdx < 0)
         return;
 
-    TransferItem &item = m_items[m_activeIndex];
+    const int itemIndex = m_active[activeIdx].itemIndex;
+    TransferItem &item = m_items[itemIndex];
 
     // A RemoteToRemote item's phase-1 (download-to-temp) completion isn't
     // the item finishing — it's the cue to start phase 2 (upload-from-
     // temp). Re-enters dispatchActiveItem() directly (not through
     // startNext()/checkExists() — the destination conflict check already
     // happened once for this item, no reason to ask again) after
-    // re-pointing m_currentBackend at the destination backend via a
-    // second connectToBackend() call. bytesDone/bytesTotal are zeroed
-    // here (not inside dispatchActiveItem() itself) since that's the
-    // signal dispatchActiveItem()'s own speed-sample reset reads from.
+    // re-pointing this ActiveTransfer's currentExecutor at the
+    // destination backend. bytesDone/bytesTotal are zeroed here (not
+    // inside dispatchActiveItem() itself) since that's the signal
+    // dispatchActiveItem()'s own speed-sample reset reads from. The
+    // SAME ActiveTransfer entry carries over — it already claimed both
+    // backends up front (see ActiveTransfer::claimedBackends' own doc
+    // comment), so no new busy check is needed here.
     if (item.direction == TransferDirection::RemoteToRemote
         && item.phase == TransferPhase::Downloading) {
         item.phase = TransferPhase::Uploading;
@@ -1148,34 +1268,35 @@ void TransferManager::onBackendFinished(const QString &fileName)
         // instead of connecting signals to a backend that's about to be
         // silently wrong.
         if (item.capturedDestBackend)
-            connectToBackend(item.capturedDestBackend);
-        dispatchActiveItem();
+            ensureTransferSignalsConnected(item.capturedDestBackend);
+        dispatchActiveItem(itemIndex);
         return;
     }
 
     item.status = TransferStatus::Done;
     item.bytesDone = item.bytesTotal > 0 ? item.bytesTotal : item.bytesDone;
     item.speedBytesPerSec = 0;   // not meaningful once finished — avoid showing a stale number
-    m_activeItemCancelled = false;   // in case cancelItem() was called just as this finished anyway
     cleanupTempFile(item);   // no-op for every direction except a just-finished RemoteToRemote upload
     emit itemUpdated(item);
     emit transferSucceeded();
 
-    m_activeIndex = -1;
+    m_active.removeAt(activeIdx);
     startNext();
 }
 
 void TransferManager::onBackendFailed(const QString &fileName, const QString &reason)
 {
     Q_UNUSED(fileName);
-    if (m_activeIndex < 0 || m_activeIndex >= m_items.size())
+    auto *backend = qobject_cast<RemoteBackend *>(sender());
+    const int activeIdx = activeIndexForExecutor(backend);
+    if (activeIdx < 0)
         return;
 
-    TransferItem &item = m_items[m_activeIndex];
-    item.status = m_activeItemCancelled ? TransferStatus::Cancelled : TransferStatus::Failed;
-    item.errorMessage = m_activeItemCancelled ? QString() : reason;
+    ActiveTransfer &active = m_active[activeIdx];
+    TransferItem &item = m_items[active.itemIndex];
+    item.status = active.cancelled ? TransferStatus::Cancelled : TransferStatus::Failed;
+    item.errorMessage = active.cancelled ? QString() : reason;
     item.speedBytesPerSec = 0;
-    m_activeItemCancelled = false;
     // Covers a RemoteToRemote item's phase-1 failure, phase-2 failure
     // (deleting the already-downloaded temp file too), and cancellation
     // (which surfaces through this same path) — one call handles all
@@ -1183,33 +1304,36 @@ void TransferManager::onBackendFailed(const QString &fileName, const QString &re
     cleanupTempFile(item);
     emit itemUpdated(item);
 
-    m_activeIndex = -1;
+    m_active.removeAt(activeIdx);
     startNext();
 }
 
 void TransferManager::onBackendPaused(const QString &fileName, qint64 bytesDone)
 {
     Q_UNUSED(fileName);
-    if (m_activeIndex < 0 || m_activeIndex >= m_items.size())
+    auto *backend = qobject_cast<RemoteBackend *>(sender());
+    const int activeIdx = activeIndexForExecutor(backend);
+    if (activeIdx < 0)
         return;
 
-    TransferItem &item = m_items[m_activeIndex];
+    ActiveTransfer &active = m_active[activeIdx];
+    TransferItem &item = m_items[active.itemIndex];
     item.status = TransferStatus::Paused;
     item.bytesDone = bytesDone;   // becomes the resume offset the next time this item runs
     item.speedBytesPerSec = 0;
-    // A real bug: unlike onBackendFailed(), this never consumed
-    // m_activeItemCancelled. A cancel racing a near-simultaneous pause
-    // (cancelItem() sets the flag and calls requestCancel(), but the
-    // backend reports transferPaused instead of transferFailed before
-    // the cancel takes effect) left the flag set with nothing to consume
-    // it — this item resolves to Paused either way, but the STALE flag
-    // then silently mislabeled the next unrelated item's genuine failure
-    // as Cancelled (blanking its real error message) the next time
-    // onBackendFailed() ran.
-    m_activeItemCancelled = false;
+    // A cancel racing a near-simultaneous pause (cancelItem() sets
+    // active.cancelled and calls requestCancel(), but the backend reports
+    // transferPaused instead of transferFailed before the cancel takes
+    // effect) resolves this item to Paused either way — active.cancelled
+    // is discarded along with the rest of this entry below, rather than
+    // surviving to mislabel some later, unrelated item's genuine failure
+    // as Cancelled. A real bug in the old single-class-scalar design
+    // (m_activeItemCancelled never got reset on this path) that this
+    // per-entry design closes structurally: there's no shared flag left
+    // to leak from one item into the next.
     emit itemUpdated(item);
 
-    m_activeIndex = -1;
+    m_active.removeAt(activeIdx);
     startNext();
 }
 

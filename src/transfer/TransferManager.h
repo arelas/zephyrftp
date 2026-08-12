@@ -5,17 +5,27 @@
 #include <QHash>
 #include <QElapsedTimer>
 #include <QPointer>
+#include <QVarLengthArray>
 #include "TransferItem.h"
 #include "FolderEnumerator.h"
 #include "TransferQueueStore.h"
 
 class RemoteBackend;
 
-// Owns the transfer queue and processes it one item at a time. Serial by
-// design: SftpBackend holds a single libssh2 session, and running two
-// transfers concurrently on the same session isn't safe without a lot more
-// synchronization than this app needs yet. Parallelism (e.g. one transfer
-// per direction) is a reasonable future step, not attempted here.
+// Owns the transfer queue. Concurrency is bounded not by a configurable
+// limit but by how many distinct backend INSTANCES exist to dispatch
+// against — in this app, at most the two panes' remote backends
+// (SftpBackend/FtpBackend, each pinned to its own worker QThread and its
+// own non-thread-safe session) plus however many LocalBackend instances
+// happen to be executing. The actual safety invariant: at most one item
+// may ever be dispatched against a given backend instance at a time
+// (running two transfers concurrently on the same libssh2 session/FTP
+// control connection isn't safe) — see m_active/ActiveTransfer below,
+// which is how that invariant is enforced. Two items that need DIFFERENT
+// backend instances (e.g. a left-pane upload and a simultaneous
+// right-pane download) run genuinely concurrently; two items that need
+// the SAME backend instance still serialize, same as before this
+// concurrency support existed.
 class TransferManager : public QObject {
     Q_OBJECT
 public:
@@ -45,7 +55,7 @@ public:
     // panes on the same connection — see moveEligible()/
     // RemoteBackend::connectionIdentity()) instead of enqueue()'s
     // download+upload. Deliberately NOT routed through the ordinary
-    // Queued/m_activeIndex pipeline: a rename is a single control-
+    // Queued/m_active pipeline: a rename is a single control-
     // connection round trip, not a data transfer with meaningful
     // progress/pause/cancel, so nothing is gained by serializing it
     // behind whatever enqueue()'d transfer happens to be running —
@@ -103,11 +113,12 @@ public:
     static bool moveEligible(FilePaneWidget *sourcePane, FilePaneWidget *destPane);
 
     // Cancels by id. If the item is Queued (hasn't started), just marks it
-    // Cancelled directly — nothing to interrupt. If it's the currently
-    // InProgress item, calls the executing backend's requestCancel() and
+    // Cancelled directly — nothing to interrupt. If it's currently
+    // InProgress, calls the executing backend's requestCancel() and
     // remembers that the resulting transferFailed (if any) should be
-    // reported as Cancelled rather than Failed — see m_activeItemCancelled.
-    // No-op for ids that are already Done/Failed/Cancelled, or don't exist.
+    // reported as Cancelled rather than Failed — see
+    // ActiveTransfer::cancelled. No-op for ids that are already
+    // Done/Failed/Cancelled, or don't exist.
     void cancelItem(int id);
 
     // Resets a Failed, Cancelled, or Skipped item back to Queued (clearing
@@ -220,8 +231,8 @@ private slots:
     void onDestinationExistsChecked(const QString &path, bool exists, bool isDir, int requestId);
 
     // Response to a moveEntry() backend call — requestId-correlated
-    // against m_pendingMoveItemId (NOT m_activeIndex; move items never
-    // become "the active item" — see moveEntry()'s own doc comment),
+    // against m_pendingMoveItemId (NOT m_active; move items never
+    // become an ActiveTransfer entry — see moveEntry()'s own doc comment),
     // since unlike the single-file/single-folder conflict check above,
     // more than one move's backend call could plausibly be in flight
     // at once if the person fires off several "Move Selected" actions
@@ -231,7 +242,49 @@ private slots:
 
 private:
     void startNext();
-    void connectToBackend(RemoteBackend *backend);
+
+    // Connects a backend's transferProgress/transferFinished/transferFailed/
+    // transferPaused signals to this class's four onBackend*() slots —
+    // Qt::UniqueConnection, so calling this repeatedly against the same
+    // backend (every time an item is dispatched to it) is a harmless
+    // no-op, same pattern as ensureExistsCheckConnected()/
+    // ensureMoveConnected() below. Deliberately never disconnected:
+    // unlike the old single-active-backend design (which had to
+    // disconnect the previous backend before connecting the next one, to
+    // avoid double-delivery through a single shared m_currentBackend),
+    // routing is now done by matching sender() against m_active's
+    // currentExecutor fields, so a stale connection left on an idle
+    // backend simply has nothing to route when it fires.
+    void ensureTransferSignalsConnected(RemoteBackend *backend);
+
+    // The backend instance(s) a Queued item's dispatch needs, computed
+    // WITHOUT mutating the item (no tempFilePath allocation, no
+    // capturedDestBackend capture — those side effects stay in
+    // dispatchActiveItem(), which runs only once startNext() actually
+    // commits to this item). Normally a single entry (the executor
+    // dispatchActiveItem()'s own switch would pick); RemoteToRemote
+    // returns BOTH source and destination backends, even though only one
+    // is the executor for phase 1 — see ActiveTransfer::claimedBackends'
+    // own doc comment for why both need claiming up front. Returns an
+    // empty array only for a genuine internal-error case (should not
+    // happen for anything startNext() dispatches).
+    QVarLengthArray<RemoteBackend *, 2> requiredBackendsForDispatch(const TransferItem &item) const;
+
+    // True if any ActiveTransfer entry has already claimed this backend
+    // (see ActiveTransfer::claimedBackends) — the busy check startNext()
+    // uses to decide whether a Queued item may start now.
+    bool isBackendClaimed(RemoteBackend *backend) const;
+
+    // Index into m_active whose currentExecutor matches backend, or -1.
+    // Used by the four onBackend*() slots to route a signal (received via
+    // sender()) back to the right in-flight item — safe because
+    // isBackendClaimed()'s busy check guarantees at most one ActiveTransfer
+    // is ever dispatched against a given backend at a time.
+    int activeIndexForExecutor(RemoteBackend *backend) const;
+
+    // Index into m_active for the entry tracking itemIndex, or -1.
+    int activeIndexForItem(int itemIndex) const;
+
     int indexById(int id) const;
 
     // Actually kicks off FolderEnumerator against the source folder —
@@ -260,8 +313,9 @@ private:
     // Also re-entered directly (not through startNext()) by
     // onBackendFinished() when a RemoteToRemote item transitions from its
     // Downloading phase to its Uploading phase — see that method's own
-    // comment.
-    void dispatchActiveItem();
+    // comment. itemIndex must already have a matching m_active entry
+    // (created by startNext() before this is first called for the item).
+    void dispatchActiveItem(int itemIndex);
 
     // Local-disk staging for RemoteToRemote items — RemoteBackend has no
     // direct server-to-server primitive, so a temp file is genuinely the
@@ -296,15 +350,14 @@ private:
     // onDestinationExistsChecked() — safe to call every time a check is
     // issued, even repeatedly against the same backend, since
     // Qt::UniqueConnection makes it a silent no-op if that exact
-    // connection already exists. Deliberately never disconnected (unlike
-    // connectToBackend()'s progress/finished/failed wiring, which DOES
-    // need to be torn down between transfers to avoid double-delivery):
-    // existsChecked's requestId already disambiguates which call a given
-    // response belongs to, so there's no double-delivery risk to avoid
-    // in the first place, and tearing down here would risk losing a
-    // response if two different backends both have checks in flight at
-    // once (see onDestinationExistsChecked's own doc comment on why that
-    // can genuinely happen).
+    // connection already exists. Deliberately never disconnected, same
+    // reasoning as ensureTransferSignalsConnected() above: existsChecked's
+    // requestId already disambiguates which call a given response belongs
+    // to, so there's no double-delivery risk to avoid in the first place,
+    // and tearing down here would risk losing a response if two different
+    // backends both have checks in flight at once (see
+    // onDestinationExistsChecked's own doc comment on why that can
+    // genuinely happen).
     void ensureExistsCheckConnected(RemoteBackend *backend);
 
     // Same idea as ensureExistsCheckConnected() but for the
@@ -335,39 +388,64 @@ private:
 
     QList<TransferItem> m_items;
     int m_nextId = 1;
-    int m_activeIndex = -1;          // index into m_items currently running, -1 if idle
-    // QPointer, not a raw pointer: the pane that owns this backend can be
-    // disconnected/reconnected mid-session (FilePaneWidget::setBackend()
-    // deleteLater()s the old backend), and connectToBackend() below reads
-    // this to decide what to disconnect from before the new one — a raw
-    // pointer would go dangling and crash on the next transfer.
-    QPointer<RemoteBackend> m_currentBackend;   // whichever backend is executing the active item
-    // Set by cancelItem() when it cancels the currently-InProgress item;
-    // onBackendFailed() checks this to report Cancelled instead of Failed,
-    // then clears it. There's no other way to distinguish "the user asked
-    // for this to stop" from "it genuinely errored" once both surface as
-    // the same transferFailed signal from the backend.
-    bool m_activeItemCancelled = false;
 
-    // Live speed sampling for the active item. Recomputed roughly every
-    // 250ms in onBackendProgress() rather than on every single progress
-    // signal (SFTP's read loop emits one per 32KB chunk, which on a fast
-    // connection would be noisy and not meaningfully "live" anyway).
-    QElapsedTimer m_speedSampleTimer;
-    qint64 m_speedSampleBytesAtLastSample = 0;
+    // One entry per item currently claiming a backend — everything from
+    // "startNext() committed to this item" (before its conflict check
+    // even goes out) through its terminal status. At most one entry may
+    // ever have a given backend pointer anywhere in claimedBackends at a
+    // time; that invariant (enforced by isBackendClaimed(), checked
+    // before any new entry is created) is what makes concurrent dispatch
+    // safe — see TransferManager's own class-level doc comment.
+    struct ActiveTransfer {
+        int itemIndex = -1;   // index into m_items — stable, m_items is append-only, never erased
 
-    // Each raw 250ms sample above is a real, unlagged measurement, but
-    // with nothing carried over between windows it visibly jumps around
-    // with the transfer's natural burstiness (TCP window dynamics, disk
-    // flush stalls, scheduler jitter) — confirmed by directly comparing
-    // against other SFTP clients' noticeably calmer live readouts, which
-    // turned out to be smoothing their samples rather than being more
-    // accurate. An exponential moving average here trades a small amount
-    // of lag for the same calmer display, without changing how the raw
-    // 250ms sample itself is computed. Reset in dispatchActiveItem() so a
-    // new transfer doesn't start smoothed from a previous one's speed.
-    double m_smoothedSpeedBytesPerSec = 0.0;
-    bool m_hasSpeedSample = false;
+        // Backend(s) claimed for this item's WHOLE lifetime, not just
+        // whichever phase is currently executing. Every direction but
+        // RemoteToRemote claims exactly one (its executor).
+        // TransferDirection::RemoteToRemote claims BOTH source and
+        // destination backends up front, at the very first dispatch
+        // (phase == Downloading), even though only one is the current
+        // executor at a time (source while Downloading, destination
+        // while Uploading) — this closes a real race: without an upfront
+        // claim on the destination backend too, a different queued item
+        // could grab it in the gap between phase 1 finishing and phase 2
+        // dispatching, and phase 2 would then try to invokeMethod() a
+        // backend some other ActiveTransfer already has claimed.
+        QVarLengthArray<QPointer<RemoteBackend>, 2> claimedBackends;
+
+        // Whichever claimed backend is the one actually executing right
+        // now — what onBackend*()'s sender()-based routing (see
+        // activeIndexForExecutor()) matches against, and what
+        // cancelItem()/pauseItem() call requestCancel()/requestPause()
+        // on. QPointer, not a raw pointer, for the same reason the old
+        // single m_currentBackend field was: the pane owning this
+        // backend can be disconnected/reconnected mid-transfer
+        // (FilePaneWidget::setBackend() deleteLater()s the old backend),
+        // and a raw pointer would go dangling.
+        QPointer<RemoteBackend> currentExecutor;
+
+        // Set by cancelItem() when it cancels this entry's item;
+        // onBackendFailed() checks this to report Cancelled instead of
+        // Failed, then clears it — same role the old single
+        // m_activeItemCancelled scalar had, now one per concurrently-
+        // running item so a cancel on one can't mislabel another's
+        // genuine failure.
+        bool cancelled = false;
+
+        // Live speed sampling for this item specifically — was a single
+        // set of class-level scalars (m_speedSampleTimer/
+        // m_speedSampleBytesAtLastSample/m_smoothedSpeedBytesPerSec/
+        // m_hasSpeedSample) back when only one item could ever be
+        // running; now per-entry so two concurrently-progressing items'
+        // speeds can't blend into one number. See onBackendProgress()
+        // for the recompute-every-~250ms logic and the exponential-
+        // moving-average smoothing rationale, unchanged from before.
+        QElapsedTimer speedSampleTimer;
+        qint64 speedSampleBytesAtLastSample = 0;
+        double smoothedSpeedBytesPerSec = 0.0;
+        bool hasSpeedSample = false;
+    };
+    QList<ActiveTransfer> m_active;
 
     // Conflict resolution — "remembered" choices reset back to Ask
     // whenever the queue fully drains (see startNext()'s "nothing left
@@ -381,7 +459,17 @@ private:
     ConflictResolution m_directoryConflictResolution = ConflictResolution::Ask;
 
     int m_nextConflictCheckId = 1;
-    int m_pendingFileConflictCheckId = -1;
+
+    // Stashed while an ordinary (non-folder, non-Move) file's own
+    // destination-conflict check is in flight — a QHash keyed by
+    // requestId, NOT a single shared scalar (that was fine when only one
+    // item could ever be dispatching at a time; now two items on two
+    // different free backends can each have their own file-conflict
+    // check in flight from the same startNext() scan). Same pattern
+    // m_pendingFolderConflictChecks/m_pendingMoveConflictChecks below
+    // already use, and for the identical reason their own doc comments
+    // describe.
+    QHash<int, int> m_pendingFileConflictChecks;   // requestId -> item index in m_items
 
     // Stashed while a folder's root-conflict check (enqueueFolder(),
     // before enumeration starts) is in flight — a QHash keyed by
@@ -410,7 +498,7 @@ private:
     // resolve, so a shared scalar let each new call silently clobber the
     // previous one's stashed pane/name before its response ever arrived,
     // dropping every item but the last one in a multi-select Move). Also
-    // a separate id-space from m_pendingFileConflictCheckId/
+    // a separate id-space from m_pendingFileConflictChecks/
     // m_pendingFolderConflictChecks above (rather than reusing either)
     // so a Move's conflict check can never collide with an ordinary
     // enqueue()/enqueueFolder() check in flight at the same moment.
@@ -427,7 +515,7 @@ private:
     // above, not shared. Those are only ever reset back to Ask in
     // startNext()'s "nothing left to run" branch, which Move never calls
     // (by design — see moveEntry()'s doc comment on why Move bypasses the
-    // ordinary Queued/m_activeIndex pipeline entirely). Sharing them was a
+    // ordinary Queued/m_active pipeline entirely). Sharing them was a
     // real bug: a Move batch's "apply to all, Write Into" choice would
     // persist indefinitely and silently apply to a completely unrelated
     // ordinary transfer's conflict later in the session, with no prompt.
@@ -446,9 +534,9 @@ private:
 
     // Maps a moveEntry() backend-call request id to the TransferItem::id
     // it belongs to, resolved in onEntryMoved()/onEntryMoveFailed(). Not
-    // reusing m_activeIndex/m_currentBackend for this — move items are
-    // deliberately never "the active item" (see moveEntry()'s doc
-    // comment), so several could plausibly have calls in flight at once.
+    // reusing m_active for this — move items never become an
+    // ActiveTransfer entry (see moveEntry()'s doc comment), so several
+    // could plausibly have calls in flight at once.
     int m_nextMoveRequestId = 1;
     QHash<int, int> m_pendingMoveItemId;
 };

@@ -425,13 +425,13 @@ representative of any real desktop:
 
 ## Running the test suites
 
-Seventeen `EXCLUDE_FROM_ALL` CMake targets make up the required suite as
+Eighteen `EXCLUDE_FROM_ALL` CMake targets make up the required suite as
 of this writing — not part of a normal `make`, built and run
 explicitly, and all of them (not just a "core" subset) need to actually
 pass before a change is done. The count keeps growing as the project
 does; rather than renumbering everything and rewriting this whole
 section each time, new targets get their own short subsection further
-below instead. Don't trust "seventeen" to still be accurate by the time
+below instead. Don't trust "eighteen" to still be accurate by the time
 you're reading this — this paragraph is the one place that number lives,
 so if it's wrong, the fix is here, not a hunt through the rest of this
 file. The original ten, each with its own run command:
@@ -822,6 +822,43 @@ persistence entirely, nothing to restore). Verify the reconnect-and-
 resume flow manually against a real server: queue an upload/download,
 quit mid-transfer, relaunch, confirm it shows "Waiting to reconnect",
 reconnect to that same site, confirm it resumes and completes.
+
+### `transfer-concurrency-test`
+
+Same treatment as the targets above — self-contained, `EXCLUDE_FROM_ALL`,
+added to all five `build.yml` jobs. Covers `TransferManager`'s
+per-backend-instance concurrent scheduling: two items whose executors
+are *different* backend instances now reach `InProgress` and make real
+progress at the same time (previously impossible — the old design
+served exactly one active item globally, regardless of which backend(s)
+were actually involved); two items sharing the *same* backend instance
+still serialize strictly, the real safety invariant this change must not
+weaken (`SftpBackend`/`FtpBackend` each hold one non-thread-safe
+session/control connection); and cancelling one of two concurrently-
+active items resolves only that one, leaving the other running
+unaffected. Uses a small `FakeAsyncBackend` (the same `QTimer`-tick
+technique `transfer-pause-test`'s `FakePausableBackend` already
+established — genuinely asynchronous, so there's a real window to
+observe two items progressing at once) rather than
+`queue-persistence-test`'s/`remote-to-remote-test`'s `FakeRemoteBackend`,
+which resolves synchronously inside the call itself and so could never
+demonstrate real overlap. See `src/transfer_concurrency_test.cpp`'s own
+header comment for the full detail. Run it locally the same way:
+
+```
+cmake --build build --target transfer-concurrency-test
+QT_QPA_PLATFORM=offscreen ./build/transfer-concurrency-test
+```
+
+Needs no fixtures beyond `QT_QPA_PLATFORM` — everything runs against
+fake backends, no real files or servers involved. **Not covered, and
+documented as such rather than faked**: real parallel network I/O —
+this proves `TransferManager`'s scheduling allows concurrent `InProgress`
+items across distinct backend instances, not that two real SFTP/FTP
+sessions actually saturate a real link at the same time, which would
+need two live servers, unavailable here (same live-server boundary
+`transfer-pause-test`'s own header comment already flags for
+`SftpBackend`'s real byte-offset resume logic).
 
 ### `app-settings-test`
 

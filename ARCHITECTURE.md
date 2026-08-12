@@ -2217,18 +2217,35 @@ to drive FileZilla itself for a same-desktop comparison.
   check that fix added, which isn't exposed outside this file and
   shouldn't be just for testability — so this one is confirmed by direct
   encode/decode verification instead, not a live event-delivery test.
-- `TransferManager` — owns the transfer queue, processes it **serially**
-  (one item at a time — SftpBackend holds a single libssh2 session, and
-  concurrent transfers on the same session aren't safe without more
-  synchronization than this app has yet). `enqueue()` figures out
-  direction (local->remote / remote->local / local-copy / remote-to-remote)
-  from each pane's `isLocalFilesystem()`, then dispatches to whichever
-  backend actually owns the "remote" side of the operation.
-  Reconnects its progress/finished/failed signal listeners to whichever
-  backend is executing the current item — `RemoteBackend` objects persist
-  across multiple transfers, so `connectToBackend()` explicitly disconnects
-  the previous backend before wiring up the next to avoid stacking
-  duplicate connections.
+- `TransferManager` — owns the transfer queue. Concurrency is per
+  *backend instance*, not per item: at most one item may ever be
+  dispatched against a given backend at a time (SftpBackend holds a
+  single libssh2 session, FtpBackend a single control connection, and
+  concurrent transfers on the same one aren't safe without more
+  synchronization than this app does), but two items that need
+  *different* backend instances — e.g. a left-pane upload and a
+  simultaneous right-pane download, each pane's remote backend already
+  pinned to its own worker `QThread` — now run genuinely concurrently.
+  `m_active` (`QList<ActiveTransfer>`) tracks one entry per item
+  currently claiming a backend; `startNext()` scans the whole queue on
+  each call rather than stopping at the first `Queued` item, skipping
+  any item whose required backend(s) are already claimed and claiming
+  them immediately (before that item's own conflict check even goes
+  out) for whichever it does dispatch. This replaced an earlier design
+  that served exactly one active item globally, via a single
+  `m_activeIndex`/`m_currentBackend`; see `TransferManager.h`'s own
+  class-level doc comment for the current design in full. `enqueue()`
+  figures out direction (local->remote / remote->local / local-copy /
+  remote-to-remote) from each pane's `isLocalFilesystem()`, then
+  dispatches to whichever backend actually owns the "remote" side of the
+  operation.
+  Connects each backend's progress/finished/failed/paused signals once,
+  the first time an item is dispatched to it (`ensureTransferSignalsConnected()`,
+  `Qt::UniqueConnection`, same never-torn-down pattern as
+  `ensureExistsCheckConnected()`/`ensureMoveConnected()`) — routing a
+  received signal back to the right item is done by matching `sender()`
+  against `m_active`'s `currentExecutor` fields, not by "whichever
+  backend is currently *the* one" (there can be several at once now).
   **`RemoteToRemote` (server-to-server) is staged through a local temp
   file** — neither backend has a direct way to move a file straight to
   another server, so `dispatchActiveItem()` runs it in two phases:
@@ -2767,9 +2784,12 @@ to drive FileZilla itself for a same-desktop comparison.
   `transferFinished`/`transferFailed`/`transferPaused` signals are
   backend-instance-wide, not scoped per call, and `TransferManager` is
   already the sole thing connected to them
-  (`TransferManager::connectToBackend()`), serializing exactly one
-  active item at a time per backend. A second, independent listener on
-  those same signals would race whatever `TransferManager` is
+  (`TransferManager::ensureTransferSignalsConnected()`), serializing
+  exactly one active item at a time per backend (see `TransferManager`'s
+  own entry above for how it now allows several backends' worth of
+  concurrency without weakening that per-backend guarantee). A second,
+  independent listener on those same signals would race whatever
+  `TransferManager` is
   legitimately doing with the same backend at the same moment — the
   same "two mechanisms claiming authority over one piece of state" bug
   class this project has already hit and fixed once (`MainWindow`'s
