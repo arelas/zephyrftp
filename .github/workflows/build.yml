@@ -740,7 +740,10 @@ jobs:
       # libssh2 load command should now be @rpath- or
       # @executable_path-relative (bundled) or a system framework.
       # Fails loudly here rather than silently shipping another
-      # unusable .dmg.
+      # unusable .dmg. This only checks the load COMMANDS are correct,
+      # not that the referenced files actually exist in the bundle —
+      # see the second verification step after packaging below for why
+      # that distinction matters and isn't redundant.
       - name: Verify app bundle has no dangling Homebrew references
         run: |
           set -e
@@ -750,15 +753,52 @@ jobs:
             exit 1
           fi
 
-      # DragNDrop, not the Linux job's bare-binary tarball approach —
-      # a real .app bundle in a .dmg is what every Mac user expects to
-      # drag into /Applications. CMakeLists.txt's APPLE block sets up
-      # MACOSX_BUNDLE plus the CPACK_GENERATOR "DragNDrop"/
-      # CPACK_DMG_VOLUME_NAME variables this reads.
+      # Built directly with hdiutil from the exact build/zephyrftp.app
+      # tree the two deploy steps above just modified in place — NOT
+      # via `cpack -G DragNDrop` (see CMakeLists.txt's APPLE block for
+      # the full story of why that generator was dropped: it silently
+      # re-stages the bundle from CMake's own build-time manifest,
+      # dropping Contents/Frameworks since those files were added
+      # afterward and CMake has no record of them — the actual root
+      # cause of the v0.7.3 launch crash, found only after the
+      # load-command fix above still wasn't enough). Standard drag-to-
+      # install layout (the .app plus an /Applications symlink,
+      # side by side) built by hand for the same reason: an
+      # /Applications symlink can't just be a real bundle member.
       - name: Build .dmg package
         run: |
-          cd build
-          cpack -G DragNDrop
+          set -e
+          VERSION="$(grep 'CMAKE_PROJECT_VERSION:STATIC' build/CMakeCache.txt | cut -d= -f2)"
+          rm -rf dmg-staging
+          mkdir dmg-staging
+          cp -R build/zephyrftp.app dmg-staging/
+          ln -s /Applications dmg-staging/Applications
+          hdiutil create -volname "ZephyrFTP" -srcfolder dmg-staging \
+            -ov -format UDZO "build/ZephyrFTP-${VERSION}-Darwin.dmg"
+
+      # Belt-and-suspenders regression guard for the exact bug the two
+      # steps above exist to fix: the earlier otool check only proves
+      # the binary's load COMMANDS are correct, not that the files they
+      # point at actually made it into the final packaged .dmg (that
+      # gap — correct load command, missing file — is exactly what
+      # slipped through when cpack was still doing the packaging).
+      # Mounts the real, just-built .dmg and confirms the framework
+      # file it references genuinely exists inside.
+      - name: Verify packaged .dmg actually contains its frameworks
+        run: |
+          set -e
+          VERSION="$(grep 'CMAKE_PROJECT_VERSION:STATIC' build/CMakeCache.txt | cut -d= -f2)"
+          MOUNT_DIR="$(mktemp -d)"
+          hdiutil attach "build/ZephyrFTP-${VERSION}-Darwin.dmg" -mountpoint "$MOUNT_DIR" -nobrowse -quiet
+          FRAMEWORK="$MOUNT_DIR/zephyrftp.app/Contents/Frameworks/QtWidgets.framework/Versions/A/QtWidgets"
+          FOUND=1
+          if [ -f "$FRAMEWORK" ]; then
+            FOUND=0
+          else
+            echo "::error::Packaged .dmg is missing $FRAMEWORK"
+          fi
+          hdiutil detach "$MOUNT_DIR" -quiet
+          exit $FOUND
 
       - name: Upload .dmg artifact
         uses: actions/upload-artifact@v7

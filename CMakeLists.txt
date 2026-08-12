@@ -285,7 +285,8 @@ queue with pause/resume, and whole-folder transfers.")
     include(CPack)
 endif()
 
-# --- macOS app bundle + .dmg packaging (via CPack DragNDrop) ---
+# --- macOS app bundle (.dmg packaging happens in the CI workflow
+# itself, NOT via CPack — see the note below) ---
 #
 # A real .app bundle, not the bare-binary tarball approach Linux's
 # plain tarball uses — Finder/Dock/Launchpad all expect one, and an
@@ -306,19 +307,25 @@ if(APPLE)
 
     install(TARGETS zephyrftp BUNDLE DESTINATION .)
 
-    set(CPACK_PACKAGE_NAME "ZephyrFTP")
-    set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
-    set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/arelas/zephyrftp")
-    set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
-
-    # DragNDrop (a .dmg with the .app and an /Applications symlink
-    # side by side) is the standard drag-to-install convention every
-    # Mac user already expects — the same reasoning the Linux block
-    # above applies picking DEB/RPM over an unfamiliar format.
-    set(CPACK_GENERATOR "DragNDrop")
-    set(CPACK_DMG_VOLUME_NAME "ZephyrFTP")
-
-    include(CPack)
+    # Deliberately NOT using CPack's DragNDrop generator here, despite
+    # every other platform in this file using CPack for its own
+    # packaging — found the hard way (a real crash report from a real
+    # user, v0.7.3): `cpack -G DragNDrop` re-stages the bundle from
+    # this file's own `install(TARGETS ... BUNDLE DESTINATION .)` rule,
+    # which reconstructs the bundle from CMake's OWN build-time record
+    # of what belongs in it (the executable, Info.plist, the
+    # MACOSX_PACKAGE_LOCATION-tagged .icns) — not a raw copy of
+    # whatever currently sits in the build tree's .app. Since the CI
+    # workflow's "Deploy Qt/non-Qt libraries" steps add
+    # Contents/Frameworks AFTER this bundle is originally built, CMake
+    # has no record of those files ever existing, so CPack's re-staged
+    # copy silently drops them — the built app's load commands were
+    # already correctly rewritten to point at Contents/Frameworks by
+    # that point, so the packaged .dmg looked fine but crashed on
+    # launch on every machine but the CI runner. The workflow now
+    # builds the .dmg directly from the exact `build/zephyrftp.app`
+    # tree the deploy steps modified in place, via `hdiutil`, with no
+    # CMake/CPack re-staging step in between to silently drop anything.
 endif()
 
 # --- smoke test (not part of the shipped app; verifies thread lifecycle) ---
