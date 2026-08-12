@@ -8,6 +8,19 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.4] — macOS packaging fix, take two
+
+### Fixed
+
+- **macOS build still crashed on launch after 0.7.3's fix.** That fix
+  correctly rewrote the app's internal library references, but the
+  actual library files themselves still didn't make it into the
+  shipped `.dmg` due to a packaging step silently dropping them after
+  the fact. Fixed by changing how the `.dmg` itself gets built, plus
+  an added check that verifies the shipped `.dmg` genuinely contains
+  what it's supposed to, not just that the app's internal references
+  look correct.
+
 ## [0.7.3] — Synchronized browsing
 
 ### Added
@@ -1607,7 +1620,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.3...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.4...HEAD
+[0.7.4]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.4
 [0.7.3]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.3
 [0.7.2]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.2
 [0.7.1]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.1
