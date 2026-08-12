@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.0] — macOS build
+
 ### Added
 
 - **macOS build (Apple Silicon only).** A native `.dmg`, built and
