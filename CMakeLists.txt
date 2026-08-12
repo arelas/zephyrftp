@@ -360,6 +360,47 @@ target_link_libraries(smoke-test PRIVATE
     Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${OPENSSL_TARGET} ${CREDENTIAL_STORE_TARGET}
 )
 
+# --- Synchronized browsing test: real MainWindow (same headless
+# construction technique as smoke-test above), two LocalBackend panes,
+# no server needed — see src/sync_browsing_test.cpp's own header comment.
+qt_add_executable(sync-browsing-test EXCLUDE_FROM_ALL
+    src/sync_browsing_test.cpp
+    src/AppSettings.cpp
+    src/ui/MainWindow.cpp
+    src/backends/QuickConnectParser.cpp
+    src/ui/FilePaneWidget.cpp
+    src/ui/PermissionsDialog.cpp
+    src/ui/FileTreeView.cpp
+    src/ui/ConnectionDialog.cpp
+    src/ui/TransferQueueWidget.cpp
+    src/ui/CommandsPaneWidget.cpp
+    src/ui/HostKeyVerifier.cpp
+    src/ui/CertificateVerifier.cpp
+    src/ui/IconTheme.cpp
+    src/ui/SiteManagerDialog.cpp
+    src/ui/PreferencesDialog.cpp
+    src/ui/EditSessionManager.cpp
+    src/backends/LocalBackend.cpp
+    src/backends/SftpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
+    src/backends/ProxyConnect.cpp
+    src/backends/FtpBackend.cpp
+    src/backends/FtpTlsSocket.cpp
+    src/backends/SavedSite.cpp
+    src/backends/CredentialStore.cpp
+    src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
+    src/transfer/FolderEnumerator.cpp
+    resources/icons.qrc
+    resources/theme.qrc
+    ${HEADERS}
+)
+target_include_directories(sync-browsing-test PRIVATE src)
+target_compile_definitions(sync-browsing-test PRIVATE APP_VERSION="${PROJECT_VERSION}")
+target_link_libraries(sync-browsing-test PRIVATE
+    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${OPENSSL_TARGET} ${CREDENTIAL_STORE_TARGET}
+)
+
 # --- transfer queue functional test (moves a real file end-to-end) ---
 qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
     src/transfer_queue_test.cpp

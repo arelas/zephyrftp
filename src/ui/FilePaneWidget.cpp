@@ -573,6 +573,7 @@ void FilePaneWidget::onDirectoryListed(const QString &path, const QList<RemoteEn
     m_navigatingHistory = false;
 
     updateNavigationButtonsEnabled();
+    emit directoryChanged(path);
 }
 
 const RemoteEntry *FilePaneWidget::entryForRow(int row) const

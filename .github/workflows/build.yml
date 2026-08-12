@@ -73,9 +73,9 @@ jobs:
       # "Running the test suites" section covers, plus app-settings-test,
       # trust-prompt-test, sort-and-commands-test, remote-to-remote-test,
       # move-entry-test, edit-session-test, queue-persistence-test,
-      # transfer-concurrency-test, and bandwidth-throttle-test — an
-      # eleventh through nineteenth separately-tracked target (see
-      # CONTRIBUTING.md's own subsections
+      # transfer-concurrency-test, bandwidth-throttle-test, and
+      # sync-browsing-test — an eleventh through twentieth
+      # separately-tracked target (see CONTRIBUTING.md's own subsections
       # on them) that CI now also builds and runs, part of the same
       # growing required suite CLAUDE.md deliberately doesn't pin to a
       # fixed count. Built here as .exe's; actually run (not just linked)
@@ -86,7 +86,7 @@ jobs:
           smoke-test transfer-queue-test site-store-test app-settings-test trust-prompt-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
-          move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test
+          move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test sync-browsing-test
           -- -j$(nproc)
 
       # windeployqt isn't packaged for this cross toolchain at all (and
@@ -181,6 +181,7 @@ jobs:
           xvfb-run -a wine ./queue-persistence-test.exe
           xvfb-run -a wine ./transfer-concurrency-test.exe
           xvfb-run -a wine ./bandwidth-throttle-test.exe
+          xvfb-run -a wine ./sync-browsing-test.exe
 
       # Single-config generator (mingw64-cmake defaults to Unix
       # Makefiles) — unlike the old MSVC/Ninja multi-config setup, the
@@ -241,7 +242,7 @@ jobs:
           smoke-test transfer-queue-test site-store-test app-settings-test trust-prompt-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
-          move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test
+          move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test sync-browsing-test
           -- -j$(nproc)
 
       # Runs directly, no wine/xvfb — these are native Linux binaries, and
@@ -295,6 +296,7 @@ jobs:
           ./queue-persistence-test
           ./transfer-concurrency-test
           ./bandwidth-throttle-test
+          ./sync-browsing-test
 
       # Just the binary — this is the "plain tarball" approach, not a
       # bundled/portable build: it dynamically links against system
@@ -375,7 +377,7 @@ jobs:
           smoke-test transfer-queue-test site-store-test app-settings-test trust-prompt-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
-          move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test
+          move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test sync-browsing-test
           -- -j$(nproc)
 
       # Same reasoning as build-linux's own test-suite step: a genuinely
@@ -430,6 +432,7 @@ jobs:
           ./queue-persistence-test
           ./transfer-concurrency-test
           ./bandwidth-throttle-test
+          ./sync-browsing-test
 
       - name: Build .rpm package
         run: |
@@ -489,7 +492,7 @@ jobs:
           smoke-test transfer-queue-test site-store-test app-settings-test trust-prompt-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
-          move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test
+          move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test sync-browsing-test
           -- -j$(nproc)
 
       # Same reasoning as build-linux-rpm's own test-suite step: a
@@ -540,6 +543,7 @@ jobs:
           ./queue-persistence-test
           ./transfer-concurrency-test
           ./bandwidth-throttle-test
+          ./sync-browsing-test
 
       - name: Build AppImage
         run: |
@@ -624,7 +628,7 @@ jobs:
           smoke-test transfer-queue-test site-store-test app-settings-test trust-prompt-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
-          move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test verify-credential-store
+          move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test sync-browsing-test verify-credential-store
           -- -j$(sysctl -n hw.ncpu)
 
       # Native binaries on native hardware, same reasoning as
@@ -678,6 +682,7 @@ jobs:
           ./queue-persistence-test
           ./transfer-concurrency-test
           ./bandwidth-throttle-test
+          ./sync-browsing-test
 
           ./verify-credential-store
 

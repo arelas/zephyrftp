@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QHash>
 #include "../backends/RemoteEntry.h"
 
 class FilePaneWidget;
@@ -9,6 +10,7 @@ class HostKeyVerifier;
 class CertificateVerifier;
 class QDockWidget;
 class QLineEdit;
+class QAction;
 class AppSettings;
 class CommandsPaneWidget;
 class EditSessionManager;
@@ -72,6 +74,13 @@ private slots:
     // to m_editSessionManager.
     void onPaneEditRequested(FilePaneWidget *pane, const RemoteEntry &entry);
 
+    // Fired by EITHER pane's directoryChanged (both connected to this one
+    // slot — sender() identifies which pane, same dual-connection pattern
+    // onFilesDropped() uses for its destination pane). Drives synchronized
+    // browsing — see AppSettings::synchronizedBrowsingEnabled()'s own doc
+    // comment and m_pendingSyncDrivenPath's for the full design.
+    void onPaneDirectoryChanged(const QString &path);
+
     void onRefreshTriggered();
     void onTransferSucceeded();
     void onAboutTriggered();
@@ -131,6 +140,15 @@ private:
     // onTransferSucceeded() and onRefreshTriggered(), a real duplication
     // found by code review.
     void refreshBothPanes();
+
+    // Turns synchronized browsing off (AppSettings + the View-menu
+    // toggle's own checked state) if it's currently on — called from
+    // both places a pane's backend actually changes (startConnection(),
+    // disconnectPane()), since a stale anchor pointing at a now-gone
+    // connection would otherwise produce nonsense joins the next time
+    // either pane navigates. A no-op if it's already off, so safe to
+    // call unconditionally at both sites rather than checking first.
+    void disableSynchronizedBrowsingIfActive();
 
     // Shared by onLeftFilesActivated/onRightFilesActivated/onFilesDropped
     // — all three end up with the same "here's a selection of files and/or
@@ -206,4 +224,34 @@ private:
     // in buildToolbar() reparents it into the toolbar; QLineEdit doesn't
     // care that its initial parent (this) differs from where it ends up.
     QLineEdit *m_quickConnectEdit = nullptr;
+
+    // Synchronized browsing — see AppSettings::synchronizedBrowsingEnabled()
+    // and onPaneDirectoryChanged()'s own doc comments for the full design.
+    // Constructed in buildMenuBar(); stored as a member (unlike
+    // quickConnectToggle/filenameFilterToggle, plain local variables in
+    // that function) because disableSynchronizedBrowsingIfActive() needs
+    // to programmatically uncheck it later, not just read its initial
+    // state once at construction.
+    QAction *m_synchronizedBrowsingToggle = nullptr;
+    // Each pane's current directory at the moment synchronized browsing
+    // was switched on — every subsequent navigation is propagated to the
+    // other pane as "the same path relative to THIS anchor" applied to
+    // "the other pane's own anchor". Reset whenever the toggle goes from
+    // off to on (see buildMenuBar()'s toggled handler).
+    QString m_syncAnchorLeft, m_syncAnchorRight;
+    // The path a pane was just told to navigate to AS A DRIVEN update
+    // (i.e. as a result of the OTHER pane's own navigation), if any —
+    // keyed by the pane it was issued to. Consumed (erased) the moment
+    // that pane's own directoryChanged arrives with a MATCHING path,
+    // which suppresses re-propagating it back to the originating pane.
+    // Deliberately NOT a plain "ignore the next signal" boolean: a
+    // driven navigateTo() can fail (bad path on the other side) and
+    // never emit directoryChanged at all, which would leave a boolean
+    // guard stuck forever after the very first mismatched pair of
+    // trees. A stale, never-consumed entry here is harmless by
+    // comparison — it just sits unused (the only way it causes a
+    // visible effect is a later, genuine navigation to that exact same
+    // path being silently swallowed once, a rare, low-stakes edge case
+    // not worth solving further).
+    QHash<FilePaneWidget *, QString> m_pendingSyncDrivenPath;
 };

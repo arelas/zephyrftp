@@ -117,6 +117,17 @@ public:
     bool filenameFilterVisible() const { return m_filenameFilterVisible; }
     void setFilenameFilterVisible(bool visible);
 
+    // Whether navigating one pane drives the other to the corresponding
+    // relative path — toggled from the View menu. Defaults to FALSE,
+    // unlike quickConnectFieldVisible/filenameFilterVisible above: this
+    // changes navigation BEHAVIOR, not just a UI element's visibility,
+    // so opt-in is the safer default rather than "burying a new feature"
+    // reasoning applying here. No change signal — same reasoning as
+    // defaultProtocol: MainWindow owns both the View-menu QAction and
+    // the orchestration logic, wired directly in the same call stack.
+    bool synchronizedBrowsingEnabled() const { return m_synchronizedBrowsingEnabled; }
+    void setSynchronizedBrowsingEnabled(bool enabled);
+
 signals:
     void showHiddenFilesChanged(bool value);
 
@@ -137,4 +148,5 @@ private:
     bool m_quickConnectFieldVisible = true;
     bool m_filenameFilterVisible = true;
     int m_bandwidthLimitKBps = 0;
+    bool m_synchronizedBrowsingEnabled = false;
 };

@@ -3364,6 +3364,49 @@ to drive FileZilla itself for a same-desktop comparison.
   4. The two-line "re-list whatever both panes are showing" sequence was
      duplicated verbatim in `onTransferSucceeded()` and
      `onRefreshTriggered()`. Extracted to a private `refreshBothPanes()`.
+  **Synchronized browsing** (`AppSettings::synchronizedBrowsingEnabled()`,
+  a View-menu toggle default OFF — unlike Filename Filter/Quick Connect
+  Field, this changes navigation *behavior*, not just a UI element's
+  visibility, so opt-in is the safer default) — navigating one pane
+  drives the other to the corresponding relative path. First half of the
+  v2 competitive-roadmap "synchronized/mirrored browsing, directory
+  compare-and-sync" item; the second half (directory compare-and-sync)
+  is scoped separately, later — it has a real, deliberately-unresolved
+  tension with this project's "no recursive delete" precedent that this
+  feature doesn't. Built entirely on existing machinery, confirmed by
+  reading the code rather than assumed: every navigation entry point
+  (`goBack()`/`goForward()`/`goUp()`/`goHome()`, the path bar, double-click)
+  already funnels through `FilePaneWidget::navigateTo()`, and a bad
+  destination path already fails gracefully — `SftpBackend`/`LocalBackend`'s
+  `listDirectory()` both emit `connectionFailed` (not `directoryListed`)
+  on an open failure, which `FilePaneWidget` already turns into a real
+  status-label error message. So "the mirrored path doesn't exist on the
+  other side" needed no new error handling at all — driving a
+  `navigateTo()` with a bad path just surfaces the pane's existing error
+  UI. `FilePaneWidget` gained one new signal, `directoryChanged(path)`,
+  emitted from `onDirectoryListed()`'s genuine-navigation branch only
+  (not a delete/rename/create's own same-directory refresh); `MainWindow`
+  connects both panes' copies to one handler via `sender()`, the same
+  dual-pane pattern `onFilesDropped()` already established.
+  **Reentrancy guard is path-based, not a plain boolean, for a real
+  reason found while designing it, not by testing**: a bare "suppress
+  the next signal from the other pane" flag looks right but would get
+  stuck permanently the first time a driven navigation failed (a failed
+  `navigateTo()` never fires `directoryChanged` to clear it). Fixed with
+  `m_pendingSyncDrivenPath` (`QHash<FilePaneWidget*, QString>`) — the
+  path a pane was just told to navigate to as a driven update, consumed
+  only when that exact path echoes back; a failed drive just leaves a
+  harmless, never-consumed entry instead of wedging anything.
+  `sync-browsing-test` confirmed this negatively as well as positively —
+  deliberately disabling the consumption `return` reproduced a real
+  infinite navigation loop (the test hangs to its own timeout) before
+  the fix, not just a theoretical concern. Two panes' anchors (each
+  pane's directory at the moment the toggle switches on) are reset
+  automatically — turning synchronized browsing off, not attempting to
+  re-anchor — at both places a pane's backend actually changes
+  (`startConnection()`, `disconnectPane()`), since a stale anchor
+  pointing at a now-gone connection would otherwise produce nonsense
+  joins the next time either pane navigates.
 
 ## Design system
 

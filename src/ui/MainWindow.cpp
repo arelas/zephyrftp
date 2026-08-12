@@ -224,6 +224,33 @@ void MainWindow::buildMenuBar()
         m_settings->setFilenameFilterVisible(visible);
     });
 
+    // Stored as a member (m_synchronizedBrowsingToggle), unlike the two
+    // toggles just above — disableSynchronizedBrowsingIfActive() needs to
+    // programmatically uncheck it later (on a reconnect while it's on),
+    // not just read its initial state once here. Same "dereference
+    // m_leftPane/m_rightPane only at toggle time" reasoning as
+    // filenameFilterToggle above applies to the ON branch below.
+    m_synchronizedBrowsingToggle = viewMenu->addAction(tr("S&ynchronized Browsing"));
+    // Lookup name for tests — same reasoning as m_leftPane/m_rightPane's
+    // own setObjectName() in buildLayout().
+    m_synchronizedBrowsingToggle->setObjectName(QStringLiteral("synchronizedBrowsingToggle"));
+    m_synchronizedBrowsingToggle->setCheckable(true);
+    m_synchronizedBrowsingToggle->setChecked(m_settings->synchronizedBrowsingEnabled());
+    connect(m_synchronizedBrowsingToggle, &QAction::toggled, this, [this](bool enabled) {
+        m_settings->setSynchronizedBrowsingEnabled(enabled);
+        if (enabled) {
+            // Snapshot both panes' CURRENT directories as the new
+            // anchors — turning this on doesn't move either pane, it
+            // just starts tracking future navigation from wherever they
+            // already are (matches WinSCP's own behavior). Also clears
+            // any stale pending-echo entries from a previous on/off
+            // cycle, so they can't be misread against the new anchors.
+            m_syncAnchorLeft = m_leftPane->currentDirectory();
+            m_syncAnchorRight = m_rightPane->currentDirectory();
+            m_pendingSyncDrivenPath.clear();
+        }
+    });
+
     QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
     QAction *aboutAction = helpMenu->addAction(tr("&About ZephyrFTP..."));
     connect(aboutAction, &QAction::triggered, this, &MainWindow::onAboutTriggered);
@@ -318,6 +345,13 @@ void MainWindow::buildLayout()
     // Preferences updates whichever pane(s) are showing at the time.
     m_leftPane = new FilePaneWidget(new LocalBackend(), splitter, m_settings);
     m_rightPane = new FilePaneWidget(new LocalBackend(), splitter, m_settings);
+    // Same objectName-for-lookup precedent m_transfersDock/m_commandsDock
+    // already establish below — lets a test find each pane reliably via
+    // findChild<FilePaneWidget*>("leftPane"/"rightPane") rather than
+    // relying on findChildren()'s traversal order, which Qt doesn't
+    // document as a stable left-before-right guarantee.
+    m_leftPane->setObjectName(QStringLiteral("leftPane"));
+    m_rightPane->setObjectName(QStringLiteral("rightPane"));
 
     splitter->addWidget(m_leftPane);
     splitter->addWidget(m_rightPane);
@@ -333,6 +367,12 @@ void MainWindow::buildLayout()
     connect(m_rightPane, &FilePaneWidget::filesDropped, this, &MainWindow::onFilesDropped);
     connect(m_leftPane, &FilePaneWidget::moveRequested, this, &MainWindow::onLeftMoveRequested);
     connect(m_rightPane, &FilePaneWidget::moveRequested, this, &MainWindow::onRightMoveRequested);
+
+    // Both panes wired to the same slot — sender() identifies which pane
+    // fired, same dual-connection pattern filesDropped uses above. Drives
+    // synchronized browsing; see onPaneDirectoryChanged()'s own comment.
+    connect(m_leftPane, &FilePaneWidget::directoryChanged, this, &MainWindow::onPaneDirectoryChanged);
+    connect(m_rightPane, &FilePaneWidget::directoryChanged, this, &MainWindow::onPaneDirectoryChanged);
 
     // Either pane's own path-bar icon menu can request a connect/site-
     // manager/disconnect on ITSELF — both panes wired to the same three
@@ -587,6 +627,70 @@ void MainWindow::onPaneEditRequested(FilePaneWidget *pane, const RemoteEntry &en
     m_editSessionManager->startEditing(pane, entry);
 }
 
+void MainWindow::onPaneDirectoryChanged(const QString &path)
+{
+    auto *pane = qobject_cast<FilePaneWidget *>(sender());
+    if (!pane)
+        return;   // defensive — this slot is only ever connected to a FilePaneWidget's own signal
+
+    // Step 1: is this the echo of a driven navigation THIS class itself
+    // just issued to `pane`? Checked and consumed regardless of whether
+    // synchronized browsing is still on — if it was on when the drive
+    // was issued but got toggled off before the echo arrived, there's
+    // still nothing useful to do with a self-inflicted update.
+    const auto pendingIt = m_pendingSyncDrivenPath.find(pane);
+    if (pendingIt != m_pendingSyncDrivenPath.end()) {
+        const QString expected = pendingIt.value();
+        m_pendingSyncDrivenPath.erase(pendingIt);
+        if (expected == path)
+            return;
+        // Else: a genuine navigation overtook/raced the driven one —
+        // fall through and treat THIS as the real, current position.
+    }
+
+    if (!m_settings->synchronizedBrowsingEnabled())
+        return;
+
+    FilePaneWidget *other = (pane == m_leftPane) ? m_rightPane : m_leftPane;
+    const QString &anchor = (pane == m_leftPane) ? m_syncAnchorLeft : m_syncAnchorRight;
+    const QString &otherAnchor = (pane == m_leftPane) ? m_syncAnchorRight : m_syncAnchorLeft;
+
+    if (!path.startsWith(anchor))
+        return;   // navigated out of the anchored subtree (e.g. Up past it) — deliberately doesn't propagate
+
+    // Strips any leading separator before rejoining, and only adds one
+    // back if there's actually something to join — handles the anchor
+    // itself being filesystem root ("/"), where naive concatenation
+    // would otherwise double up (anchor already ends in '/') or,
+    // symmetrically, leave the two halves glued together with no
+    // separator at all when the OTHER anchor ISN'T root. Also handles
+    // navigating back to the anchor's own path exactly (relative is
+    // empty) without tacking on a spurious trailing slash.
+    QString relative = path.mid(anchor.length());
+    if (relative.startsWith('/'))
+        relative.remove(0, 1);
+    QString target = otherAnchor;
+    if (!relative.isEmpty()) {
+        if (!target.endsWith('/'))
+            target += '/';
+        target += relative;
+    }
+
+    m_pendingSyncDrivenPath[other] = target;
+    other->navigateTo(target);
+}
+
+void MainWindow::disableSynchronizedBrowsingIfActive()
+{
+    if (!m_settings->synchronizedBrowsingEnabled())
+        return;
+    // setChecked() emits toggled(), which is what actually persists the
+    // change via AppSettings::setSynchronizedBrowsingEnabled() (see
+    // buildMenuBar()'s handler) — not called directly here, so the menu
+    // action and the setting can never visibly disagree.
+    m_synchronizedBrowsingToggle->setChecked(false);
+}
+
 void MainWindow::connectViaDialog(FilePaneWidget *targetPane)
 {
     ConnectionDialog dialog(this);
@@ -748,6 +852,10 @@ void MainWindow::startConnection(const ConnectionRequest &request, FilePaneWidge
     // Connect again on an already-connected pane is a real path, not
     // just a hypothetical one).
     m_editSessionManager->endSessionsForPane(targetPane);
+    // Any synchronized-browsing anchor is about to point at a directory
+    // on a connection that no longer exists on this pane — see
+    // disableSynchronizedBrowsingIfActive()'s own doc comment.
+    disableSynchronizedBrowsingIfActive();
     targetPane->setBackend(backend, thread);
 
     // After setBackend(), not before — setBackend() itself resets the
@@ -791,6 +899,9 @@ void MainWindow::disconnectPane(FilePaneWidget *targetPane)
     // Same reasoning as startConnection()'s identical call — see
     // EditSessionManager::endSessionsForPane()'s own doc comment.
     m_editSessionManager->endSessionsForPane(targetPane);
+
+    // Same reasoning as startConnection()'s identical call.
+    disableSynchronizedBrowsingIfActive();
 
     // Swap back to a plain LocalBackend. setBackend() handles tearing down
     // whatever was there before — including, if it was an SftpBackend, the

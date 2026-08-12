@@ -425,13 +425,13 @@ representative of any real desktop:
 
 ## Running the test suites
 
-Nineteen `EXCLUDE_FROM_ALL` CMake targets make up the required suite as
+Twenty `EXCLUDE_FROM_ALL` CMake targets make up the required suite as
 of this writing — not part of a normal `make`, built and run
 explicitly, and all of them (not just a "core" subset) need to actually
 pass before a change is done. The count keeps growing as the project
 does; rather than renumbering everything and rewriting this whole
 section each time, new targets get their own short subsection further
-below instead. Don't trust "nineteen" to still be accurate by the time
+below instead. Don't trust "twenty" to still be accurate by the time
 you're reading this — this paragraph is the one place that number lives,
 so if it's wrong, the fix is here, not a hunt through the rest of this
 file. The original ten, each with its own run command:
@@ -890,6 +890,59 @@ close to the configured real-world MB/s over a real network — that's
 `verify-bandwidth-throttle-live`'s job (external precondition: one real
 local `sshd`, not part of this required suite — see the live-verify
 harnesses section further below).
+
+### `sync-browsing-test`
+
+Same treatment as the targets above — self-contained, `EXCLUDE_FROM_ALL`,
+added to all five `build.yml` jobs. Unlike most of this project's tests,
+constructs a REAL `MainWindow` headlessly (same technique `smoke-test`
+already established) rather than bare `FilePaneWidget`s — synchronized
+browsing's own orchestration (the View-menu toggle, the cross-pane
+`directoryChanged` wiring, echo suppression, the reconnect auto-disable
+safety net) all live in `MainWindow`, not `FilePaneWidget` itself, so
+this is the only way to exercise it for real. Both panes stay on
+`LocalBackend` throughout — no live server needed. Covers: basic
+propagation (navigating one pane drives the other to the corresponding
+relative path); all four navigation entry points (Back/Forward/Up/Home,
+confirmed individually since each is its own call site even though all
+funnel through the same `navigateTo()`); a path that doesn't exist on
+the other side failing gracefully (reusing `FilePaneWidget`'s *existing*
+`connectionFailed`-to-status-label handling — no new error UI needed,
+confirmed by reading the code before relying on it); no reentrant
+"triple bounce" back to the originating pane; self-healing after a
+failed driven navigation (a real bug caught and fixed *during*
+development, not found by inspection: a plain boolean reentrancy guard
+would get stuck forever the first time a driven navigation failed,
+since a failed `navigateTo()` never fires `directoryChanged` to clear
+it — fixed with a path-keyed pending-echo map instead, see
+`MainWindow::onPaneDirectoryChanged()`'s own doc comment); toggling off
+stops propagation; and reconnecting a pane while synchronized browsing
+is on automatically disables it (a stale anchor would otherwise produce
+nonsense joins). The echo-suppression fix was confirmed the same way
+this session's other real regressions were: deliberately breaking it
+(commenting out the one `return` that consumes a matching echo) made
+the "no triple-bounce" check fail immediately and cascaded into a real
+infinite navigation loop (the test hangs to its own timeout) — not just
+inspected and assumed correct. Run it locally the same way:
+
+```
+cmake --build build --target sync-browsing-test
+QT_QPA_PLATFORM=offscreen ./build/sync-browsing-test
+```
+
+`QStandardPaths::setTestModeEnabled(true)` is called before `MainWindow`
+is constructed — not optional. A real bug found running this test
+*twice in a row*: `MainWindow` constructs a real `AppSettings`, which
+persists to a real `settings.json` (under this test's own executable
+name when no organization/application name is set — Qt's own
+`AppConfigLocation` default, the same pre-existing characteristic
+`smoke-test` already has, so it can't collide with the real app's own
+config either way) — without test-mode isolation, a second run inherits
+the first run's leftover `synchronizedBrowsingEnabled` value and fails
+its very first assertion ("sync toggle starts unchecked") immediately,
+cascading into unrelated-looking failures after it. Same fix
+`site-store-test`/`app-settings-test` already established for the
+identical class of problem.
 
 ### `app-settings-test`
 

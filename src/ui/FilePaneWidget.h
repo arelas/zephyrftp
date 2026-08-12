@@ -164,6 +164,17 @@ signals:
     // itself.
     void filesDropped(FilePaneWidget *sourcePane, const QList<RemoteEntry> &entries);
 
+    // Emitted from onDirectoryListed() on a genuine fresh navigation
+    // (double-click, Up, Home, path bar, Back/Forward — every one of
+    // them funnels through navigateTo()) — NOT for a delete/rename/
+    // create's own same-directory refresh (see
+    // m_pendingFileOpRefreshes's own doc comment), which isn't a
+    // navigation at all. Used by MainWindow to drive synchronized
+    // browsing (see AppSettings::synchronizedBrowsingEnabled()); stays a
+    // stable signal across backend swaps, same reasoning as
+    // commandLogged below.
+    void directoryChanged(const QString &path);
+
     // Straight passthrough of whatever backend is currently set (see
     // setBackend()) — stays a stable signal across backend swaps
     // (Connect/Disconnect) so MainWindow only has to wire it up once per
