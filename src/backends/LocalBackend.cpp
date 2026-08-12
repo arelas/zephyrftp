@@ -365,3 +365,28 @@ void LocalBackend::createFile(const QString &path)
     file.close();
     listDirectory(m_currentPath);
 }
+
+void LocalBackend::setPermissions(const QString &path, int mode)
+{
+    // The inverse of renderPermissions() above — POSIX octal bits in,
+    // QFileDevice::Permissions flags out (Qt's own enum values use
+    // entirely different bit positions, not the raw 0400/0200/... POSIX
+    // ones, so this can't just be a static_cast).
+    QFileDevice::Permissions permissions;
+    if (mode & 0400) permissions |= QFileDevice::ReadOwner;
+    if (mode & 0200) permissions |= QFileDevice::WriteOwner;
+    if (mode & 0100) permissions |= QFileDevice::ExeOwner;
+    if (mode & 0040) permissions |= QFileDevice::ReadGroup;
+    if (mode & 0020) permissions |= QFileDevice::WriteGroup;
+    if (mode & 0010) permissions |= QFileDevice::ExeGroup;
+    if (mode & 0004) permissions |= QFileDevice::ReadOther;
+    if (mode & 0002) permissions |= QFileDevice::WriteOther;
+    if (mode & 0001) permissions |= QFileDevice::ExeOther;
+
+    if (!QFile::setPermissions(path, permissions)) {
+        emit fileOperationFailed(QStringLiteral("Change permissions"), path,
+            QStringLiteral("Could not change permissions"));
+        return;
+    }
+    listDirectory(m_currentPath);
+}

@@ -537,6 +537,51 @@ to drive FileZilla itself for a same-desktop comparison.
   clear "not empty" failure rather than either silently no-op'ing or
   wiping out a whole tree; recursive delete is a meaningfully bigger,
   more dangerous feature that wasn't asked for.
+  Also declares `setPermissions(path, mode)` — same "fire and refresh"
+  contract as `deleteEntry()`/`renameEntry()` above, `mode` is the raw
+  POSIX permission bits (e.g. `0644`), not a `QFileDevice::Permissions`
+  bitmask (different bit positions entirely — each implementation
+  converts internally). `LocalBackend` maps the bits onto
+  `QFile::setPermissions()`. `SftpBackend` is the first `libssh2_sftp_
+  setstat()` call site in the codebase — `libssh2_sftp_stat()`
+  (read-only, used by `checkExists()` above) is the closest existing
+  analog for how `LIBSSH2_SFTP_ATTRIBUTES` gets populated; only
+  `LIBSSH2_SFTP_ATTR_PERMISSIONS` is set in `flags`, so nothing else
+  about the file's stat (size/time/ownership) is touched. `FtpBackend`
+  issues `SITE CHMOD` — a widely-supported (vsftpd, proftpd) but
+  non-standard FTP extension with no equivalent in RFC 959; a server
+  that doesn't implement it typically replies 502, already `>= 400`
+  here, so it surfaces as an ordinary `fileOperationFailed` like any
+  other rejected command, not a special "unsupported" case. Verified
+  against real vsftpd and proftpd containers
+  (`verify_ftp_vendors.cpp`) — `SITE CHMOD` is accepted and genuinely
+  applied by both, confirmed via `podman exec`/`stat` against the
+  container's own filesystem directly, independent of `FtpBackend`'s
+  own listing code: `FtpBackend`'s `LIST`/`MLSD` parsers deliberately
+  never translate real permission bits back into
+  `RemoteEntry::permissions` (every FTP entry gets a `"-"` placeholder,
+  a pre-existing, disclosed display-only limitation — display, not the
+  actual mode, was never wired up, and fixing that is a separate,
+  bigger parsing project this feature didn't need), so re-listing
+  through the client itself can never observe the real effect of a
+  successful `SITE CHMOD` — the test had to reach around it. UI side:
+  `PermissionsDialog` (`src/ui/PermissionsDialog.h/.cpp`) — a 3×3
+  read/write/execute-by-owner/group/other checkbox grid plus a live
+  octal readout, offered from `FilePaneWidget`'s context menu
+  (Permissions..., single-entry only, every backend including Local)
+  via the free functions `permissionsStringToMode()`/
+  `modeToPermissionsString()`, which parse `RemoteEntry::permissions`
+  (`"rwxr-xr-x"`) back into bits to pre-populate the dialog — the first
+  place in the codebase that string is ever parsed rather than just
+  displayed. A malformed or placeholder string (including FTP's own
+  `"-"` above) parses to `0` (all unchecked) rather than guessing,
+  which is the right default anyway: chmod sets an absolute mode, not
+  an incremental change, so the user is expected to set every bit
+  explicitly. Deliberately just the standard 9 `rwxrwxrwx` bits — no
+  setuid/setgid/sticky, and single-entry only, no multi-select or
+  recursive apply — matching the restraint `deleteEntry()` (no
+  recursive delete) and `renameEntry()` (`FilePaneWidget` gates it to
+  one selected entry) already established.
   Also declares `listDirectoryForEnumeration(path, requestId)` +
   `directoryEnumerated`/`enumerationFailed` — deliberately separate from
   `listDirectory()`/`directoryListed`, which have the side effect of

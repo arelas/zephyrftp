@@ -113,6 +113,14 @@ tracks what's changed between them.
   and if a save can't be uploaded (connection dropped, say), you're
   told clearly — with a Retry — rather than silently losing the edit,
   which stays safe on disk either way.
+- **Change permissions** — right-click a file or folder (local, SFTP, or
+  FTP) and choose Permissions... for a checkbox grid of the standard
+  Unix owner/group/other read/write/execute bits, with a live octal
+  readout as you toggle them. Works the same way on every backend:
+  `chmod()` locally, SFTP's real `setstat`, and FTP's `SITE CHMOD` (a
+  widely-supported extension most servers accept, but it's not part of
+  the FTP standard, so a server that doesn't implement it will tell you
+  so rather than silently doing nothing).
 
 ## Download
 
@@ -242,6 +250,11 @@ rather than being half-implemented:
   preserving its partial local staging file; dropped rather than risked.
   Finished, failed, cancelled, and skipped items aren't kept either —
   this restores what was still pending, not a permanent history.
+- **Changing permissions covers one file or folder at a time, and just
+  the standard 9 read/write/execute bits.** No multi-select or
+  recursive "apply to everything inside," and no setuid/setgid/sticky
+  — the same restraint this app already applies to deleting (no
+  recursive delete) and renaming (one entry at a time).
 
 ## For developers and tinkerers
 

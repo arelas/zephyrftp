@@ -63,6 +63,7 @@ set(SOURCES
     src/AppSettings.cpp
     src/ui/MainWindow.cpp
     src/ui/FilePaneWidget.cpp
+    src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/ConnectionDialog.cpp
     src/ui/TransferQueueWidget.cpp
@@ -109,6 +110,7 @@ set(HEADERS
     src/ui/SiteManagerDialog.h
     src/ui/PreferencesDialog.h
     src/ui/EditSessionManager.h
+    src/ui/PermissionsDialog.h
     src/backends/RemoteBackend.h
     src/backends/RemoteEntry.h
     src/backends/LocalBackend.h
@@ -264,6 +266,7 @@ qt_add_executable(smoke-test EXCLUDE_FROM_ALL
     src/AppSettings.cpp
     src/ui/MainWindow.cpp
     src/ui/FilePaneWidget.cpp
+    src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/ConnectionDialog.cpp
     src/ui/TransferQueueWidget.cpp
@@ -299,6 +302,7 @@ qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
     src/AppSettings.cpp
     src/ui/MainWindow.cpp
     src/ui/FilePaneWidget.cpp
+    src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/ConnectionDialog.cpp
     src/ui/TransferQueueWidget.cpp
@@ -361,6 +365,7 @@ qt_add_executable(navigation-test EXCLUDE_FROM_ALL
     src/navigation_test.cpp
     src/AppSettings.cpp
     src/ui/FilePaneWidget.cpp
+    src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
     src/backends/LocalBackend.cpp
@@ -376,6 +381,7 @@ qt_add_executable(transfer-pause-test EXCLUDE_FROM_ALL
     src/transfer_pause_test.cpp
     src/AppSettings.cpp
     src/ui/FilePaneWidget.cpp
+    src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
     src/backends/LocalBackend.cpp
@@ -394,15 +400,23 @@ qt_add_executable(file-operations-test EXCLUDE_FROM_ALL
     src/file_operations_test.cpp
     src/backends/LocalBackend.cpp
     src/backends/RemoteBackend.h
+    src/ui/PermissionsDialog.cpp
 )
 target_include_directories(file-operations-test PRIVATE src)
-target_link_libraries(file-operations-test PRIVATE Qt6::Core)
+# Qt6::Widgets only for PermissionsDialog.cpp's permissionsStringToMode()/
+# modeToPermissionsString() free functions — this target was previously
+# GUI-free (Qt6::Core alone), and stays GUI-free in spirit: chmod is now
+# genuinely one of the "file operations" this test's own name promises
+# to cover, and these two functions are real, pure, no-QApplication-
+# needed logic worth verifying without pulling in a live PermissionsDialog.
+target_link_libraries(file-operations-test PRIVATE Qt6::Core Qt6::Widgets)
 
 # --- Whole-folder transfer test (recursive enumeration + mirrored dirs, real LocalBackend) ---
 qt_add_executable(folder-transfer-test EXCLUDE_FROM_ALL
     src/folder_transfer_test.cpp
     src/AppSettings.cpp
     src/ui/FilePaneWidget.cpp
+    src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
     src/backends/LocalBackend.cpp
@@ -421,6 +435,7 @@ qt_add_executable(conflict-resolution-test EXCLUDE_FROM_ALL
     src/conflict_resolution_test.cpp
     src/AppSettings.cpp
     src/ui/FilePaneWidget.cpp
+    src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
     src/backends/LocalBackend.cpp
@@ -481,6 +496,7 @@ qt_add_executable(sort-and-commands-test EXCLUDE_FROM_ALL
     src/sort_and_commands_test.cpp
     src/AppSettings.cpp
     src/ui/FilePaneWidget.cpp
+    src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/CommandsPaneWidget.cpp
     src/ui/IconTheme.cpp
@@ -508,6 +524,7 @@ qt_add_executable(remote-to-remote-test EXCLUDE_FROM_ALL
     src/remote_to_remote_test.cpp
     src/AppSettings.cpp
     src/ui/FilePaneWidget.cpp
+    src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
     src/backends/LocalBackend.cpp
@@ -536,6 +553,7 @@ qt_add_executable(move-entry-test EXCLUDE_FROM_ALL
     src/move_entry_test.cpp
     src/AppSettings.cpp
     src/ui/FilePaneWidget.cpp
+    src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
     src/backends/LocalBackend.cpp
@@ -562,6 +580,7 @@ qt_add_executable(edit-session-test EXCLUDE_FROM_ALL
     src/edit_session_test.cpp
     src/AppSettings.cpp
     src/ui/FilePaneWidget.cpp
+    src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
     src/ui/EditSessionManager.cpp
@@ -590,6 +609,7 @@ qt_add_executable(queue-persistence-test EXCLUDE_FROM_ALL
     src/queue_persistence_test.cpp
     src/AppSettings.cpp
     src/ui/FilePaneWidget.cpp
+    src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
     src/backends/LocalBackend.cpp
@@ -643,6 +663,7 @@ qt_add_executable(verify-sftp-move EXCLUDE_FROM_ALL
     src/verify_sftp_move.cpp
     src/AppSettings.cpp
     src/ui/FilePaneWidget.cpp
+    src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
     src/ui/HostKeyVerifier.cpp
@@ -671,6 +692,7 @@ qt_add_executable(verify-remote-to-remote-live EXCLUDE_FROM_ALL
     src/verify_remote_to_remote_live.cpp
     src/AppSettings.cpp
     src/ui/FilePaneWidget.cpp
+    src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
     src/ui/HostKeyVerifier.cpp
@@ -700,6 +722,7 @@ qt_add_executable(verify-ftp-move EXCLUDE_FROM_ALL
     src/verify_ftp_move.cpp
     src/AppSettings.cpp
     src/ui/FilePaneWidget.cpp
+    src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
     src/ui/CertificateVerifier.cpp

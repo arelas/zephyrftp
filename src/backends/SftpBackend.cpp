@@ -1058,3 +1058,29 @@ void SftpBackend::createFile(const QString &path)
     libssh2_sftp_close(handle);   // never written to — an open+immediate close is what "empty file" means here
     listDirectory(m_currentPath);
 }
+
+void SftpBackend::setPermissions(const QString &path, int mode)
+{
+    if (!ensureSession())
+        return;
+
+    emit commandLogged(QStringLiteral("Command: CHMOD %1 %2").arg(QString::number(mode, 8), path));
+
+    // The first libssh2_sftp_setstat() call site in this codebase — no
+    // existing one to model from; libssh2_sftp_stat() (read-only,
+    // already used by checkExists() below) is the closest analog for
+    // how LIBSSH2_SFTP_ATTRIBUTES gets populated/used here. Only
+    // LIBSSH2_SFTP_ATTR_PERMISSIONS is set in flags, so the server only
+    // touches the mode bits — nothing else about the file's stat
+    // (size/time/ownership) is affected by this call.
+    LIBSSH2_SFTP_ATTRIBUTES attrs = {};
+    attrs.flags = LIBSSH2_SFTP_ATTR_PERMISSIONS;
+    attrs.permissions = static_cast<unsigned long>(mode);
+
+    if (libssh2_sftp_setstat(m_sftp, path.toUtf8().constData(), &attrs) != 0) {
+        emit fileOperationFailed(QStringLiteral("Change permissions"), path,
+            sftpErrorString(m_sftp, QStringLiteral("You may not have permission to change this.")));
+        return;
+    }
+    listDirectory(m_currentPath);
+}

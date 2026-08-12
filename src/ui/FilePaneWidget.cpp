@@ -1,6 +1,7 @@
 #include "FilePaneWidget.h"
 #include "FileTreeView.h"
 #include "IconTheme.h"
+#include "PermissionsDialog.h"
 #include "../AppSettings.h"
 
 #include <QLineEdit>
@@ -641,6 +642,20 @@ void FilePaneWidget::showContextMenu(const QPoint &pos)
         IconTheme::tintedIcon(":/icons/edit.svg", IconTheme::Blue), tr("Rename..."));
     renameAction->setEnabled(selected.size() == 1);   // renaming several items to one name doesn't make sense
 
+    // Chmod — single entry only (matching Rename's own precedent; a
+    // multi-select "apply this mode to everything selected" is a cheap,
+    // natural follow-up later, not attempted here), but offered for
+    // BOTH files and directories and on every backend including Local
+    // (unlike Edit below, which is deliberately remote-only) — Unix
+    // permissions are meaningful for a local file too. lock.svg is
+    // already used elsewhere in this file (iconForEntry(), for a
+    // dotfile-looking "restricted" directory's row icon) — same padlock
+    // semantic, a different UI surface, a deliberate reuse rather than
+    // a new icon.
+    QAction *permissionsAction = menu.addAction(
+        IconTheme::tintedIcon(":/icons/lock.svg", IconTheme::Amber), tr("Permissions..."));
+    permissionsAction->setEnabled(selected.size() == 1);
+
     // Edit-in-place — downloads to a local temp file, opens it in an
     // external editor, and re-uploads on every save (see
     // EditSessionManager). Gray/app-window.svg rather than reusing
@@ -677,6 +692,8 @@ void FilePaneWidget::showContextMenu(const QPoint &pos)
         promptAndCreateFolder(directory);
     else if (chosen == renameAction)
         promptAndRename(selected.first(), directory);
+    else if (chosen == permissionsAction)
+        promptAndChmod(selected.first(), directory);
     else if (chosen == editAction)
         emit editRequested(this, selected.first());
     else if (chosen == deleteAction)
@@ -756,6 +773,18 @@ void FilePaneWidget::promptAndRename(const RemoteEntry &entry, const QString &di
     ++m_pendingFileOpRefreshes;   // see its own doc comment
     QMetaObject::invokeMethod(m_backend, "renameEntry", Qt::QueuedConnection,
                                Q_ARG(QString, oldPath), Q_ARG(QString, newPath));
+}
+
+void FilePaneWidget::promptAndChmod(const RemoteEntry &entry, const QString &directory)
+{
+    PermissionsDialog dialog(entry, this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+
+    const QString path = joinPath(directory, entry.name);
+    ++m_pendingFileOpRefreshes;   // see its own doc comment
+    QMetaObject::invokeMethod(m_backend, "setPermissions", Qt::QueuedConnection,
+                               Q_ARG(QString, path), Q_ARG(int, dialog.mode()));
 }
 
 void FilePaneWidget::confirmAndDelete(const QList<RemoteEntry> &entries, const QString &directory)

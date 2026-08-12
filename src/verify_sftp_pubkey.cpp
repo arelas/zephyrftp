@@ -24,6 +24,7 @@
 #include <QDebug>
 #include <QFile>
 #include <QDir>
+#include <QEventLoop>
 #include <QMessageBox>
 #include <QAbstractButton>
 #include <cstdio>
@@ -320,6 +321,51 @@ int main(int argc, char *argv[])
           sawEmptyDir);
     check("walk found all 5 real directories (testfolder itself, subdir1, subdir2, subdir2/nested, emptydir)",
           dirCount == 5);
+
+    // --- setPermissions() against a real server: change a real file's
+    // mode via libssh2_sftp_setstat(), then re-list the directory to
+    // confirm the server actually applied it — checking the client's
+    // own listing right back is the same "did this genuinely take
+    // effect, not just report success" reasoning the download/upload
+    // round-trip checks above already use. A fresh copy of sample.txt,
+    // not sample.txt itself, so this doesn't disturb anything upstream
+    // that might still reference sample.txt's original mode. ---
+    QFile::copy(scratch + "/root/sample.txt", scratch + "/root/chmod_target.txt");
+
+    bool chmodListed = false;
+    QString chmodPermissions;
+    QObject::connect(backend, &RemoteBackend::directoryListed, &app,
+        [&](const QString &, const QList<RemoteEntry> &entries) {
+            for (const RemoteEntry &entry : entries) {
+                if (entry.name == QStringLiteral("chmod_target.txt")) {
+                    chmodListed = true;
+                    chmodPermissions = entry.permissions;
+                }
+            }
+        });
+
+    // Dispatched back-to-back, no delay needed between them: Qt's
+    // queued connections to the same target object deliver strictly
+    // FIFO, so the worker thread processes setPermissions() before
+    // listDirectory() regardless of how long setPermissions() itself
+    // takes to actually run.
+    QMetaObject::invokeMethod(backend, "setPermissions", Qt::QueuedConnection,
+                               Q_ARG(QString, QStringLiteral("chmod_target.txt")), Q_ARG(int, 0640));
+    QMetaObject::invokeMethod(backend, "listDirectory", Qt::QueuedConnection,
+                               Q_ARG(QString, QStringLiteral(".")));
+
+    {
+        QEventLoop loop;
+        QTimer timeoutTimer;
+        timeoutTimer.setSingleShot(true);
+        QObject::connect(&timeoutTimer, &QTimer::timeout, &loop, &QEventLoop::quit);
+        QObject::connect(backend, &RemoteBackend::directoryListed, &loop, &QEventLoop::quit);
+        timeoutTimer.start(5000);
+        loop.exec();
+    }
+
+    check("setPermissions(): the server actually applied mode 0640 (rw-r-----)",
+          chmodListed && chmodPermissions == QStringLiteral("rw-r-----"));
 
     backend->deleteLater();
     thread->quit();

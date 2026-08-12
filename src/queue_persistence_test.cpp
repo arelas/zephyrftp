@@ -75,6 +75,7 @@ public slots:
     void moveEntry(const QString &, const QString &, int) override {}
     void createDirectory(const QString &) override {}
     void createFile(const QString &) override {}
+    void setPermissions(const QString &, int) override {}
     void listDirectoryForEnumeration(const QString &path, int requestId) override {
         emit directoryEnumerated(path, {}, requestId);
     }

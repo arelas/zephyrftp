@@ -513,7 +513,13 @@ platform this test actually runs on in CI — see the "core discipline"
 section below for both (root bypassing `chmod 000` in the
 container-based CI jobs; `QFile::link()` not producing a real symlink
 under `build-windows`'s `wine` job) rather than repeating the detail
-here. `folder-transfer-test` needs
+here. It also covers `setPermissions()` — a real `chmod` against a real
+temp file, confirmed by reading the mode back via `QFileInfo` — and, as
+pure-logic checks needing no I/O at all, `PermissionsDialog.h`'s
+`permissionsStringToMode()`/`modeToPermissionsString()` round trips
+(hence this target's otherwise-GUI-free `Qt6::Widgets` link dependency
+now: those two free functions live in `PermissionsDialog.cpp`, but
+constructing an actual `PermissionsDialog` is not needed to test them). `folder-transfer-test` needs
 its nested directory structure created by hand first (shown above) —
 unlike the other tests, it doesn't build its own fixture data, since the
 structure itself (multi-level nesting, a genuinely empty leaf directory)
@@ -873,6 +879,24 @@ QT_QPA_PLATFORM=offscreen ./build/verify-sftp-vendors
 
 tools/local-test-servers/stop-all.sh   # stops everything above too, containers included
 ```
+
+`verify-ftp-vendors`'s two plain-FTP phases (vsftpd, proftpd — not
+repeated over FTPS, see this file's own header comment for why) also
+exercise `FtpBackend::setPermissions()` — a real `SITE CHMOD` against
+each real vendor. It can't confirm the applied mode by re-listing
+through `FtpBackend` itself (its `LIST`/`MLSD` parsers deliberately
+never translate real permission bits — every FTP entry's
+`RemoteEntry::permissions` is a `"-"` placeholder, a pre-existing,
+disclosed limitation unrelated to chmod), so it shells out to `podman
+exec <container> stat -c %a <path>` instead — ground truth straight
+from the container's own filesystem, independent of the client's own
+listing code entirely. `verify_sftp_pubkey.cpp` (above) similarly
+exercises `SftpBackend::setPermissions()` — a real
+`libssh2_sftp_setstat()` against the real local `sshd`, this time
+confirmed the more direct way, by re-listing through the client itself
+and checking the returned `RemoteEntry::permissions` string, since
+`SftpBackend`'s own `LIST`/attribute parsing (unlike `FtpBackend`'s)
+already reports real bits.
 
 One more harness goes a step further still: `verify-sftp-throughput`
 needs a real, externally-provided, non-loopback server — nothing in

@@ -8,6 +8,19 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Added
+
+- **Change permissions.** Right-click a file or folder — local, SFTP,
+  or FTP — and choose Permissions... for a checkbox grid of the
+  standard Unix owner/group/other read/write/execute bits, with a live
+  octal readout. Works via `chmod()` locally, SFTP's real `setstat`,
+  and FTP's `SITE CHMOD` (a widely-supported but non-standard
+  extension — a server that doesn't implement it says so rather than
+  silently no-op'ing). Verified against real vsftpd and proftpd
+  servers, not just this project's own stand-ins. Single file/folder
+  at a time, and just the standard 9 bits — no multi-select, no
+  recursive apply, no setuid/setgid/sticky.
+
 ## [0.6.24] — Transfer queue persistence
 
 ### Added

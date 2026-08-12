@@ -62,6 +62,17 @@
 // reuse disabled entirely) and not something a client-side change can
 // fix; see that file's own comment.
 //
+// The plain (non-FTPS) vsftpd and proftpd phases additionally exercise
+// FtpBackend::setPermissions() — a real SITE CHMOD against real vendor
+// software, closing the gap verify_sftp_pubkey.cpp's own chmod
+// verification leaves (that one only proves libssh2_sftp_setstat()
+// against SFTP; SITE CHMOD is a completely different, non-standard FTP
+// extension with its own vendor-support question). Not repeated in the
+// two FTPS phases: SITE CHMOD's handling is identical over the
+// encrypted command channel (same sendCommand()/FtpReply mechanism,
+// TLS is transparent to it) — a second run would exercise the TLS
+// layer again, not this new code path.
+//
 // Run with:
 //   tools/local-test-servers/start-vsftpd.sh
 //   tools/local-test-servers/start-proftpd.sh
@@ -70,6 +81,7 @@
 #include <QCoreApplication>
 #include <QTimer>
 #include <QFile>
+#include <QProcess>
 #include <QSslCertificate>
 #include <QSslConfiguration>
 #include <cstdio>
@@ -122,10 +134,14 @@ bool trustVendorFtpsCa(const char *tag, const char *scratchEnvVar, const char *d
 // actually contains (each Containerfile writes a distinct string so a
 // mismatch can't silently point at the wrong server). ftpsMode selects
 // plain FTP (the original two phases) vs. explicit FTPS (the two new
-// ones) against the exact same server/credentials/content.
+// ones) against the exact same server/credentials/content. testChmod
+// additionally exercises a real SITE CHMOD (see this file's header
+// comment for why it's only set true for the two plain-FTP phases);
+// containerName is only used when testChmod is true (see its own
+// verification code below for why).
 bool runVendorRoundTripPhase(const char *tag, quint16 port, const QString &username,
                               const QString &password, const QString &expectedSampleContent,
-                              FtpsMode ftpsMode)
+                              FtpsMode ftpsMode, bool testChmod, const char *containerName = nullptr)
 {
     const QString localDownloadPath = QStringLiteral("/tmp/zephyrftp_verify_%1_download.txt").arg(tag);
     const QString localUploadSourcePath = QStringLiteral("/tmp/zephyrftp_verify_%1_upload_source.txt").arg(tag);
@@ -162,8 +178,22 @@ bool runVendorRoundTripPhase(const char *tag, quint16 port, const QString &usern
     QList<RemoteEntry> listedEntries;
     QString failureReason;
 
+    // Chmod-phase state — only ever populated when testChmod is true (see
+    // this file's header comment for why that's just the two plain-FTP
+    // phases).
+    bool chmodFailed = false;
+    QString chmodFailureReason;
+
     QObject::connect(&backend, &RemoteBackend::connectionFailed, &loop,
         [&](const QString &reason) { failureReason = reason; loop.quit(); });
+
+    QObject::connect(&backend, &RemoteBackend::fileOperationFailed, &loop,
+        [&](const QString &operation, const QString &, const QString &reason) {
+            if (operation == QStringLiteral("Change permissions")) {
+                chmodFailed = true;
+                chmodFailureReason = reason;
+            }
+        });
 
     QObject::connect(&backend, &RemoteBackend::connected, &loop, [&]() {
         connected = true;
@@ -172,6 +202,12 @@ bool runVendorRoundTripPhase(const char *tag, quint16 port, const QString &usern
 
     QObject::connect(&backend, &RemoteBackend::directoryListed, &loop,
         [&](const QString &, const QList<RemoteEntry> &entries) {
+            // Also fires again after a successful setPermissions() below
+            // (its own "fire and refresh" contract re-lists m_currentPath)
+            // — harmless no-op the second time, nothing here depends on
+            // that listing's content.
+            if (listed)
+                return;
             listed = true;
             listedEntries = entries;
             backend.downloadFile("sample.txt", localDownloadPath, 0);
@@ -192,6 +228,13 @@ bool runVendorRoundTripPhase(const char *tag, quint16 port, const QString &usern
                 backend.downloadFile(remoteUploadPath, localRoundtripBackPath, 0);
             } else if (fileName == remoteUploadPath) {
                 roundtripDownloadOk = true;
+                if (testChmod) {
+                    // Synchronous (sendCommand() blocks on the network
+                    // round trip) — by the time this returns, the
+                    // fileOperationFailed connection above (if it fired)
+                    // has already updated chmodFailed/chmodFailureReason.
+                    backend.setPermissions(remoteUploadPath, 0640);
+                }
                 loop.quit();
             }
         });
@@ -232,19 +275,58 @@ bool runVendorRoundTripPhase(const char *tag, quint16 port, const QString &usern
           QString::fromUtf8(roundtripBack.readAll())
               == "uploaded via FtpBackend vendor-diversity verification harness\n");
 
-    return connected && listed && downloadOk && uploadOk && roundtripDownloadOk;
+    bool chmodModeConfirmed = false;
+    if (testChmod) {
+        if (chmodFailed)
+            fprintf(stderr, "[%s] SITE CHMOD failure reason: %s\n", tag, qPrintable(chmodFailureReason));
+        check(qPrintable(QStringLiteral("[%1] SITE CHMOD: server accepted the command").arg(tag)),
+              !chmodFailed);
+
+        // Can't verify the applied mode by re-listing through FtpBackend
+        // itself: its LIST/MLSD parsers deliberately hardcode
+        // RemoteEntry::permissions to "-" for every FTP entry (a
+        // pre-existing, disclosed display limitation — see
+        // FtpBackend.cpp's own comments at each entry->permissions
+        // assignment — unrelated to chmod and not something this feature
+        // needs to fix). Ground truth instead, straight from the
+        // container's own filesystem via `podman exec`/`stat`, entirely
+        // independent of this client's own listing code — this is what
+        // actually caught that SITE CHMOD itself was working correctly
+        // the first time this phase was run, when the RemoteEntry-based
+        // check above was still in place and failing for the wrong
+        // reason.
+        QProcess stat;
+        stat.start(QStringLiteral("podman"),
+                   {QStringLiteral("exec"), QString::fromLatin1(containerName), QStringLiteral("stat"),
+                    QStringLiteral("-c"), QStringLiteral("%a"),
+                    QStringLiteral("/srv/ftp/%1").arg(remoteUploadPath)});
+        stat.waitForFinished(5000);
+        const QString actualMode = QString::fromUtf8(stat.readAllStandardOutput()).trimmed();
+        chmodModeConfirmed = (actualMode == QStringLiteral("640"));
+        if (!chmodModeConfirmed)
+            fprintf(stderr, "[%s] podman exec stat reported mode: \"%s\" (stderr: %s)\n", tag,
+                    qPrintable(actualMode), qPrintable(QString::fromUtf8(stat.readAllStandardError())));
+        check(qPrintable(QStringLiteral("[%1] SITE CHMOD: container's own filesystem confirms mode 640 "
+                                         "was actually applied").arg(tag)),
+              chmodModeConfirmed);
+    }
+
+    return connected && listed && downloadOk && uploadOk && roundtripDownloadOk
+        && (!testChmod || (!chmodFailed && chmodModeConfirmed));
 }
 
 bool runVsftpdPhase()
 {
     return runVendorRoundTripPhase("vsftpd", 2126, "vsftpuser", "vsftppass",
-                                    "hello from the local vsftpd test server", FtpsMode::None);
+                                    "hello from the local vsftpd test server", FtpsMode::None, true,
+                                    "zephyrftp-test-vsftpd");
 }
 
 bool runProftpdPhase()
 {
     return runVendorRoundTripPhase("proftpd", 2127, "proftpduser", "proftppass",
-                                    "hello from the local proftpd test server", FtpsMode::None);
+                                    "hello from the local proftpd test server", FtpsMode::None, true,
+                                    "zephyrftp-test-proftpd");
 }
 
 bool runVsftpdFtpsPhase()
@@ -253,7 +335,7 @@ bool runVsftpdFtpsPhase()
                             "/tmp/zephyrftp-local-test-servers/vsftpd-ftps-ca"))
         return false;
     return runVendorRoundTripPhase("vsftpd-ftps", 2126, "vsftpuser", "vsftppass",
-                                    "hello from the local vsftpd test server", FtpsMode::Explicit);
+                                    "hello from the local vsftpd test server", FtpsMode::Explicit, false);
 }
 
 bool runProftpdFtpsPhase()
@@ -262,7 +344,7 @@ bool runProftpdFtpsPhase()
                             "/tmp/zephyrftp-local-test-servers/proftpd-ftps-ca"))
         return false;
     return runVendorRoundTripPhase("proftpd-ftps", 2127, "proftpduser", "proftppass",
-                                    "hello from the local proftpd test server", FtpsMode::Explicit);
+                                    "hello from the local proftpd test server", FtpsMode::Explicit, false);
 }
 }
 

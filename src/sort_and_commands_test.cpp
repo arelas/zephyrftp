@@ -92,6 +92,7 @@ public slots:
     }
     void createDirectory(const QString &) override {}
     void createFile(const QString &) override {}
+    void setPermissions(const QString &, int) override {}
     void listDirectoryForEnumeration(const QString &, int) override {}
     void checkExists(const QString &, int) override {}
 };

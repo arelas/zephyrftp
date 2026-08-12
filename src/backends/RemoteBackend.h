@@ -122,6 +122,22 @@ public slots:
     // something to overwrite quietly.
     virtual void createFile(const QString &path) = 0;
 
+    // Same "fire and refresh" contract as deleteEntry()/renameEntry()/
+    // createDirectory()/createFile() above — on success, re-lists the
+    // current directory itself; on failure, fileOperationFailed below
+    // carries the reason (label "Change permissions", same convention
+    // "Delete"/"Rename" already use). mode is the raw POSIX permission
+    // bits (e.g. 0644, 0755) — NOT a QFileDevice::Permissions bitmask,
+    // whose enum values use entirely different bit positions; each
+    // implementation converts internally. Deliberately just the
+    // standard 9 rwxrwxrwx bits — no setuid/setgid/sticky, a rare,
+    // advanced, high-consequence-if-fat-fingered tier every mainstream
+    // GUI chmod dialog also keeps separate. FtpBackend's implementation
+    // uses SITE CHMOD, a widely-supported (vsftpd, proftpd) but
+    // non-standard extension — a server that doesn't support it
+    // surfaces as an ordinary fileOperationFailed, not a special case.
+    virtual void setPermissions(const QString &path, int mode) = 0;
+
     // Lists a directory's contents WITHOUT updating currentPath() or
     // being treated as pane navigation — listDirectory() has that side
     // effect deliberately (it's what drives FilePaneWidget's own display

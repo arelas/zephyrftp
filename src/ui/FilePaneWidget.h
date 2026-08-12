@@ -247,6 +247,7 @@ private:
     void promptAndCreateFile(const QString &directory);
     void promptAndCreateFolder(const QString &directory);
     void promptAndRename(const RemoteEntry &entry, const QString &directory);
+    void promptAndChmod(const RemoteEntry &entry, const QString &directory);
     void confirmAndDelete(const QList<RemoteEntry> &entries, const QString &directory);
 
     RemoteBackend *m_backend;

@@ -1531,3 +1531,25 @@ void FtpBackend::createFile(const QString &path)
     }
     listDirectory(m_currentPath);
 }
+
+void FtpBackend::setPermissions(const QString &path, int mode)
+{
+    if (!ensureConnected())
+        return;
+
+    // SITE CHMOD is a widely-supported (vsftpd, proftpd) but
+    // non-standard FTP extension — RFC 959 has no chmod equivalent at
+    // all. A server that doesn't support it typically replies 502
+    // (command not implemented), already >= 400 here, so it surfaces
+    // as an ordinary fileOperationFailed like any other rejected
+    // command, not a special "unsupported" case.
+    const FtpReply reply = sendCommand(
+        QStringLiteral("SITE CHMOD %1 %2").arg(QString::number(mode, 8), path));
+
+    if (!reply.isValid() || reply.code >= 400) {
+        emit fileOperationFailed(QStringLiteral("Change permissions"), path,
+            reply.isValid() ? reply.text : QStringLiteral("No response from server"));
+        return;
+    }
+    listDirectory(m_currentPath);
+}

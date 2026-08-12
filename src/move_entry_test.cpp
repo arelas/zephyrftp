@@ -95,6 +95,7 @@ public slots:
     void renameEntry(const QString &, const QString &) override {}
     void createDirectory(const QString &) override {}
     void createFile(const QString &) override {}
+    void setPermissions(const QString &, int) override {}
 
     // Deliberately a no-op beyond the call counter — the folder-move
     // scenario below asserts this is NEVER called, so it never needs a

@@ -24,6 +24,7 @@
 #include <QEventLoop>
 #include <functional>
 #include "backends/LocalBackend.h"
+#include "ui/PermissionsDialog.h"
 
 int main(int argc, char *argv[])
 {
@@ -59,6 +60,26 @@ int main(int argc, char *argv[])
         while (!condition() && timeoutTimer.isActive())
             loop.processEvents(QEventLoop::AllEvents, 20);
     };
+
+    // --- Pure logic, no event loop needed: PermissionsDialog's
+    // string<->mode conversion, the first place RemoteEntry::permissions
+    // has ever been parsed back rather than just displayed. ---
+    check("permissionsStringToMode: full rwx round-trips to 0755",
+          permissionsStringToMode(QStringLiteral("rwxr-xr-x")) == 0755);
+    check("permissionsStringToMode: all-bits-set round-trips to 0777",
+          permissionsStringToMode(QStringLiteral("rwxrwxrwx")) == 0777);
+    check("permissionsStringToMode: all-dashes round-trips to 0",
+          permissionsStringToMode(QStringLiteral("---------")) == 0);
+    check("permissionsStringToMode: FTP's own \"-\" placeholder (wrong length) -> 0, not a guess",
+          permissionsStringToMode(QStringLiteral("-")) == 0);
+    check("permissionsStringToMode: empty string -> 0",
+          permissionsStringToMode(QString()) == 0);
+    check("modeToPermissionsString: 0755 -> \"0755\"",
+          modeToPermissionsString(0755) == QStringLiteral("0755"));
+    check("modeToPermissionsString: 0 -> \"0000\"",
+          modeToPermissionsString(0) == QStringLiteral("0000"));
+    check("modeToPermissionsString: 0777 -> \"0777\"",
+          modeToPermissionsString(0777) == QStringLiteral("0777"));
 
     QString lastFailedOperation, lastFailedPath, lastFailedReason;
     QObject::connect(backend, &RemoteBackend::fileOperationFailed, &app,
@@ -329,6 +350,40 @@ int main(int argc, char *argv[])
         check("moveEntry with a nonexistent source: the ORIGINAL destination content survived "
               "(not deleted before the move was known to succeed)",
               moveDest.readAll() == "move destination content — must survive a failed move");
+
+#ifndef Q_OS_WIN
+        // --- Phase 14: setPermissions() — real chmod against a real temp
+        // file. Unix-only: Windows has no equivalent rwxrwxrwx permission
+        // model for QFile::setPermissions() to map onto (Qt approximates
+        // it via ACLs there), so a byte-exact 0640 round-trip isn't a
+        // meaningful assertion on that platform the way it is on Unix. ---
+        QFile permFile(base + "/chmod_target.txt");
+        permFile.open(QIODevice::WriteOnly);
+        permFile.write("chmod me");
+        permFile.close();
+        // A deliberately unusual mode (owner rw, group r, other nothing)
+        // — distinct from whatever QFile's own default umask-derived mode
+        // already produced, so a passing check actually proves
+        // setPermissions() changed something rather than coincidentally
+        // matching what was already there.
+        QMetaObject::invokeMethod(backend, "setPermissions", Qt::QueuedConnection,
+                                   Q_ARG(QString, base + "/chmod_target.txt"), Q_ARG(int, 0640));
+#endif
+    });
+
+    QTimer::singleShot(2900, &app, [&]() {
+#ifndef Q_OS_WIN
+        const QFileInfo info(base + "/chmod_target.txt");
+        const QFileDevice::Permissions p = info.permissions();
+        const bool ownerRW = (p & QFileDevice::ReadOwner) && (p & QFileDevice::WriteOwner)
+            && !(p & QFileDevice::ExeOwner);
+        const bool groupR = (p & QFileDevice::ReadGroup) && !(p & QFileDevice::WriteGroup)
+            && !(p & QFileDevice::ExeGroup);
+        const bool otherNone = !(p & QFileDevice::ReadOther) && !(p & QFileDevice::WriteOther)
+            && !(p & QFileDevice::ExeOther);
+        check("setPermissions: mode 0640 actually applied (owner rw, group r, other none)",
+              ownerRW && groupR && otherNone);
+#endif
 
         qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
         app.exit(allPass ? 0 : 1);
