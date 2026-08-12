@@ -1414,9 +1414,12 @@ to drive FileZilla itself for a same-desktop comparison.
   Linux/Windows backends below which have also been checked directly
   in this environment): `verify-credential-store`'s full
   save/load/hasSecret/remove round trip, including non-ASCII content,
-  passed inside the `build-macos` CI job on the first real run after
-  the one bug fix below (see "Windows, macOS, and Linux builds (CI)"
-  above). Deliberately NOT a
+  passed inside the `build-macos` CI job. It's the last target in that
+  job's required-suite run, so `set -e` meant it didn't actually get a
+  chance to execute at all until the three unrelated, pre-existing
+  test-timing bugs earlier in the list were fixed (see "Windows,
+  macOS, and Linux builds (CI)" above) — those bugs blocked this
+  target from running, they weren't bugs in it. Deliberately NOT a
   bundled cross-platform wrapper library — Fedora ships
   `qtkeychain-qt6` for native Linux, but only a Qt5 build for the
   mingw64/Windows cross-target, a real ABI mismatch with this project's
@@ -3446,16 +3449,40 @@ native runner OS — meaning it's also the only job whose CMake code
 paths (the `APPLE` branches throughout `CMakeLists.txt` and
 `CredentialStore.cpp`) can't be exercised at all on the Linux sandboxes
 this project has otherwise been developed and verified in.
-**Confirmed green on a real GitHub Actions macOS runner**, via
-`workflow_dispatch` (not yet a tagged release — see below): build,
-full required test suite including `verify-credential-store`, `.icns`
-generation, and `.dmg` packaging all passed. Took two real CI
-iterations to get there, not one — the first run caught two genuine,
-pre-existing bugs neither locally reproducible nor previously exposed
-by any Linux CI container: a `navigation-test` hang and a
-`transfer-pause-test` timing flake, both fixed (see CONTRIBUTING.md's
-own entries on each) and confirmed by a second green run before this
-paragraph was written.
+**Released for real as v0.7.0** — `build-macos` green end to end
+(build, full required test suite including `verify-credential-store`,
+`.icns` generation, `.dmg` packaging) on a genuine GitHub Actions macOS
+runner, and the `release` job actually ran and published all 6 assets.
+Took five real CI iterations to get there, not one — this sandbox has
+no macOS hardware, so nothing macOS-specific could be pre-validated
+locally, and every fix below was diagnosed from a real CI failure and
+re-verified by pushing again:
+
+1. Before ever pushing, a `navigation-test` hang was found and fixed
+   *locally* (not CI) — reproducible in this project's own long-lived
+   local sandbox, confirmed via `git stash` to already exist on
+   unmodified `main`, so unrelated to the macOS work itself, just
+   never previously triggered.
+2. First `workflow_dispatch` run: `build-macos` failed on a
+   `transfer-pause-test` timing flake (fixed 250ms delay, not enough
+   on a slower/colder macOS runner than any Linux CI container ever
+   exposed).
+3. Second `workflow_dispatch` run: green. Tag `v0.7.0` pushed,
+   triggering the real release pipeline.
+4. First release run: `build-linux-appimage` failed on an unrelated,
+   transient network blip (confirmed transient — passed cleanly on
+   every other run with no code changes); `build-macos` failed on a
+   SECOND, different `navigation-test` flake (the file's opening
+   back/forward/up sequence, same fixed-delay root cause as #2 but a
+   different check, "navigated to filesystem root"). Tag moved to the
+   fix, re-pushed.
+5. Second release run: `build-macos` failed a THIRD time, on
+   `file-operations-test`'s `setPermissions()` readback (same root
+   cause again). Tag moved to the fix, re-pushed. Third release run:
+   green end to end, release published.
+
+See CONTRIBUTING.md's own entries on each of the three CI-discovered
+timing fixes for the mechanism-level detail.
 
 **Confirmed working end-to-end on GitHub's own runners**, not just
 locally: the Windows and Linux build jobs pass, the full test suite

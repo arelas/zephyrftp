@@ -431,7 +431,7 @@ explicitly, and all of them (not just a "core" subset) need to actually
 pass before a change is done. The count keeps growing as the project
 does; rather than renumbering everything and rewriting this whole
 section each time, new targets get their own short subsection further
-below instead. Don't trust "fifteen" to still be accurate by the time
+below instead. Don't trust "seventeen" to still be accurate by the time
 you're reading this — this paragraph is the one place that number lives,
 so if it's wrong, the fix is here, not a hunt through the rest of this
 file. The original ten, each with its own run command:
@@ -674,7 +674,7 @@ it right after construction rather than trusting the default.
 ### `remote-to-remote-test`
 
 Same treatment as `sort-and-commands-test` above — self-contained,
-`EXCLUDE_FROM_ALL`, added to all four `build.yml` jobs. Covers
+`EXCLUDE_FROM_ALL`, added to all five `build.yml` jobs. Covers
 `TransferManager`'s remote-to-remote
 staged-transfer orchestration (direction/phase assignment, the
 download-to-temp → upload-from-temp phase transition and
@@ -737,7 +737,7 @@ top of `main()`, same convention `sort-and-commands-test` uses.
 ### `edit-session-test`
 
 Same treatment as the targets above — self-contained, `EXCLUDE_FROM_ALL`,
-added to all four `build.yml` jobs. Covers `EditSessionManager`'s
+added to all five `build.yml` jobs. Covers `EditSessionManager`'s
 edit-in-place lifecycle end to end against a real `LocalBackend` standing
 in for "the remote" (see the test's own header comment for why that's a
 legitimate stand-in, same reasoning `navigation-test`/`transfer-pause-test`
@@ -778,7 +778,7 @@ re-editing the same file reuses the session without re-downloading.
 ### `queue-persistence-test`
 
 Same treatment as the targets above — self-contained, `EXCLUDE_FROM_ALL`,
-added to all four `build.yml` jobs. Covers `TransferQueueStore`'s
+added to all five `build.yml` jobs. Covers `TransferQueueStore`'s
 save/load round trip and `TransferManager`'s restore/reclaim mechanism
 end to end: a `LocalToLocal` item restores and dispatches immediately
 with no reconnect needed; a `RemoteToLocal` item restores as
@@ -826,7 +826,7 @@ reconnect to that same site, confirm it resumes and completes.
 ### `app-settings-test`
 
 Same treatment as the three above — self-contained, `EXCLUDE_FROM_ALL`,
-added to all four `build.yml` jobs. `AppSettings`' first-ever test
+added to all five `build.yml` jobs. `AppSettings`' first-ever test
 coverage of any kind:
 the full setter/save/load round trip for every persisted field, the
 documented fresh-start and corrupt-`settings.json` fallback-to-defaults
@@ -856,7 +856,7 @@ QT_QPA_PLATFORM=offscreen ./build/app-settings-test
 ### `trust-prompt-test`
 
 Same treatment as the four above — self-contained, `EXCLUDE_FROM_ALL`,
-added to all four `build.yml` jobs. Drives the REAL `QMessageBox` that
+added to all five `build.yml` jobs. Drives the REAL `QMessageBox` that
 `HostKeyVerifier::confirmHostKey()`/`CertificateVerifier::confirmCertificate()`
 each pop, same live-dialog technique `conflict-resolution-test` uses
 (`QApplication::activeModalWidget()` while `exec()` is still blocking).
