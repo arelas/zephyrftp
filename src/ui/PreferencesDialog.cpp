@@ -24,6 +24,7 @@ PreferencesDialog::PreferencesDialog(AppSettings *settings, QWidget *parent)
     , m_proxyPortSpin(new QSpinBox(this))
     , m_proxyUsernameEdit(new QLineEdit(this))
     , m_proxyPasswordEdit(new QLineEdit(this))
+    , m_bandwidthLimitSpin(new QSpinBox(this))
 {
     setWindowTitle(tr("Preferences"));
 
@@ -103,6 +104,23 @@ PreferencesDialog::PreferencesDialog(AppSettings *settings, QWidget *parent)
 
     updateProxyFieldsEnabled();
 
+    // One global per-transfer limit — see AppSettings::bandwidthLimitKBps()'s
+    // own doc comment for why per-transfer, not one combined cap across
+    // every transfer at once. 0 (the default, this QSpinBox's own
+    // minimum) means unlimited; setSpecialValueText() shows that in
+    // words rather than a bare "0", which would otherwise read as a
+    // suspiciously-broken zero-speed limit. Only takes effect on
+    // connections made AFTER this changes — an already-open connection
+    // keeps whatever limit was in effect when it connected, same as the
+    // proxy setting above.
+    m_bandwidthLimitSpin->setRange(0, 1000000);
+    m_bandwidthLimitSpin->setSpecialValueText(tr("Unlimited"));
+    m_bandwidthLimitSpin->setSuffix(tr(" KB/s"));
+    m_bandwidthLimitSpin->setValue(m_settings->bandwidthLimitKBps());
+    connect(m_bandwidthLimitSpin, &QSpinBox::valueChanged, this, [this](int value) {
+        m_settings->setBandwidthLimitKBps(value);
+    });
+
     auto *form = new QFormLayout;
     form->addRow(tr("Local && remote panes:"), m_showHiddenFilesCheck);
     form->addRow(tr("Default protocol for new connections:"), m_defaultProtocolCombo);
@@ -115,6 +133,10 @@ PreferencesDialog::PreferencesDialog(AppSettings *settings, QWidget *parent)
     form->addRow(tr("Port:"), m_proxyPortSpin);
     form->addRow(tr("Username:"), m_proxyUsernameEdit);
     form->addRow(tr("Password:"), m_proxyPasswordEdit);
+
+    auto *bandwidthLabel = new QLabel(tr("<b>Bandwidth</b>"), this);
+    form->addRow(bandwidthLabel);
+    form->addRow(tr("Limit per transfer:"), m_bandwidthLimitSpin);
 
     // QDialogButtonBox::Close is wired to reject() by Qt's own convention
     // (it's a RejectRole button) — accept() vs. reject() is meaningless

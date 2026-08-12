@@ -37,4 +37,11 @@ private:
     QSpinBox *m_proxyPortSpin;
     QLineEdit *m_proxyUsernameEdit;
     QLineEdit *m_proxyPasswordEdit;
+
+    // A single global per-transfer limit, applied to every SFTP/FTP
+    // connection made AFTER this changes (existing connections keep
+    // whatever was in effect when they connected — see
+    // AppSettings::bandwidthLimitKBps()'s own doc comment). 0 means
+    // unlimited.
+    QSpinBox *m_bandwidthLimitSpin;
 };

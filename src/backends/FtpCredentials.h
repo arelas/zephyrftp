@@ -44,4 +44,9 @@ struct FtpCredentials {
     // socket waiting for the server to dial back), a pre-existing
     // limitation of active mode, not a new one.
     ProxyConfig proxy;
+
+    // Same meaning as SftpCredentials::bandwidthLimitKBps — see that
+    // struct's comment. Applied per-transfer in
+    // FtpBackend::downloadFile()/uploadFile().
+    int bandwidthLimitKBps = 0;
 };

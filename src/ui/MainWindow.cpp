@@ -676,6 +676,7 @@ void MainWindow::startConnection(const ConnectionRequest &request, FilePaneWidge
         // otherwise untouched by proxy support).
         SftpCredentials creds = request.sftp;
         creds.proxy = m_settings->resolvedProxyConfig();
+        creds.bandwidthLimitKBps = m_settings->bandwidthLimitKBps();
         backend = new SftpBackend(creds, m_hostKeyVerifier);
         break;
     }
@@ -693,6 +694,7 @@ void MainWindow::startConnection(const ConnectionRequest &request, FilePaneWidge
         // user to infer it.
         FtpCredentials creds = request.ftp;
         creds.proxy = m_settings->resolvedProxyConfig();
+        creds.bandwidthLimitKBps = m_settings->bandwidthLimitKBps();
         backend = new FtpBackend(creds, m_certificateVerifier);
         break;
     }

@@ -1,5 +1,6 @@
 #include "FtpBackend.h"
 #include "../ui/CertificateVerifier.h"
+#include "BandwidthThrottle.h"
 
 #include <QSslSocket>
 #include <QTcpServer>
@@ -1183,6 +1184,7 @@ void FtpBackend::downloadFile(const QString &remotePath, const QString &localPat
     bool cancelled = false;
     bool paused = false;
     char buf[256 * 1024];
+    BandwidthThrottle throttle(m_credentials.bandwidthLimitKBps);
 
     for (;;) {
         if (m_cancelRequested.loadRelaxed()) { cancelled = true; break; }
@@ -1247,6 +1249,12 @@ void FtpBackend::downloadFile(const QString &remotePath, const QString &localPat
         out.write(buf, n);
         done += n;
         emit transferProgress(remotePath, done, totalSize > 0 ? totalSize : done);
+
+        // Same reasoning as SftpBackend::downloadFile()'s identical
+        // call — see that comment.
+        throttle.pace(done - effectiveOffset, [this]() {
+            return m_cancelRequested.loadRelaxed() || m_pauseRequested.loadRelaxed();
+        });
     }
 
     out.close();
@@ -1331,6 +1339,7 @@ void FtpBackend::uploadFile(const QString &localPath, const QString &remotePath,
     bool cancelled = false;
     bool paused = false;
     char buf[256 * 1024];
+    BandwidthThrottle throttle(m_credentials.bandwidthLimitKBps);
 
     while (!in.atEnd()) {
         if (m_cancelRequested.loadRelaxed()) { cancelled = true; break; }
@@ -1357,6 +1366,12 @@ void FtpBackend::uploadFile(const QString &localPath, const QString &remotePath,
         }
         done += n;
         emit transferProgress(localPath, done, totalSize);
+
+        // Same reasoning as SftpBackend::downloadFile()'s identical
+        // call — see that comment.
+        throttle.pace(done - effectiveOffset, [this]() {
+            return m_cancelRequested.loadRelaxed() || m_pauseRequested.loadRelaxed();
+        });
     }
 
     // disconnectFromHost() (graceful — flushes and sends a proper TLS

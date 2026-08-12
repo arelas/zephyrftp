@@ -57,7 +57,13 @@ public:
     // from, so pause on a local transfer would be indistinguishable from
     // cancel — the UI simply doesn't offer Pause for local-to-local
     // transfers rather than pretending to support it (see
-    // TransferQueueWidget's context menu).
+    // TransferQueueWidget's context menu). The Preferences bandwidth
+    // limit is unenforced for the same underlying reason: BandwidthThrottle
+    // (see that class's own doc comment) paces the same read/write loop
+    // requestCancel()/requestPause() poll — SftpBackend/FtpBackend have
+    // one, LocalBackend's single atomic QFile::copy() call doesn't, so
+    // there's nowhere to insert pacing without replacing that call with a
+    // manual chunked loop, a bigger change this doesn't attempt.
     virtual void requestPause() = 0;
 
     // Declared as slots (not just virtual methods) so QMetaObject::invokeMethod

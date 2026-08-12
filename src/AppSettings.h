@@ -82,6 +82,19 @@ public:
     // attempt — see SftpCredentials::proxy/FtpCredentials::proxy.
     ProxyConfig resolvedProxyConfig() const;
 
+    // 0 (default) means unlimited. A single global value, same "one
+    // shared value, no per-site override" shape as defaultProtocol/
+    // proxy* above — applied PER-TRANSFER, not as one combined cap
+    // across every transfer at once; see BandwidthThrottle.h's own
+    // class doc comment for why. No change signal — same reasoning as
+    // defaultProtocol: nothing on screen needs to react live to this
+    // changing, and (like proxy) it only takes effect on the NEXT
+    // connection, not retroactively on one already open. Read by
+    // MainWindow::startConnection() into SftpCredentials::
+    // bandwidthLimitKBps/FtpCredentials::bandwidthLimitKBps.
+    int bandwidthLimitKBps() const { return m_bandwidthLimitKBps; }
+    void setBandwidthLimitKBps(int value);
+
     // Whether the toolbar's quick-connect field (MainWindow) is shown —
     // toggled from the View menu. Defaults to true: burying a new
     // feature behind an opt-in toggle would defeat the point of adding
@@ -123,4 +136,5 @@ private:
     QString m_proxyUsername;
     bool m_quickConnectFieldVisible = true;
     bool m_filenameFilterVisible = true;
+    int m_bandwidthLimitKBps = 0;
 };

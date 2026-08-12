@@ -79,6 +79,7 @@ set(SOURCES
     src/ui/EditSessionManager.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
     src/backends/ProxyConnect.cpp
     src/backends/FtpBackend.cpp
     src/backends/FtpTlsSocket.cpp
@@ -340,6 +341,7 @@ qt_add_executable(smoke-test EXCLUDE_FROM_ALL
     src/ui/EditSessionManager.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
     src/backends/ProxyConnect.cpp
     src/backends/FtpBackend.cpp   # MainWindow.cpp constructs one — see startConnection()
     src/backends/FtpTlsSocket.cpp
@@ -378,6 +380,7 @@ qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
     src/ui/EditSessionManager.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
     src/backends/ProxyConnect.cpp
     src/backends/FtpBackend.cpp   # MainWindow.cpp constructs one — see startConnection()
     src/backends/FtpTlsSocket.cpp
@@ -419,6 +422,17 @@ target_include_directories(app-settings-test PRIVATE src)
 # comment) — only that settings.json itself never gets a plaintext
 # password, which doesn't depend on CredentialStore succeeding.
 target_link_libraries(app-settings-test PRIVATE Qt6::Core ${CREDENTIAL_STORE_TARGET})
+
+# --- Bandwidth throttle pacing test: BandwidthThrottle's own math in
+# isolation (no server, no backend) — see src/bandwidth_throttle_test.cpp's
+# own header comment. Qt6::Core alone, same reasoning as app-settings-test
+# above: QCoreApplication only, no widgets/network involved. ---
+qt_add_executable(bandwidth-throttle-test EXCLUDE_FROM_ALL
+    src/bandwidth_throttle_test.cpp
+    src/backends/BandwidthThrottle.cpp
+)
+target_include_directories(bandwidth-throttle-test PRIVATE src)
+target_link_libraries(bandwidth-throttle-test PRIVATE Qt6::Core)
 
 # --- Trust-prompt test: drives the REAL QMessageBox HostKeyVerifier/
 # CertificateVerifier pop, same live-dialog technique
@@ -535,6 +549,7 @@ target_link_libraries(conflict-resolution-test PRIVATE Qt6::Widgets Qt6::Network
 qt_add_executable(ftp-parsing-test EXCLUDE_FROM_ALL
     src/ftp_parsing_test.cpp
     src/backends/FtpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
     src/backends/FtpTlsSocket.cpp
     src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
@@ -741,6 +756,7 @@ qt_add_executable(verify-sftp-pubkey EXCLUDE_FROM_ALL
     src/verify_sftp_pubkey.cpp
     src/ui/HostKeyVerifier.cpp
     src/backends/SftpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
     src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
     src/transfer/FolderEnumerator.cpp
@@ -754,11 +770,29 @@ qt_add_executable(verify-sftp-pause-cancel EXCLUDE_FROM_ALL
     src/verify_sftp_pause_cancel.cpp
     src/ui/HostKeyVerifier.cpp
     src/backends/SftpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
     src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
 )
 target_include_directories(verify-sftp-pause-cancel PRIVATE src)
 target_link_libraries(verify-sftp-pause-cancel PRIVATE
+    Qt6::Widgets Qt6::Network Qt6::Concurrent ${LIBSSH2_TARGET}
+)
+
+# --- Bandwidth throttle against a REAL server — see
+# src/verify_bandwidth_throttle_live.cpp's own header comment. Same
+# single-server precondition/source set as verify-sftp-pause-cancel
+# above (tools/local-test-servers/start-sftp-pubkey.sh already running).
+qt_add_executable(verify-bandwidth-throttle-live EXCLUDE_FROM_ALL
+    src/verify_bandwidth_throttle_live.cpp
+    src/ui/HostKeyVerifier.cpp
+    src/backends/SftpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
+    src/backends/ProxyConnect.cpp
+    src/backends/RemoteBackend.h
+)
+target_include_directories(verify-bandwidth-throttle-live PRIVATE src)
+target_link_libraries(verify-bandwidth-throttle-live PRIVATE
     Qt6::Widgets Qt6::Network Qt6::Concurrent ${LIBSSH2_TARGET}
 )
 
@@ -781,6 +815,7 @@ qt_add_executable(verify-sftp-move EXCLUDE_FROM_ALL
     src/ui/HostKeyVerifier.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
     src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
     src/transfer/TransferManager.cpp
@@ -812,6 +847,7 @@ qt_add_executable(verify-remote-to-remote-live EXCLUDE_FROM_ALL
     src/ui/HostKeyVerifier.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
     src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
     src/transfer/TransferManager.cpp
@@ -845,6 +881,7 @@ qt_add_executable(verify-concurrent-transfers-live EXCLUDE_FROM_ALL
     src/ui/HostKeyVerifier.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
     src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
     src/transfer/TransferManager.cpp
@@ -877,6 +914,7 @@ qt_add_executable(verify-ftp-move EXCLUDE_FROM_ALL
     src/ui/CertificateVerifier.cpp
     src/backends/LocalBackend.cpp
     src/backends/FtpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
     src/backends/FtpTlsSocket.cpp
     src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
@@ -900,6 +938,7 @@ qt_add_executable(verify-sftp-vendors EXCLUDE_FROM_ALL
     src/verify_sftp_vendors.cpp
     src/ui/HostKeyVerifier.cpp
     src/backends/SftpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
     src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
 )
@@ -917,6 +956,7 @@ qt_add_executable(verify-sftp-throughput EXCLUDE_FROM_ALL
     src/verify_sftp_throughput.cpp
     src/ui/HostKeyVerifier.cpp
     src/backends/SftpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
     src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
 )
@@ -928,6 +968,7 @@ target_link_libraries(verify-sftp-throughput PRIVATE
 qt_add_executable(verify-ftp-live EXCLUDE_FROM_ALL
     src/verify_ftp_live.cpp
     src/backends/FtpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
     src/backends/FtpTlsSocket.cpp
     src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
@@ -943,6 +984,7 @@ qt_add_executable(verify-ftps-trust EXCLUDE_FROM_ALL
     src/verify_ftps_trust.cpp
     src/ui/CertificateVerifier.cpp
     src/backends/FtpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
     src/backends/FtpTlsSocket.cpp
     src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
@@ -958,6 +1000,7 @@ target_link_libraries(verify-ftps-trust PRIVATE Qt6::Widgets Qt6::Network Qt6::C
 qt_add_executable(verify-ftp-vendors EXCLUDE_FROM_ALL
     src/verify_ftp_vendors.cpp
     src/backends/FtpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
     src/backends/FtpTlsSocket.cpp
     src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
@@ -976,6 +1019,7 @@ qt_add_executable(verify-socks5-proxy EXCLUDE_FROM_ALL
     src/ui/HostKeyVerifier.cpp
     src/ui/CertificateVerifier.cpp
     src/backends/SftpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
     src/backends/ProxyConnect.cpp
     src/backends/FtpBackend.cpp
     src/backends/FtpTlsSocket.cpp
@@ -996,6 +1040,7 @@ qt_add_executable(verify-http-connect-proxy EXCLUDE_FROM_ALL
     src/ui/HostKeyVerifier.cpp
     src/ui/CertificateVerifier.cpp
     src/backends/SftpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
     src/backends/ProxyConnect.cpp
     src/backends/FtpBackend.cpp
     src/backends/FtpTlsSocket.cpp

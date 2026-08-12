@@ -425,13 +425,13 @@ representative of any real desktop:
 
 ## Running the test suites
 
-Eighteen `EXCLUDE_FROM_ALL` CMake targets make up the required suite as
+Nineteen `EXCLUDE_FROM_ALL` CMake targets make up the required suite as
 of this writing — not part of a normal `make`, built and run
 explicitly, and all of them (not just a "core" subset) need to actually
 pass before a change is done. The count keeps growing as the project
 does; rather than renumbering everything and rewriting this whole
 section each time, new targets get their own short subsection further
-below instead. Don't trust "eighteen" to still be accurate by the time
+below instead. Don't trust "nineteen" to still be accurate by the time
 you're reading this — this paragraph is the one place that number lives,
 so if it's wrong, the fix is here, not a hunt through the rest of this
 file. The original ten, each with its own run command:
@@ -860,6 +860,37 @@ need two live servers, unavailable here (same live-server boundary
 `transfer-pause-test`'s own header comment already flags for
 `SftpBackend`'s real byte-offset resume logic).
 
+### `bandwidth-throttle-test`
+
+Same treatment as the targets above — self-contained, `EXCLUDE_FROM_ALL`,
+added to all five `build.yml` jobs. Covers `BandwidthThrottle`'s own
+pacing math directly (no server, no `SftpBackend`/`FtpBackend`, `Qt6::Core`
+alone, same reasoning as `app-settings-test` below): an unlimited
+(`limitKBps <= 0`) instance is a true no-op (2000 calls with huge byte
+counts complete in well under 100ms); a 100 KB/s instance genuinely
+blocks for close to the theoretically correct duration (two 50KB `pace()`
+calls land at ~500ms and ~1000ms respectively, confirmed directly rather
+than assumed); and a `shouldStop` callback returning `true` — either
+immediately or partway through a would-be ~50-second sleep at a very low
+configured limit — cuts the sleep short rather than ever completing it,
+confirming the sleep is genuinely composed of short, interruptible
+increments. See `src/bandwidth_throttle_test.cpp`'s own header comment
+for the full detail. Run it locally the same way:
+
+```
+cmake --build build --target bandwidth-throttle-test
+QT_QPA_PLATFORM=offscreen ./build/bandwidth-throttle-test
+```
+
+Needs no fixtures — pure pacing-logic checks against real wall-clock
+time, generous margins throughout (this project's usual real-timing-
+assertion style). **Not covered, and documented as such rather than
+faked**: that a real, throttled `SftpBackend` transfer actually achieves
+close to the configured real-world MB/s over a real network — that's
+`verify-bandwidth-throttle-live`'s job (external precondition: one real
+local `sshd`, not part of this required suite — see the live-verify
+harnesses section further below).
+
 ### `app-settings-test`
 
 Same treatment as the three above — self-contained, `EXCLUDE_FROM_ALL`,
@@ -920,10 +951,10 @@ mid-transfer cancel/pause/resume, and all of `FtpBackend` used to be
 genuinely unverified as a result (see ARCHITECTURE.md's Known gaps):
 nothing in this environment could reach a real server that way.
 `tools/local-test-servers/` closes that — throwaway local `sshd`/FTP/FTPS
-servers (no root, no system config touched) plus seven harnesses that
-drive the real backend classes (and, for the three Move/remote-to-remote
-ones, real `TransferManager`/`FilePaneWidget` orchestration on top of
-them, not just the backend directly) against them:
+servers (no root, no system config touched) plus nine harnesses that
+drive the real backend classes (and, for the four Move/remote-to-remote/
+concurrency ones, real `TransferManager`/`FilePaneWidget` orchestration
+on top of them, not just the backend directly) against them:
 
 ```
 tools/local-test-servers/start-sftp-pubkey.sh
@@ -933,14 +964,24 @@ tools/local-test-servers/start-ftp-legacy-list.sh
 tools/local-test-servers/start-ftps-trusted.sh
 tools/local-test-servers/start-ftp-active-only.sh
 
-cmake --build build --target verify-sftp-pubkey verify-ftp-live verify-sftp-pause-cancel verify-ftps-trust
+cmake --build build --target verify-sftp-pubkey verify-ftp-live verify-sftp-pause-cancel verify-ftps-trust verify-bandwidth-throttle-live
 QT_QPA_PLATFORM=offscreen SFTP_TEST_SCRATCH=/tmp/zephyrftp-local-test-servers/sftp ./build/verify-sftp-pubkey
 QT_QPA_PLATFORM=offscreen ./build/verify-ftp-live
 QT_QPA_PLATFORM=offscreen SFTP_TEST_SCRATCH=/tmp/zephyrftp-local-test-servers/sftp ./build/verify-sftp-pause-cancel
 QT_QPA_PLATFORM=offscreen ./build/verify-ftps-trust
+QT_QPA_PLATFORM=offscreen SFTP_TEST_SCRATCH=/tmp/zephyrftp-local-test-servers/sftp ./build/verify-bandwidth-throttle-live
 
 tools/local-test-servers/stop-all.sh
 ```
+
+`verify-bandwidth-throttle-live` uploads the same fixture twice against
+the one running server — once with `bandwidthLimitKBps = 0` (unlimited)
+to establish this machine's real loopback rate, once with a configured
+limit (300 KB/s by default, `VERIFY_THROTTLE_LIMIT_KBPS` to override) —
+and confirms the throttled run lands close to that configured number
+while the unthrottled run is meaningfully faster. Confirmed directly on
+a real run: 400000 KB/s unthrottled vs. exactly 300.0 KB/s throttled
+against a 300 KB/s configured limit.
 
 Four more, specifically for `TransferManager`'s server-side Move,
 remote-to-remote, and concurrent-scheduling features — see each `.cpp`'s

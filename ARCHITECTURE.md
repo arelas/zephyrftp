@@ -924,6 +924,44 @@ to drive FileZilla itself for a same-desktop comparison.
   native reference SFTP client, not the previously-reported 1.6-1.8x gap.
   See the Known Gaps entry on this same subject for the full writeup;
   kept brief here to avoid duplicating it.
+  **Bandwidth throttling (`BandwidthThrottle`, `src/backends/BandwidthThrottle.h/.cpp`)
+  is the deliberate inverse of all the throughput work above** — a
+  `BandwidthThrottle` is constructed fresh at the top of each
+  `downloadFile()`/`uploadFile()` call from `m_credentials.bandwidthLimitKBps`
+  (0 = unlimited, the default — a true no-op, no `QElapsedTimer`/sleep
+  overhead at all) and its `pace(bytesSoFar, shouldStop)` is called right
+  after each chunk's `transferProgress` emission, sleeping in short
+  (~150ms) increments — re-checking `shouldStop` between each — until the
+  average rate since construction is back down to the configured limit.
+  **Deliberately PER-TRANSFER, not one shared/global cap** — confirmed
+  with the user before implementing (the simpler of two real options: a
+  global aggregate would need a thread-safe rate limiter shared across
+  backend instances/worker threads, meaningfully more complexity for a
+  feature this project didn't have any version of yet). With at most
+  ~2 panes able to run concurrently (see `TransferManager`'s own entry),
+  worst-case combined bandwidth usage is ~2x the configured number — an
+  accepted, understood tradeoff, not an oversight. Wired in exactly like
+  `ProxyConfig`: `SftpCredentials`/`FtpCredentials::bandwidthLimitKBps`
+  populated once from `AppSettings::bandwidthLimitKBps()` by
+  `MainWindow::startConnection()`, fixed for that connection's whole
+  lifetime (changing the Preferences value needs a reconnect to take
+  effect, same as proxy). `LocalBackend` is NOT throttled — same
+  "`QFile::copy()` is one atomic OS-level call with no loop of ours to
+  interrupt" reasoning `RemoteBackend::requestPause()`'s own doc comment
+  already establishes for why Local doesn't support pause either; a
+  one-line note there extends it to cover throttling too, a documented
+  scope boundary rather than a gap. Verified two ways, mirroring the
+  concurrent-transfers precedent: `bandwidth-throttle-test` (required
+  suite) proves `BandwidthThrottle`'s own pacing math directly against
+  real wall-clock time (no server) — a 100 KB/s limit paced two 50KB
+  calls to almost exactly 500ms/1000ms on a real run, and a `shouldStop`
+  callback reliably cuts what would otherwise be a ~50-second sleep short
+  within ~150ms of becoming true; `verify-bandwidth-throttle-live`
+  (external precondition, one real local `sshd`, not part of CI) proves
+  a real `SftpBackend` upload actually achieves close to a configured
+  real-world KB/s over a real network, not just correct pacing logic in
+  isolation — confirmed on a real run: 400000 KB/s unthrottled vs.
+  exactly 300.0 KB/s throttled against a 300 KB/s configured limit.
   File management (`deleteEntry`/`renameEntry`/`createDirectory`/
   `createFile`) is built on `libssh2_sftp_unlink`/`rmdir`/`rename`/
   `mkdir`/`open` — every signature confirmed directly against the
@@ -1069,7 +1107,11 @@ to drive FileZilla itself for a same-desktop comparison.
 - `FtpBackend` (`src/backends/FtpBackend.h/.cpp`) — FTP and explicit FTPS,
   hand-rolled directly on `QTcpSocket`/`QSslSocket`. Implements the full
   `RemoteBackend` interface and runs on a dedicated worker thread under
-  the same threading contract as `SftpBackend`. **Reachable from the UI**
+  the same threading contract as `SftpBackend`. Also uses the same
+  `BandwidthThrottle` in its own `downloadFile()`/`uploadFile()` loops,
+  same per-transfer scope and `FtpCredentials::bandwidthLimitKBps`
+  wiring — see `SftpBackend`'s own entry above for the full design,
+  kept brief here to avoid duplicating it. **Reachable from the UI**
   — `MainWindow::startConnection()` constructs one for `Protocol::Ftp`/
   `Protocol::Ftps`, same as `SftpBackend` for `Protocol::Sftp` (see the
   `MainWindow` entry below); confirmed against a real server too, not

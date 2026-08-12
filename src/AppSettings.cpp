@@ -118,6 +118,14 @@ ProxyConfig AppSettings::resolvedProxyConfig() const
     return config;
 }
 
+void AppSettings::setBandwidthLimitKBps(int value)
+{
+    if (m_bandwidthLimitKBps == value)
+        return;
+    m_bandwidthLimitKBps = value;
+    save();
+}
+
 void AppSettings::setQuickConnectFieldVisible(bool visible)
 {
     if (m_quickConnectFieldVisible == visible)
@@ -164,6 +172,7 @@ void AppSettings::load()
     m_proxyUsername = obj.value(QStringLiteral("proxyUsername")).toString();
     m_quickConnectFieldVisible = obj.value(QStringLiteral("quickConnectFieldVisible")).toBool(true);
     m_filenameFilterVisible = obj.value(QStringLiteral("filenameFilterVisible")).toBool(true);
+    m_bandwidthLimitKBps = obj.value(QStringLiteral("bandwidthLimitKBps")).toInt(0);
 }
 
 void AppSettings::save() const
@@ -186,6 +195,7 @@ void AppSettings::save() const
     // comment; that secret lives only in CredentialStore.
     obj[QStringLiteral("quickConnectFieldVisible")] = m_quickConnectFieldVisible;
     obj[QStringLiteral("filenameFilterVisible")] = m_filenameFilterVisible;
+    obj[QStringLiteral("bandwidthLimitKBps")] = m_bandwidthLimitKBps;
 
     // QSaveFile (not QFile + Truncate) — writes the new content to a
     // temporary file first and only atomically replaces settings.json on
