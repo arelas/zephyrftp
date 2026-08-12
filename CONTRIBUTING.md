@@ -942,15 +942,19 @@ QT_QPA_PLATFORM=offscreen ./build/verify-ftps-trust
 tools/local-test-servers/stop-all.sh
 ```
 
-Three more, specifically for `TransferManager`'s server-side Move and
-remote-to-remote features — see each `.cpp`'s own header comment for the
-exact real-server gap each one closes, and ARCHITECTURE.md's
-Verification status entries for both features. `verify-sftp-move`/
-`verify-ftp-move` each need one server instance (two independent
-connections *to* it — real cross-pane Move eligibility, not simulated);
-`verify-remote-to-remote-live` needs two independent SFTP instances on
-different ports (two genuinely different servers, matching
-`TransferManager`'s remote-to-remote staging path):
+Four more, specifically for `TransferManager`'s server-side Move,
+remote-to-remote, and concurrent-scheduling features — see each `.cpp`'s
+own header comment for the exact real-server gap each one closes, and
+ARCHITECTURE.md's Verification status entries for each feature.
+`verify-sftp-move`/`verify-ftp-move` each need one server instance (two
+independent connections *to* it — real cross-pane Move eligibility, not
+simulated); `verify-remote-to-remote-live` and
+`verify-concurrent-transfers-live` each need two independent SFTP
+instances on different ports (two genuinely different servers — for
+remote-to-remote, matching `TransferManager`'s staging path; for
+concurrent transfers, two real backend instances/sessions/worker
+threads, the actual thing `transfer-concurrency-test`'s fake backends
+can't exercise):
 
 ```
 tools/local-test-servers/start-sftp-pubkey.sh
@@ -969,15 +973,29 @@ SFTP_TEST_SCRATCH=/tmp/zephyrftp-local-test-servers/sftp-a SFTP_TEST_PORT=2222 \
     tools/local-test-servers/start-sftp-pubkey.sh
 SFTP_TEST_SCRATCH=/tmp/zephyrftp-local-test-servers/sftp-b SFTP_TEST_PORT=2224 \
     tools/local-test-servers/start-sftp-pubkey.sh
-cmake --build build --target verify-remote-to-remote-live
+cmake --build build --target verify-remote-to-remote-live verify-concurrent-transfers-live
 QT_QPA_PLATFORM=offscreen \
     SFTP_TEST_SCRATCH_A=/tmp/zephyrftp-local-test-servers/sftp-a SFTP_TEST_PORT_A=2222 \
     SFTP_TEST_SCRATCH_B=/tmp/zephyrftp-local-test-servers/sftp-b SFTP_TEST_PORT_B=2224 \
     ./build/verify-remote-to-remote-live
+QT_QPA_PLATFORM=offscreen \
+    SFTP_TEST_SCRATCH_A=/tmp/zephyrftp-local-test-servers/sftp-a SFTP_TEST_PORT_A=2222 \
+    SFTP_TEST_SCRATCH_B=/tmp/zephyrftp-local-test-servers/sftp-b SFTP_TEST_PORT_B=2224 \
+    ./build/verify-concurrent-transfers-live
 tools/local-test-servers/stop-all.sh
 ```
 
-All three are safe to re-run against the same already-running server(s)
+`verify-concurrent-transfers-live` measures a real serial baseline (one
+upload to server A alone, then one to server B alone) then times a
+concurrent 3-item batch (two uploads to server A, one to server B) and
+asserts the batch finishes well under the serial-estimated sum —
+confirmed directly (not assumed) to distinguish the two cases: run
+against this project's pre-concurrency `TransferManager` and the ratio
+lands at ~0.99 (no speedup) with the "both genuinely InProgress at
+once" check failing; against the current one it lands at ~0.66-0.68,
+matching the ~0.67 theoretically expected for a 2-vs-1 backend split.
+
+All four are safe to re-run against the same already-running server(s)
 without a restart — each resets its own fixtures/leftover destination
 files up front for exactly that reason (see each `.cpp`'s own header
 comment for the real conflict-collision bug that not doing so produced

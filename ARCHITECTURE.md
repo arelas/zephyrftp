@@ -2246,6 +2246,27 @@ to drive FileZilla itself for a same-desktop comparison.
   received signal back to the right item is done by matching `sender()`
   against `m_active`'s `currentExecutor` fields, not by "whichever
   backend is currently *the* one" (there can be several at once now).
+  **The concurrency itself is verified two ways, not just one.**
+  `transfer-concurrency-test` (fake `QTimer`-tick backends, part of the
+  required `EXCLUDE_FROM_ALL` suite) proves the *scheduling* — two items
+  on different fake backends both reach `InProgress` at once, two on the
+  same one still serialize, cancelling one doesn't affect the other —
+  and was itself confirmed via a before/after `git stash` control (fails
+  against the pre-concurrency code, passes against this one), not just
+  trusted on inspection. `verify-concurrent-transfers-live` (two real,
+  independent local `sshd` instances, `EXCLUDE_FROM_ALL` but not part of
+  that required suite — external precondition) proves the network-level
+  claim the fake-backend test structurally can't: a real serial baseline
+  (one upload to server A alone, one to server B alone, each timed) is
+  compared against a real concurrent 3-item batch (two uploads to A, one
+  to B) — against the pre-concurrency `TransferManager` the batch takes
+  as long as the full serial sum (ratio ~0.99); against this one it lands
+  at ~0.66-0.68, matching the ~0.67 theoretically expected for a 2-vs-1
+  backend split, confirmed directly via the same `git stash` control.
+  Content is checked byte-for-byte on every concurrently-uploaded file
+  too, catching any cross-thread corruption a timing-only check would
+  miss. See `src/verify_concurrent_transfers_live.cpp`'s own header
+  comment and CONTRIBUTING.md's matching entry for exact run commands.
   **`RemoteToRemote` (server-to-server) is staged through a local temp
   file** — neither backend has a direct way to move a file straight to
   another server, so `dispatchActiveItem()` runs it in two phases:

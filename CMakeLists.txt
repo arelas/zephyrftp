@@ -825,6 +825,39 @@ target_link_libraries(verify-remote-to-remote-live PRIVATE
     Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${CREDENTIAL_STORE_TARGET}
 )
 
+# --- Concurrent transfers against TWO REAL, independent SFTP servers —
+# closes the one gap transfer-concurrency-test's own header comment
+# names outright: it proves TransferManager's scheduling allows
+# concurrent InProgress items, not that two real libssh2 sessions
+# actually move bytes over the network at the same time. See
+# src/verify_concurrent_transfers_live.cpp's own header comment for the
+# full design (serial baseline, then a concurrent 3-item batch, timed
+# and compared). Same source set/server setup as
+# verify-remote-to-remote-live above.
+qt_add_executable(verify-concurrent-transfers-live EXCLUDE_FROM_ALL
+    src/verify_concurrent_transfers_live.cpp
+    src/AppSettings.cpp
+    src/backends/CredentialStore.cpp
+    src/ui/FilePaneWidget.cpp
+    src/ui/PermissionsDialog.cpp
+    src/ui/FileTreeView.cpp
+    src/ui/IconTheme.cpp
+    src/ui/HostKeyVerifier.cpp
+    src/backends/LocalBackend.cpp
+    src/backends/SftpBackend.cpp
+    src/backends/ProxyConnect.cpp
+    src/backends/RemoteBackend.h
+    src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
+    src/transfer/FolderEnumerator.cpp
+    resources/icons.qrc
+    resources/theme.qrc
+)
+target_include_directories(verify-concurrent-transfers-live PRIVATE src)
+target_link_libraries(verify-concurrent-transfers-live PRIVATE
+    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${CREDENTIAL_STORE_TARGET}
+)
+
 # --- Move (server-side rename between two panes on the same connection)
 # against a REAL FTP server — the FTP counterpart to verify-sftp-move
 # above, confirming RNFR/RNTO genuinely relocates a DIRECTORY, not just
