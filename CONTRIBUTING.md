@@ -541,7 +541,19 @@ Never seen in CI (a fresh container every run has no leftover `/tmp`
 state to trip over), only in a long-lived local sandbox reused across
 many sessions — confirmed via `git stash` that the hang reproduced
 identically on unmodified `main`, so it predates and is unrelated to
-the macOS work that surfaced it. `transfer-pause-test`
+the macOS work that surfaced it. Separately, the file's very first
+navigation phase (the plain back/forward/up sequence at the top of
+`main()`) used to run as ~10 independent `QTimer::singleShot` calls
+spaced a fixed 200ms apart, one assertion per step, trusting that gap
+to be enough for each async navigate/back/forward/up call to land
+before the next step's check ran — true on every Linux CI container,
+but the first real macOS CI run failed "navigated to filesystem root"
+specifically (any of the other 9 steps sharing the same assumption
+could just as easily have been the one to trip instead). Rewritten as
+one chained sequence using the same `waitUntil()` helper the file's
+later phases already used, with a `waitUntil()` after every
+navigate/back/forward/up call rather than a fixed delay — not just a
+fix for the one step that happened to fail. `transfer-pause-test`
 uses a fake in-process backend (no real server, no real files) — see its
 own header comment for exactly what it does and doesn't prove. Its own
 pause step used to fire after a fixed 250ms wall-clock delay, assuming

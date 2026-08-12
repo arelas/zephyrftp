@@ -44,6 +44,30 @@ int main(int argc, char *argv[])
         if (!condition) allPass = false;
     };
 
+    // Polls rather than trusting a fixed wall-clock delay to have been
+    // enough — a fixed delay is exactly the kind of flaky timing
+    // assumption this project avoids elsewhere (see
+    // remote_to_remote_test.cpp's own header comment on why it was
+    // rewritten away from one). LocalBackend's round trip is normally
+    // near-instant, but a fixed margin was observed to occasionally not
+    // be enough under real system load — including, confirmed directly
+    // while building the macOS CI job, the "navigated to filesystem
+    // root" check below, whose fixed 200ms gap after navigateTo("/")
+    // wasn't enough on a slower/colder macOS runner despite always being
+    // enough on every Linux CI container. Declared here, at the top of
+    // main(), rather than nearer its first original use further down,
+    // so every phase in this file can use it, including ones textually
+    // earlier than where it used to live.
+    auto waitUntil = [&](std::function<bool()> condition) {
+        QEventLoop loop;
+        QTimer timeoutTimer;
+        timeoutTimer.setSingleShot(true);
+        QObject::connect(&timeoutTimer, &QTimer::timeout, &loop, &QEventLoop::quit);
+        timeoutTimer.start(5000);
+        while (!condition() && timeoutTimer.isActive())
+            loop.processEvents(QEventLoop::AllEvents, 20);
+    };
+
     // --- Direct checks of parentOfPath() itself, synchronous, no event
     // loop needed --- covers a real bug found after shipping: "C:/Users"
     // was computing its parent as the bare string "C:" (no trailing
@@ -78,48 +102,52 @@ int main(int argc, char *argv[])
     // first (constructor triggers an async connectToHost() ->
     // listDirectory("")), then start the real sequence from a known
     // directory rather than depending on whatever the home dir is.
+    //
+    // Every step below chains through waitUntil() after each async
+    // navigateTo()/goBack()/goForward()/goUp() call (all four go
+    // through the same async path — see this file's own top comment)
+    // rather than relying on fixed 200ms gaps between independent
+    // QTimer::singleShot calls the way this phase originally did. That
+    // fixed-delay version worked reliably on every Linux CI container
+    // this project has ever run on, but a real macOS CI run (slower/
+    // colder to schedule the initial event-loop turns) failed one of
+    // these steps — "navigated to filesystem root" specifically, though
+    // any of the others sharing the same assumption could just as
+    // easily have been the one to trip instead. Rewritten as one
+    // chained sequence, not just the one step that happened to fail.
     QTimer::singleShot(200, &app, [&]() {
         pane->navigateTo(base + "/a");
-    });
-
-    QTimer::singleShot(400, &app, [&]() {
+        waitUntil([&]() { return pane->currentDirectory() == base + "/a"; });
         pane->navigateTo(base + "/a/b");
-    });
-
-    QTimer::singleShot(600, &app, [&]() {
+        waitUntil([&]() { return pane->currentDirectory() == base + "/a/b"; });
         pane->navigateTo(base + "/a/b/c");
-    });
+        waitUntil([&]() { return pane->currentDirectory() == base + "/a/b/c"; });
 
-    // At this point history should be [home, a, a/b, a/b/c], sitting at
-    // a/b/c, forward disabled (nothing ahead), back enabled.
-    QTimer::singleShot(800, &app, [&]() {
+        // At this point history should be [home, a, a/b, a/b/c], sitting
+        // at a/b/c, forward disabled (nothing ahead), back enabled.
         check("at a/b/c after three forward navigations",
               pane->currentDirectory() == base + "/a/b/c");
         check("can go back from a/b/c", pane->canGoBack());
         check("cannot go forward from a/b/c (nothing ahead yet)", !pane->canGoForward());
-        pane->goBack();
-    });
 
-    QTimer::singleShot(1000, &app, [&]() {
+        pane->goBack();
+        waitUntil([&]() { return pane->currentDirectory() == base + "/a/b"; });
         check("goBack() from a/b/c lands on a/b", pane->currentDirectory() == base + "/a/b");
-        pane->goBack();
-    });
 
-    QTimer::singleShot(1200, &app, [&]() {
+        pane->goBack();
+        waitUntil([&]() { return pane->currentDirectory() == base + "/a"; });
         check("goBack() again lands on a", pane->currentDirectory() == base + "/a");
         check("can still go forward after two backs", pane->canGoForward());
-        pane->goForward();
-    });
 
-    QTimer::singleShot(1400, &app, [&]() {
+        pane->goForward();
+        waitUntil([&]() { return pane->currentDirectory() == base + "/a/b"; });
         check("goForward() from a lands back on a/b", pane->currentDirectory() == base + "/a/b");
+
         // Now branch to a NEW directory while sitting mid-history (not
         // at the newest entry) — this should truncate the "a/b/c"
         // forward entry, same convention every browser uses.
         pane->navigateTo(base + "/other");
-    });
-
-    QTimer::singleShot(1600, &app, [&]() {
+        waitUntil([&]() { return pane->currentDirectory() == base + "/other"; });
         check("navigating to a new path from mid-history lands there",
               pane->currentDirectory() == base + "/other");
         check("forward history was truncated by the branch (a/b/c is gone)",
@@ -128,29 +156,22 @@ int main(int argc, char *argv[])
 
         // Up: from base/other, parent should be base itself.
         pane->goUp();
-    });
-
-    QTimer::singleShot(1800, &app, [&]() {
+        waitUntil([&]() { return pane->currentDirectory() == base; });
         check("goUp() from base/other lands on base", pane->currentDirectory() == base);
 
         // Up again: from base, parent should be /tmp.
         pane->goUp();
-    });
-
-    QTimer::singleShot(2000, &app, [&]() {
+        waitUntil([&]() { return pane->currentDirectory() == "/tmp"; });
         check("goUp() from base lands on /tmp", pane->currentDirectory() == "/tmp");
 
         // Up from filesystem root should be a safe no-op, not an error
         // or a crash — navigate there directly first, then try Up.
         pane->navigateTo("/");
-    });
-
-    QTimer::singleShot(2200, &app, [&]() {
+        waitUntil([&]() { return pane->currentDirectory() == "/"; });
         check("navigated to filesystem root", pane->currentDirectory() == "/");
-        pane->goUp();
-    });
 
-    QTimer::singleShot(2400, &app, [&]() {
+        pane->goUp();
+        waitUntil([&]() { return pane->currentDirectory() == "/"; });
         check("goUp() from root is a safe no-op (stays at root)", pane->currentDirectory() == "/");
     });
 
@@ -166,24 +187,6 @@ int main(int argc, char *argv[])
     QDir().mkpath(raceBase + "/x");
     QDir().mkpath(raceBase + "/y");
     auto *racePane = new FilePaneWidget(new LocalBackend());
-
-    // Polls rather than a fixed delay for the SETUP navigation (not the
-    // deliberately-racy part below, which must stay two synchronous,
-    // back-to-back calls) — a fixed delay here would be exactly the kind
-    // of flaky timing assumption this project avoids elsewhere (see
-    // remote_to_remote_test.cpp's own header comment on why it was
-    // rewritten away from one). LocalBackend's round trip is normally
-    // near-instant, but a fixed 200ms margin was observed to occasionally
-    // not be enough under real system load.
-    auto waitUntil = [&](std::function<bool()> condition) {
-        QEventLoop loop;
-        QTimer timeoutTimer;
-        timeoutTimer.setSingleShot(true);
-        QObject::connect(&timeoutTimer, &QTimer::timeout, &loop, &QEventLoop::quit);
-        timeoutTimer.start(5000);
-        while (!condition() && timeoutTimer.isActive())
-            loop.processEvents(QEventLoop::AllEvents, 20);
-    };
 
     QTimer::singleShot(2600, &app, [&]() {
         racePane->navigateTo(raceBase + "/x");
