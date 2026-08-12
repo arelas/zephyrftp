@@ -140,7 +140,21 @@ jobs:
           # plain root with a normal $HOME), only on GitHub's own
           # runners — exactly the gap flagged as unverified before this
           # workflow's first real run.
-          export WINEDEBUG=-all QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR=/tmp/xdg-runtime WINEPREFIX=/tmp/wineprefix
+          #
+          # LIBGL_ALWAYS_SOFTWARE=1 added after four consecutive real CI
+          # failures (not reproducible locally via podman — same script,
+          # same container, same env, 19/19 tests passed clean every
+          # time locally) all showing the identical signature: a
+          # "libEGL warning: DRI3 error: Could not get DRI3 device"
+          # immediately followed by the virtual X server itself dying
+          # ("X connection to :99 broken") before any test could
+          # produce output, repeating for the whole ~2.5 minute step.
+          # This forces Mesa's llvmpipe software rasterizer up front
+          # instead of letting wine/Mesa probe for a DRI3-capable GPU
+          # device that GitHub's runners don't consistently expose the
+          # same way local podman does — skips the failing probe
+          # entirely rather than working around its failure.
+          export WINEDEBUG=-all QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR=/tmp/xdg-runtime WINEPREFIX=/tmp/wineprefix LIBGL_ALWAYS_SOFTWARE=1
           mkdir -p /tmp/xdg-runtime /tmp/wineprefix && chmod 700 /tmp/xdg-runtime
 
           xvfb-run -a wine ./smoke-test.exe
