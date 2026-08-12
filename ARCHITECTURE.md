@@ -3610,6 +3610,23 @@ re-verified by pushing again:
 See CONTRIBUTING.md's own entries on each of the three CI-discovered
 timing fixes for the mechanism-level detail.
 
+**A real, end-user-breaking packaging bug shipped undetected through
+v0.7.0-v0.7.2** — `cpack -G DragNDrop` packaged whatever the raw
+`cmake --build` output was, with no framework-bundling step at all, so
+the `.app`'s Qt/libssh2/openssl load commands still pointed at the CI
+runner's own Homebrew prefix (`/opt/homebrew/...`). This job's own
+"Run test suite" step never caught it because it runs the binary on
+the very machine that prefix already resolves on — the bug was only
+visible to a real end user on a different Mac, who hit an
+`EXC_CRASH`/`DYLD ... Library not loaded` on launch. Found via exactly
+that (a user reporting a launch crash on a released `.dmg`), fixed by
+adding `macdeployqt` (Qt's own frameworks/plugins) and `dylibbundler`
+(everything macdeployqt doesn't know about — libssh2, openssl@3, both
+outside the Qt prefix) before packaging, plus an `otool -L` check that
+fails the build if any `/opt/homebrew` reference survives both
+deploy steps — a regression guard for this exact class of bug, since
+nothing else in this pipeline can catch it.
+
 **Confirmed working end-to-end on GitHub's own runners**, not just
 locally: the Windows and Linux build jobs pass, the full test suite
 passes on both platforms, and a real tagged release (`v0.2.0`)

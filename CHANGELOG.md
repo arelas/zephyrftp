@@ -23,6 +23,14 @@ in the README), so anything may still change between 0.x releases.
   back off automatically, rather than continuing to track against
   wherever the old connection used to be.
 
+### Fixed
+
+- **macOS build crashed on launch on any machine other than the one
+  that built it.** Every released `.dmg` through 0.7.2 packaged the
+  app without bundling its Qt/libssh2/openssl libraries, so it only
+  ever ran on the CI runner itself. Fixed by properly deploying those
+  libraries into the app bundle before packaging.
+
 ## [0.7.2] — Bandwidth throttling
 
 ### Added

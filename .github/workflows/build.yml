@@ -600,8 +600,13 @@ jobs:
       # pkg_check_modules(OPENSSL ...) in CMakeLists.txt to find it —
       # libssh2 isn't keg-only but is included in that same path for
       # determinism rather than relying on Homebrew's default linking.
+      # dylibbundler deploys libssh2/openssl@3 into the app bundle
+      # (both keg-only or otherwise living outside the Qt prefix,
+      # so macdeployqt below — which only walks Qt's own frameworks —
+      # doesn't touch them) — see the "Deploy" steps near the .dmg
+      # packaging step for why this exists at all.
       - name: Install build dependencies
-        run: brew install qt libssh2 openssl@3 pkg-config
+        run: brew install qt libssh2 openssl@3 pkg-config dylibbundler
 
       - uses: actions/checkout@v7
 
@@ -699,6 +704,51 @@ jobs:
           ./sync-browsing-test
 
           ./verify-credential-store
+
+      # Bundles Homebrew's Qt frameworks into Contents/Frameworks and
+      # rewrites the binary's load commands to reference them via
+      # @rpath instead of the runner's own Homebrew prefix. Without
+      # this, the built .app only ever ran on the CI runner itself
+      # (which happens to have that exact Qt install), and crashed on
+      # every real end-user machine with a DYLD "Library not loaded"
+      # error — found via a real user testing an actual released .dmg,
+      # not caught by this job's own "Run test suite" step above since
+      # that step runs on the very machine the dangling reference
+      # already resolves on. Present in every released .dmg through
+      # v0.7.2 undetected for the same reason.
+      - name: Deploy Qt frameworks into app bundle
+        run: |
+          QT_PREFIX="$(brew --prefix qt)"
+          "$QT_PREFIX/bin/macdeployqt" build/zephyrftp.app
+
+      # macdeployqt only walks Qt's own frameworks/plugins — it doesn't
+      # know about libssh2/openssl@3, which zephyrftp links directly
+      # (SftpBackend, FtpBackend's FtpTlsSocket) and which live outside
+      # the Qt prefix entirely. dylibbundler recursively walks the
+      # rest of the dependency tree (including libssh2's own link to
+      # openssl) and copies/rewrites those the same way.
+      - name: Deploy non-Qt libraries (libssh2, openssl) into app bundle
+        run: |
+          dylibbundler -od -b \
+            -x build/zephyrftp.app/Contents/MacOS/zephyrftp \
+            -d build/zephyrftp.app/Contents/Frameworks \
+            -p @executable_path/../Frameworks/
+
+      # Cheap regression guard for the exact bug above: after
+      # macdeployqt/dylibbundler, nothing in the binary should still
+      # reference the runner's own Homebrew prefix — every Qt/OpenSSL/
+      # libssh2 load command should now be @rpath- or
+      # @executable_path-relative (bundled) or a system framework.
+      # Fails loudly here rather than silently shipping another
+      # unusable .dmg.
+      - name: Verify app bundle has no dangling Homebrew references
+        run: |
+          set -e
+          if otool -L build/zephyrftp.app/Contents/MacOS/zephyrftp | grep -q "/opt/homebrew"; then
+            echo "::error::zephyrftp binary still references the runner's own Homebrew prefix after macdeployqt:"
+            otool -L build/zephyrftp.app/Contents/MacOS/zephyrftp | grep "/opt/homebrew"
+            exit 1
+          fi
 
       # DragNDrop, not the Linux job's bare-binary tarball approach —
       # a real .app bundle in a .dmg is what every Mac user expects to
