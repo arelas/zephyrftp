@@ -1408,12 +1408,15 @@ to drive FileZilla itself for a same-desktop comparison.
   item the way `CredWriteW()`/`secret_password_store_sync()` both do
   unconditionally, so `save()` falls back to a `SecItemUpdate()` call
   on `errSecDuplicateItem` to satisfy that same "overwrites any
-  existing secret" contract. **Not yet confirmed against a real
-  keychain** — this sandbox has no macOS hardware, so unlike the
-  Linux/Windows backends below, the only verification available is
-  `verify-credential-store` actually passing inside the `build-macos`
-  CI job (see "Windows, macOS, and Linux builds (CI)" above); update
-  this note once a real run has confirmed it. Deliberately NOT a
+  existing secret" contract. **Confirmed working for real** on a
+  genuine macOS GitHub-hosted runner (this sandbox has no macOS
+  hardware, so this is the only verification available, unlike the
+  Linux/Windows backends below which have also been checked directly
+  in this environment): `verify-credential-store`'s full
+  save/load/hasSecret/remove round trip, including non-ASCII content,
+  passed inside the `build-macos` CI job on the first real run after
+  the one bug fix below (see "Windows, macOS, and Linux builds (CI)"
+  above). Deliberately NOT a
   bundled cross-platform wrapper library — Fedora ships
   `qtkeychain-qt6` for native Linux, but only a Qt5 build for the
   mingw64/Windows cross-target, a real ABI mismatch with this project's
@@ -3441,12 +3444,18 @@ and AppImage all run on `ubuntu-latest`, either natively or inside a
 container), this is the first one running on a genuinely different,
 native runner OS — meaning it's also the only job whose CMake code
 paths (the `APPLE` branches throughout `CMakeLists.txt` and
-`CredentialStore.cpp`) can't be exercised at all on the Linux
-sandboxes this project has otherwise been developed and verified in.
-Update this note once a real GitHub Actions run has confirmed the job
-green, the way `v0.2.0`'s real tagged release already confirmed
-Windows and Linux below — don't treat this paragraph's existence as
-that confirmation.
+`CredentialStore.cpp`) can't be exercised at all on the Linux sandboxes
+this project has otherwise been developed and verified in.
+**Confirmed green on a real GitHub Actions macOS runner**, via
+`workflow_dispatch` (not yet a tagged release — see below): build,
+full required test suite including `verify-credential-store`, `.icns`
+generation, and `.dmg` packaging all passed. Took two real CI
+iterations to get there, not one — the first run caught two genuine,
+pre-existing bugs neither locally reproducible nor previously exposed
+by any Linux CI container: a `navigation-test` hang and a
+`transfer-pause-test` timing flake, both fixed (see CONTRIBUTING.md's
+own entries on each) and confirmed by a second green run before this
+paragraph was written.
 
 **Confirmed working end-to-end on GitHub's own runners**, not just
 locally: the Windows and Linux build jobs pass, the full test suite
