@@ -29,6 +29,8 @@
 #include <QDebug>
 #include <QDir>
 #include <QFile>
+#include <QEventLoop>
+#include <functional>
 #include "ui/FilePaneWidget.h"
 #include "backends/LocalBackend.h"
 #include "backends/RemoteBackend.h"
@@ -189,6 +191,7 @@ int main(int argc, char *argv[])
     qint64 bytesDoneAtPause = -1;
     qint64 firstBytesDoneAfterResume = -1;
     bool sawResumeInProgress = false;
+    qint64 latestInProgressBytesDone = 0;
 
     QObject::connect(manager, &TransferManager::itemAdded, &app, [&](const TransferItem &item) {
         itemId = item.id;
@@ -200,6 +203,9 @@ int main(int argc, char *argv[])
         qDebug() << "[test] itemUpdated: status =" << static_cast<int>(item.status)
                  << "bytesDone =" << item.bytesDone;
 
+        if (item.status == TransferStatus::InProgress) {
+            latestInProgressBytesDone = item.bytesDone;
+        }
         if (item.status == TransferStatus::Paused && bytesDoneAtPause < 0) {
             bytesDoneAtPause = item.bytesDone;
         }
@@ -210,16 +216,37 @@ int main(int argc, char *argv[])
         }
     });
 
-    // Step 1: start the (fake) transfer.
+    // Same reasoning as navigation-test.cpp's own waitUntil — a real hang
+    // found and fixed while building the macOS CI job: Step 2 below used
+    // to pause after a FIXED 250ms delay, assuming the fake backend's
+    // first 30ms tick would have already landed by then. True on the
+    // Linux CI containers, but the first real run on a macOS GitHub-hosted
+    // runner (slower/colder to spin up threads and dispatch the initial
+    // async enqueue()/checkExists() round trip) blew through that budget
+    // with zero ticks landed, so "paused with nonzero bytesDone" failed
+    // for a reason that had nothing to do with the actual pause/resume
+    // behavior under test.
+    auto waitUntil = [&](std::function<bool()> condition) {
+        QEventLoop loop;
+        QTimer timeoutTimer;
+        timeoutTimer.setSingleShot(true);
+        QObject::connect(&timeoutTimer, &QTimer::timeout, &loop, &QEventLoop::quit);
+        timeoutTimer.start(5000);
+        while (!condition() && timeoutTimer.isActive())
+            loop.processEvents(QEventLoop::AllEvents, 20);
+    };
+
+    // Step 1: start the (fake) transfer, then pause it partway through —
+    // waits for real, observed progress (at least one genuine tick)
+    // rather than trusting a fixed wall-clock delay to have been enough,
+    // then pauses right away (still well before the fake backend's
+    // ~300ms total run time, so there's a meaningful, nonzero
+    // bytesDone, not so late it finishes first).
     QTimer::singleShot(100, &app, [&]() {
         manager->enqueue(leftPane, rightPane, "fakefile.bin");
-    });
-
-    // Step 2: pause it partway through (a few ticks in — enough progress
-    // to have a meaningful, nonzero bytesDone, not so long it finishes
-    // first).
-    QTimer::singleShot(250, &app, [&]() {
+        waitUntil([&]() { return itemId > 0; });
         check("item exists before pausing", itemId > 0);
+        waitUntil([&]() { return latestInProgressBytesDone > 0; });
         manager->pauseItem(itemId);
     });
 

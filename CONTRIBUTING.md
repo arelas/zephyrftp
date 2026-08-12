@@ -543,7 +543,20 @@ many sessions — confirmed via `git stash` that the hang reproduced
 identically on unmodified `main`, so it predates and is unrelated to
 the macOS work that surfaced it. `transfer-pause-test`
 uses a fake in-process backend (no real server, no real files) — see its
-own header comment for exactly what it does and doesn't prove.
+own header comment for exactly what it does and doesn't prove. Its own
+pause step used to fire after a fixed 250ms wall-clock delay, assuming
+the fake backend's first 30ms progress tick would already have landed
+by then — true on the Linux CI containers, but the first real run on a
+macOS GitHub-hosted runner (slower/colder to spin up the initial async
+`enqueue()`/`checkExists()` round trip) blew through that budget with
+zero ticks landed, failing "paused with nonzero bytesDone" for a reason
+that had nothing to do with pause/resume itself. Fixed the same way as
+`navigation-test`'s hang above: a `waitUntil()`-style poll for real,
+observed progress before pausing, not a longer fixed delay. The rest of
+this file's timeline still uses fixed wall-clock offsets from app
+start — a known, narrower flake risk than the one just fixed, tracked
+as a follow-up rather than a full rewrite in the same pass (see
+`project_macos_build.md` memory).
 `file-operations-test` creates its own scratch tree under
 `/tmp/file_ops_test` and tests `LocalBackend` directly (not through the
 UI, since its prompts can't be driven headlessly) — see its own header
