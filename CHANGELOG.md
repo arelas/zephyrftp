@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.6.25] — Chmod / permissions editing
+
 ### Added
 
 - **Change permissions.** Right-click a file or folder — local, SFTP,
@@ -1487,7 +1489,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.24...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.6.25...HEAD
+[0.6.25]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.25
 [0.6.24]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.24
 [0.6.23]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.23
 [0.6.22]: https://github.com/arelas/zephyrftp/releases/tag/v0.6.22
