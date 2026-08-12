@@ -1392,17 +1392,32 @@ to drive FileZilla itself for a same-desktop comparison.
 - `CredentialStore` (`src/backends/CredentialStore.h/.cpp`) — the OS
   credential store, opt-in, and the only place a secret from this app
   is ever written to disk. `save`/`load`/`remove`/`hasSecret`, keyed by
-  a `SavedSite`'s `id`. Two platform backends behind `#ifdef _WIN32`
-  (one file, not separate ones — the amount of platform-specific code
-  is small enough that CMake source-list conditionals would be more
-  ceremony than the split is worth): libsecret on Linux (the
-  freedesktop Secret Service — GNOME Keyring, KWallet's compatibility
-  layer, whichever the desktop provides), the real Win32 Credential
-  Manager API (`wincred.h`, `CredWriteW`/`CredReadW`/`CredDeleteW`) on
-  Windows. Deliberately NOT a bundled cross-platform wrapper library —
-  Fedora ships `qtkeychain-qt6` for native Linux, but only a Qt5 build
-  for the mingw64/Windows cross-target, a real ABI mismatch with this
-  project's Qt6 Windows build — so this follows the same
+  a `SavedSite`'s `id`. Three platform backends behind `#ifdef _WIN32`
+  / `#elif defined(__APPLE__)` / `#else` (one file, not separate ones —
+  the amount of platform-specific code is small enough that CMake
+  source-list conditionals would be more ceremony than the split is
+  worth): libsecret on Linux (the freedesktop Secret Service — GNOME
+  Keyring, KWallet's compatibility layer, whichever the desktop
+  provides), the real Win32 Credential Manager API (`wincred.h`,
+  `CredWriteW`/`CredReadW`/`CredDeleteW`) on Windows, and Keychain
+  Services (`Security.framework`) on macOS. The macOS backend keys a
+  `kSecClassGenericPassword` item on a fixed `kSecAttrService`
+  (`"ZephyrFTP"`) plus `kSecAttrAccount` = the site id — the direct
+  analog of Windows' namespaced `targetName()` and Linux's `site_id`
+  schema attribute. `SecItemAdd()` alone doesn't overwrite an existing
+  item the way `CredWriteW()`/`secret_password_store_sync()` both do
+  unconditionally, so `save()` falls back to a `SecItemUpdate()` call
+  on `errSecDuplicateItem` to satisfy that same "overwrites any
+  existing secret" contract. **Not yet confirmed against a real
+  keychain** — this sandbox has no macOS hardware, so unlike the
+  Linux/Windows backends below, the only verification available is
+  `verify-credential-store` actually passing inside the `build-macos`
+  CI job (see "Windows, macOS, and Linux builds (CI)" above); update
+  this note once a real run has confirmed it. Deliberately NOT a
+  bundled cross-platform wrapper library — Fedora ships
+  `qtkeychain-qt6` for native Linux, but only a Qt5 build for the
+  mingw64/Windows cross-target, a real ABI mismatch with this project's
+  Qt6 Windows build — so this follows the same
   direct-on-the-platform-API approach already used elsewhere
   (`SftpBackend` on libssh2 directly, `FtpBackend` hand-rolled instead
   of libcurl) rather than fighting a packaging gap. Deliberately NOT the
@@ -3358,13 +3373,14 @@ above.
   directly — see `FilePaneWidget::iconForEntry()` and
   `TransferQueueWidget::statusIcon()` for where those choices live in code.
 
-## Windows and Linux builds (CI)
+## Windows, macOS, and Linux builds (CI)
 
-`.github/workflows/build.yml` produces both platforms' release binaries
-and, on a `v*` tag, attaches both to the same GitHub Release. All four
-build jobs actually run the full required test suite as part of the
-job, not just link it — matching CONTRIBUTING.md's "these need to
-actually pass" rule for CI too, not only local development.
+`.github/workflows/build.yml` produces all three platforms' release
+binaries and, on a `v*` tag, attaches all of them to the same GitHub
+Release. All five build jobs actually run the full required test suite
+as part of the job, not just link it — matching CONTRIBUTING.md's
+"these need to actually pass" rule for CI too, not only local
+development.
 
 **`build-windows`** cross-compiles with MinGW from a `fedora:44`
 container on `ubuntu-latest`, rather than building natively on
@@ -3394,13 +3410,52 @@ needs no display of any kind on its own turf (confirmed directly in a
 genuinely headless container with no X/Wayland session — unlike wine's
 situation in the Windows job, described below).
 
+**`build-macos`** is the same shape as `build-linux` — a plain native
+build, this time on `macos-latest` — using Homebrew (`brew install qt
+libssh2 openssl@3 pkg-config`) instead of apt/dnf. **Apple Silicon
+(arm64) only, deliberately not a universal binary**: `macos-latest` is
+a native arm64 runner and Homebrew's Qt6 is single-arch; a true
+universal (arm64+Intel) build would need a second, Rosetta-emulated
+Homebrew prefix plus `lipo`-merging every bundled Qt framework/plugin
+dylib — real CI complexity taken on for a shrinking population of Intel
+Macs, judged not worth it for now. `CredentialStore`'s third backend
+(Keychain Services, `Security.framework` — see that section above)
+exists specifically for this job; `verify-credential-store` runs here
+same as every other platform, and is the one target that actually
+proves that backend round-trips against a real, live keychain rather
+than just compiling. Packaging differs from every other job: rather
+than the Linux block's `install()`+CPack-DEB/RPM approach, `CMakeLists.txt`
+has a separate `if(APPLE)` block setting `MACOSX_BUNDLE` properties
+(bundle identifier, `.icns`, version) and `CPACK_GENERATOR
+"DragNDrop"` — `cpack` then produces a real `.dmg` with the `.app`
+alongside an `/Applications` symlink, the drag-to-install convention
+every Mac user expects, not the bare-binary tarball Linux ships as its
+simplest option. The `.icns` itself is generated fresh in this job
+(assembling an `.iconset` from the same committed PNGs
+`tools/generate_app_icon.cpp` produces, then `iconutil -c icns`) —
+`iconutil` only exists on macOS, so unlike every other icon asset in
+this repo, `.icns` is never committed.
+
+Unlike every other build job in this workflow (Windows, Linux, RPM,
+and AppImage all run on `ubuntu-latest`, either natively or inside a
+container), this is the first one running on a genuinely different,
+native runner OS — meaning it's also the only job whose CMake code
+paths (the `APPLE` branches throughout `CMakeLists.txt` and
+`CredentialStore.cpp`) can't be exercised at all on the Linux
+sandboxes this project has otherwise been developed and verified in.
+Update this note once a real GitHub Actions run has confirmed the job
+green, the way `v0.2.0`'s real tagged release already confirmed
+Windows and Linux below — don't treat this paragraph's existence as
+that confirmation.
+
 **Confirmed working end-to-end on GitHub's own runners**, not just
-locally: both build jobs pass, the full test suite passes on both
-platforms, and a real tagged release (`v0.2.0`) exercised the `release`
-job for real — a GitHub Release with both `zephyrftp-windows-x64.zip`
-and `zephyrftp-linux-x64.tar.gz` attached. The Windows `.exe` specifically
-has also been run on real Windows hardware directly (not just under
-wine), launches as a proper GUI app, and connects to a real SFTP server.
+locally: the Windows and Linux build jobs pass, the full test suite
+passes on both platforms, and a real tagged release (`v0.2.0`)
+exercised the `release` job for real — a GitHub Release with both
+`zephyrftp-windows-x64.zip` and `zephyrftp-linux-x64.tar.gz` attached.
+The Windows `.exe` specifically has also been run on real Windows
+hardware directly (not just under wine), launches as a proper GUI app,
+and connects to a real SFTP server.
 
 Every stage of this pipeline surfaced at least one real, non-obvious bug
 along the way — worth knowing about if it ever needs touching again.

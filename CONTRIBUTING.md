@@ -70,29 +70,37 @@ sudo zypper install cmake gcc-c++ qt6-base-devel qt6-svg-devel \
     libssh2-devel libopenssl-devel libsecret-devel pkg-config
 ```
 
-Both Windows and Linux release builds run via GitHub Actions
-(`.github/workflows/build.yml`) — see ARCHITECTURE.md's "Windows and
-Linux builds (CI)" section for the full pipeline history, including the
-Windows job's older MSVC+vcpkg era and the real, sometimes non-obvious
-bugs that surfaced getting each stage working. The Windows job (`build-windows`)
-runs on `ubuntu-latest` inside a `fedora:44` container and cross-compiles
-with MinGW — the same path documented below, down to wrapping every wine
-test run in `xvfb-run` (see "Local verification: `wine`" below for why).
-The Linux job (`build-linux`) is a plain native build on `ubuntu-latest`
-using the exact dependency line above, ships just the binary (dynamically
-linked against system Qt6/libssh2, not a bundled/portable build), and
-needs no wine/Xvfb at all since it's running native binaries directly.
-Both jobs actually run the full required test suite (see "Running the
-test suites" below for the current count), not just link it.
-On a `v*` tag, the `release` job packages both (`zephyrftp-windows-x64.zip`,
-`zephyrftp-linux-x64.tar.gz`) onto the same GitHub Release. All of this
-has been confirmed on GitHub's own runners, not just locally — including
-a real tagged release (see the `v0.2.0` release) that exercised the
-`release` job for real, which is what caught the one thing local `podman`
-testing couldn't: GitHub Actions sets `$HOME=/github/home` for container
-jobs, and wine refuses to create its default `~/.wine` there (ownership
-check failure) — fixed by pinning `WINEPREFIX` to a scratch dir the job
-creates and owns outright.
+Windows, macOS, and Linux release builds all run via GitHub Actions
+(`.github/workflows/build.yml`) — see ARCHITECTURE.md's "Windows,
+macOS, and Linux builds (CI)" section for the full pipeline history,
+including the Windows job's older MSVC+vcpkg era and the real,
+sometimes non-obvious bugs that surfaced getting each stage working.
+The Windows job (`build-windows`) runs on `ubuntu-latest` inside a
+`fedora:44` container and cross-compiles with MinGW — the same path
+documented below, down to wrapping every wine test run in `xvfb-run`
+(see "Local verification: `wine`" below for why). The Linux job
+(`build-linux`) is a plain native build on `ubuntu-latest` using the
+exact dependency line above, ships just the binary (dynamically linked
+against system Qt6/libssh2, not a bundled/portable build), and needs no
+wine/Xvfb at all since it's running native binaries directly. The
+macOS job (`build-macos`) is the same shape as `build-linux` — a plain
+native build, this time on `macos-latest` (Apple Silicon only; see
+ARCHITECTURE.md for why not universal) using Homebrew instead of
+apt/dnf — and packages a `.dmg` via `cpack -G DragNDrop` instead of a
+`.deb`/`.rpm`. All three jobs actually run the full required test
+suite (see "Running the test suites" below for the current count), not
+just link it.
+On a `v*` tag, the `release` job packages all three
+(`zephyrftp-windows-x64.zip`, `zephyrftp-linux-x64.tar.gz`,
+`ZephyrFTP.dmg`) onto the same GitHub Release, alongside the `.deb`/
+`.rpm`/AppImage. All of this has been confirmed on GitHub's own
+runners, not just locally — including a real tagged release (see the
+`v0.2.0` release) that exercised the `release` job for real, which is
+what caught the one thing local `podman` testing couldn't: GitHub
+Actions sets `$HOME=/github/home` for container jobs, and wine refuses
+to create its default `~/.wine` there (ownership check failure) —
+fixed by pinning `WINEPREFIX` to a scratch dir the job creates and owns
+outright.
 
 **This pipeline does NOT run automatically on every push to `main`** —
 only on a `v*` tag (an actual release) or a pull request. Ordinary
@@ -518,7 +526,22 @@ underlying `SiteStore` calls are, and the new Export/Import buttons
 follow that same established precedent.
 
 `navigation-test` creates its own scratch directory tree under
-`/tmp/nav_test` and doesn't touch anything outside it. `transfer-pause-test`
+`/tmp/nav_test` and doesn't touch anything outside it. Two of its own
+fixture bases (`fileOpRaceBase`, `renameRaceBase`) now `removeRecursively()`
+before recreating themselves — a real hang found and fixed while
+building the macOS CI job: both create a file via the app's own real
+"New File..."/rename UI path rather than test setup code, so a
+previous run getting killed before cleanup (this exact hang, or a
+`Ctrl-C`'d local run) leaves that file behind; the next run's real
+file-creation/rename then hits a genuine "already exists" conflict,
+pops a `QMessageBox` the dialog-automation timer doesn't expect (it
+only watches for `QInputDialog`), and the nested `QMenu::exec()` call
+underneath blocks forever waiting for a dialog that will never close.
+Never seen in CI (a fresh container every run has no leftover `/tmp`
+state to trip over), only in a long-lived local sandbox reused across
+many sessions — confirmed via `git stash` that the hang reproduced
+identically on unmodified `main`, so it predates and is unrelated to
+the macOS work that surfaced it. `transfer-pause-test`
 uses a fake in-process backend (no real server, no real files) — see its
 own header comment for exactly what it does and doesn't prove.
 `file-operations-test` creates its own scratch tree under
@@ -1002,10 +1025,13 @@ ZEPHYR_THROUGHPUT_HOST=<host> ZEPHYR_THROUGHPUT_USER=<user> \
 One more harness needs no external server or script at all, just a real
 local OS credential store — `verify-credential-store` exercises
 `CredentialStore` (save/load/hasSecret/remove, including non-ASCII
-content) against whatever Secret Service or Credential Manager is
-already running on your machine. Writes and unconditionally removes its
-own clearly-namespaced test entries, so it's safe to run against a real,
-in-use keyring:
+content) against whatever Secret Service, Credential Manager, or
+Keychain is already running on your machine (Linux/Windows/macOS
+respectively — this is the one target that actually proves the macOS
+Keychain Services backend round-trips against a real keychain, not
+just that it compiled; run for real in the `build-macos` CI job).
+Writes and unconditionally removes its own clearly-namespaced test
+entries, so it's safe to run against a real, in-use keyring:
 
 ```
 cmake --build build --target verify-credential-store

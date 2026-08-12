@@ -9,6 +9,13 @@ Regenerates `resources/icons/app-icon-*.png` and (via the Pillow step
 below) `resources/icons/app-icon.ico` from `resources/icons/wind.svg`.
 Only needs re-running if the icon design changes.
 
+512 and 1024px are also rendered, beyond what the Windows `.ico` step
+below needs (still capped at 256) — they exist for macOS's `.icns`,
+assembled by the `build-macos` CI job from these committed PNGs per
+Apple's iconset naming convention (`icon_512x512@2x.png` = 1024px).
+`.icns` itself is never committed here since `iconutil` only exists on
+macOS.
+
 Renders each target size **independently** rather than downsampling one
 large master — a shared master downsampled to 16px lost the glyph almost
 entirely (2 legible white pixels out of 256, confirmed by direct pixel

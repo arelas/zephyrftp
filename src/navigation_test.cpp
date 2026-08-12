@@ -244,6 +244,18 @@ int main(int argc, char *argv[])
     // handler only ever sees FilePaneWidget's state exactly as
     // onDirectoryListed() just left it. ----------
     const QString fileOpRaceBase = "/tmp/nav_test_fileop_race";
+    // Unlike every other fixture base in this file (plain directories,
+    // or files always reopened WriteOnly so they're implicitly
+    // overwritten), "current/racefile.txt" below is created by the real
+    // app's own "New File..." UI path, not by this setup code — so a
+    // previous run that got killed before cleanup (e.g. this exact test
+    // hanging, see below) leaves it behind. A second run then hits a
+    // real "file already exists" error, which pops a QMessageBox
+    // dialogPump below doesn't expect (only QInputDialog) — menu.exec()
+    // then blocks forever waiting for a dialog that will never close.
+    // removeRecursively() first makes every run start genuinely fresh,
+    // regardless of what an earlier run left behind.
+    QDir(fileOpRaceBase).removeRecursively();
     QDir().mkpath(fileOpRaceBase + "/current");
     QDir().mkpath(fileOpRaceBase + "/other");
     auto *fileOpRacePane = new FilePaneWidget(new LocalBackend());
@@ -318,6 +330,15 @@ int main(int argc, char *argv[])
     // runFailedBackPhase: this phase's own QMenu/QInputDialog nesting
     // would otherwise race an independently wall-clock-scheduled phase. ----------
     const QString renameRaceBase = "/tmp/nav_test_rename_race";
+    // Same reasoning as fileOpRaceBase above: "renamed.txt" is created
+    // by the real app rename path, not this setup code, so a previous
+    // interrupted run can leave it behind. A stale renamed.txt already
+    // sitting in dirA makes THIS run's real rename of victim.txt onto
+    // that same name fail (the destination already exists), which then
+    // fails these checks for a reason that has nothing to do with the
+    // race this phase actually tests. removeRecursively() first avoids
+    // that entirely.
+    QDir(renameRaceBase).removeRecursively();
     QDir().mkpath(renameRaceBase + "/dirA");
     QDir().mkpath(renameRaceBase + "/dirB");
     {

@@ -550,6 +550,142 @@ jobs:
           path: 'ZephyrFTP-*.AppImage'
           if-no-files-found: error
 
+  # Apple Silicon (arm64) only, not universal — macos-latest is a native
+  # arm64 runner and Homebrew's Qt6 is single-arch; a true universal
+  # (arm64+Intel) binary would need a second, Rosetta-emulated Homebrew
+  # prefix plus lipo-merging every bundled Qt framework/plugin, real
+  # complexity for a shrinking population of Intel Macs. Structured to
+  # mirror build-linux as closely as possible: native runner, no
+  # container, no cross toolchain, tests run directly — the only real
+  # differences are Homebrew instead of apt/dnf and cpack -G DragNDrop
+  # instead of -G DEB.
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      # qt is Homebrew's Qt6 umbrella formula (bundles Widgets/Network/
+      # Concurrent/Svg/Test in one formula, unlike apt/dnf's split
+      # qt6-*-dev packages) — not keg-only, but CMAKE_PREFIX_PATH is set
+      # explicitly below anyway rather than assumed. openssl@3 IS
+      # keg-only (conflicts with the system-provided libssl), so its
+      # .pc files need PKG_CONFIG_PATH set explicitly for
+      # pkg_check_modules(OPENSSL ...) in CMakeLists.txt to find it —
+      # libssh2 isn't keg-only but is included in that same path for
+      # determinism rather than relying on Homebrew's default linking.
+      - name: Install build dependencies
+        run: brew install qt libssh2 openssl@3 pkg-config
+
+      - uses: actions/checkout@v7
+
+      # iconutil (the only tool that produces .icns) is macOS-only, so
+      # this can't be pre-generated and committed like the PNGs it's
+      # assembled from — generated fresh here, every run. Apple's
+      # iconset naming convention reuses the 32/128/256/512px PNGs
+      # twice each (once as the "@1x" of one size, once as the "@2x" of
+      # the size below it) rather than needing a distinct render per
+      # slot.
+      - name: Generate app-icon.icns
+        run: |
+          set -e
+          mkdir -p app-icon.iconset
+          cp resources/icons/app-icon-16.png   app-icon.iconset/icon_16x16.png
+          cp resources/icons/app-icon-32.png   app-icon.iconset/icon_16x16@2x.png
+          cp resources/icons/app-icon-32.png   app-icon.iconset/icon_32x32.png
+          cp resources/icons/app-icon-64.png   app-icon.iconset/icon_32x32@2x.png
+          cp resources/icons/app-icon-128.png  app-icon.iconset/icon_128x128.png
+          cp resources/icons/app-icon-256.png  app-icon.iconset/icon_128x128@2x.png
+          cp resources/icons/app-icon-256.png  app-icon.iconset/icon_256x256.png
+          cp resources/icons/app-icon-512.png  app-icon.iconset/icon_256x256@2x.png
+          cp resources/icons/app-icon-512.png  app-icon.iconset/icon_512x512.png
+          cp resources/icons/app-icon-1024.png app-icon.iconset/icon_512x512@2x.png
+          iconutil -c icns app-icon.iconset -o resources/icons/app-icon.icns
+
+      - name: Configure
+        run: |
+          export PKG_CONFIG_PATH="$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix libssh2)/lib/pkgconfig"
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
+
+      - name: Build app
+        run: cmake --build build --target zephyrftp -- -j$(sysctl -n hw.ncpu)
+
+      - name: Build test suite
+        run: >
+          cmake --build build --target
+          smoke-test transfer-queue-test site-store-test app-settings-test trust-prompt-test navigation-test
+          transfer-pause-test file-operations-test folder-transfer-test
+          conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
+          move-entry-test edit-session-test queue-persistence-test verify-credential-store
+          -- -j$(sysctl -n hw.ncpu)
+
+      # Native binaries on native hardware, same reasoning as
+      # build-linux's own test-suite step: no wine/xvfb needed. Same
+      # fixture setup, same list, same order as every other job, plus
+      # verify-credential-store — the one target that actually proves
+      # the new Keychain Services backend round-trips against a real,
+      # live credential store on this runner, not just that it
+      # compiled and linked.
+      - name: Run test suite
+        run: |
+          set -e
+          cd build
+          export QT_QPA_PLATFORM=offscreen
+
+          ./smoke-test
+
+          rm -rf /tmp/transfer_test
+          mkdir -p /tmp/transfer_test/src_dir /tmp/transfer_test/dst_dir
+          head -c 500000 /dev/urandom > /tmp/transfer_test/src_dir/testfile.bin
+          ./transfer-queue-test
+
+          ./site-store-test
+          ./app-settings-test
+          ./trust-prompt-test
+
+          ./navigation-test
+          ./transfer-pause-test
+          ./file-operations-test
+
+          rm -rf /tmp/folder_transfer_test
+          mkdir -p /tmp/folder_transfer_test/src/myfolder/subdir1 \
+                   /tmp/folder_transfer_test/src/myfolder/subdir2/nested \
+                   /tmp/folder_transfer_test/src/myfolder/emptydir \
+                   /tmp/folder_transfer_test/dst
+          echo "hi from a" > /tmp/folder_transfer_test/src/myfolder/a.txt
+          echo "hi from b" > /tmp/folder_transfer_test/src/myfolder/subdir1/b.txt
+          echo "hi from c" > /tmp/folder_transfer_test/src/myfolder/subdir1/c.txt
+          echo "hi from d" > /tmp/folder_transfer_test/src/myfolder/subdir2/nested/d.txt
+          ./folder-transfer-test
+
+          ./conflict-resolution-test
+          ./ftp-parsing-test
+
+          ./protocol-selection-test
+
+          ./sort-and-commands-test
+          ./remote-to-remote-test
+          ./move-entry-test
+          ./edit-session-test
+          ./queue-persistence-test
+
+          ./verify-credential-store
+
+      # DragNDrop, not the Linux job's bare-binary tarball approach —
+      # a real .app bundle in a .dmg is what every Mac user expects to
+      # drag into /Applications. CMakeLists.txt's APPLE block sets up
+      # MACOSX_BUNDLE plus the CPACK_GENERATOR "DragNDrop"/
+      # CPACK_DMG_VOLUME_NAME variables this reads.
+      - name: Build .dmg package
+        run: |
+          cd build
+          cpack -G DragNDrop
+
+      - name: Upload .dmg artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: zephyrftp-dmg
+          path: build/*.dmg
+          if-no-files-found: error
+
   # Only runs on version tags (v1.0.0 etc.) — attaches both platform
   # builds as zipped/tarred assets on a GitHub Release, matching the
   # Phat32 pipeline pattern. Plain ubuntu-latest (no PowerShell needed) —
@@ -557,7 +693,7 @@ jobs:
   # GitHub Releases API, neither of which has ever depended on either
   # build job's OS.
   release:
-    needs: [build-windows, build-linux, build-linux-rpm, build-linux-appimage]
+    needs: [build-windows, build-linux, build-linux-rpm, build-linux-appimage, build-macos]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     # Confirmed necessary directly from a real failed run, not
@@ -600,6 +736,10 @@ jobs:
         with:
           name: zephyrftp-appimage
 
+      - uses: actions/download-artifact@v8
+        with:
+          name: zephyrftp-dmg
+
       - name: Package release assets
         run: |
           cd dist-windows && zip -r ../zephyrftp-windows-x64.zip . && cd ..
@@ -616,6 +756,7 @@ jobs:
             *.deb
             *.rpm
             *.AppImage
+            *.dmg
           # Derived from the tag itself (e.g. "v0.1.0") rather than
           # hardcoded — avoids a name that silently goes stale the next
           # time this fires on a different tag.

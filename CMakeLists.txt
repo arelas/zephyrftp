@@ -44,13 +44,15 @@ endif()
 
 # CredentialStore's OS-keychain backend: the Win32 Credential Manager
 # API (wincred.h) on Windows — part of advapi32, always present in the
-# Windows SDK / mingw sysroot, no separate discovery needed — or
-# libsecret (pkg-config) everywhere else. WIN32 covers both native MSVC
-# and MinGW-cross builds here (unlike the libssh2 split above, both
-# genuinely want the real Win32 API, not libsecret, so no MINGW
-# special-casing is needed).
+# Windows SDK / mingw sysroot, no separate discovery needed — Keychain
+# Services (Security.framework) on macOS, or libsecret (pkg-config)
+# everywhere else. WIN32 covers both native MSVC and MinGW-cross builds
+# here (unlike the libssh2 split above, both genuinely want the real
+# Win32 API, not libsecret, so no MINGW special-casing is needed).
 if(WIN32)
     set(CREDENTIAL_STORE_TARGET advapi32)
+elseif(APPLE)
+    set(CREDENTIAL_STORE_TARGET "-framework Security" "-framework CoreFoundation")
 else()
     pkg_check_modules(LIBSECRET REQUIRED IMPORTED_TARGET libsecret-1)
     set(CREDENTIAL_STORE_TARGET PkgConfig::LIBSECRET)
@@ -96,6 +98,20 @@ set(SOURCES
 # added unconditionally so it's a clean no-op on Linux, not a build error.
 if(WIN32)
     list(APPEND SOURCES resources/app-icon.rc)
+endif()
+
+# .icns is the macOS analog of the .rc/.ico handling above — the app
+# bundle's own icon, shown in Finder/Dock. Unlike every other icon
+# asset in this repo, it's never committed: iconutil (the only tool
+# that produces .icns) only exists on macOS, so this file is generated
+# fresh by the macOS CI job itself, right before this configure step
+# runs (see build.yml's build-macos job). Guarded on APPLE so a local
+# non-macOS configure doesn't fail looking for a file that was never
+# generated.
+if(APPLE)
+    list(APPEND SOURCES resources/icons/app-icon.icns)
+    set_source_files_properties(resources/icons/app-icon.icns PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources)
 endif()
 
 set(HEADERS
@@ -159,6 +175,12 @@ target_link_libraries(zephyrftp PRIVATE
 # Windows has no equivalent block here: that platform is distributed as
 # a plain zip (see build.yml's Windows job) with its own separate
 # collect-win-runtime.sh DLL-bundling step, nothing CPack is involved in.
+# macOS has its own separate block below — UNIX AND NOT APPLE, not the
+# old bare NOT WIN32, since macOS is also NOT WIN32 and this block's
+# .desktop file / DEB;RPM generator make no sense there. That gap
+# existed unnoticed until this project actually had a macOS target to
+# expose it — nothing here is new caution, just a real, previously-
+# unreachable bug being fixed as part of that build's own CMake setup.
 #
 # install() rules below are what CPack actually packages — a real
 # system install layout (bin/, share/applications/, share/icons/), not
@@ -167,7 +189,7 @@ target_link_libraries(zephyrftp PRIVATE
 # forms coexist on purpose: the tarball needs no install and no root,
 # the .deb/.rpm integrate properly with a desktop environment's app
 # launcher/icon theme in exchange for actually installing.
-if(NOT WIN32)
+if(UNIX AND NOT APPLE)
     install(TARGETS zephyrftp RUNTIME DESTINATION bin)
     install(FILES resources/zephyrftp.desktop DESTINATION share/applications)
 
@@ -258,6 +280,42 @@ queue with pause/resume, and whole-folder transfers.")
     set(CPACK_RPM_PACKAGE_DESCRIPTION "${CPACK_PACKAGE_DESCRIPTION}")
     set(CPACK_RPM_PACKAGE_GROUP "Applications/Internet")
     set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
+
+    include(CPack)
+endif()
+
+# --- macOS app bundle + .dmg packaging (via CPack DragNDrop) ---
+#
+# A real .app bundle, not the bare-binary tarball approach Linux's
+# plain tarball uses — Finder/Dock/Launchpad all expect one, and an
+# unbundled Qt executable dropped directly into /Applications wouldn't
+# find its own Info.plist-declared icon or behave like a normal Mac
+# app. MACOSX_BUNDLE_ICON_FILE points at the .icns added to SOURCES
+# above (generated fresh by the macOS CI job itself before this
+# configure step runs, never committed to the repo).
+if(APPLE)
+    set_target_properties(zephyrftp PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_BUNDLE_NAME "ZephyrFTP"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "io.github.arelas.zephyrftp"
+        MACOSX_BUNDLE_ICON_FILE "app-icon.icns"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+    )
+
+    install(TARGETS zephyrftp BUNDLE DESTINATION .)
+
+    set(CPACK_PACKAGE_NAME "ZephyrFTP")
+    set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+    set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/arelas/zephyrftp")
+    set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
+
+    # DragNDrop (a .dmg with the .app and an /Applications symlink
+    # side by side) is the standard drag-to-install convention every
+    # Mac user already expects — the same reasoning the Linux block
+    # above applies picking DEB/RPM over an unfamiliar format.
+    set(CPACK_GENERATOR "DragNDrop")
+    set(CPACK_DMG_VOLUME_NAME "ZephyrFTP")
 
     include(CPack)
 endif()

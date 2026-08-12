@@ -8,6 +8,18 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Added
+
+- **macOS build (Apple Silicon only).** A native `.dmg`, built and
+  tested on a real macOS CI runner — drag ZephyrFTP into Applications
+  like any other Mac app. Unsigned/unnotarized (no paid Apple Developer
+  account behind this project), so the first launch needs a right-click
+  → Open past Gatekeeper's warning; no Intel Mac build yet. Saved
+  passwords now use real macOS Keychain Services via a new
+  `CredentialStore` backend, alongside the existing Windows Credential
+  Manager and Linux libsecret ones — same opt-in "Save password"
+  behavior, same guarantee that `sites.json` never contains a secret.
+
 ## [0.6.29] — Import/export saved sites
 
 ### Added

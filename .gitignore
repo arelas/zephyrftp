@@ -8,6 +8,9 @@ flatpak-repo/
 AppDir/
 *.AppImage
 linuxdeploy*.AppImage*
+*.dmg
+app-icon.iconset/
+resources/icons/app-icon.icns
 dist/
 dist-windows/
 dist-linux/

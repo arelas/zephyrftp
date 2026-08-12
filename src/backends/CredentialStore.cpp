@@ -7,6 +7,9 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <wincred.h>
+#elif defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
+#include <Security/Security.h>
 #else
 #include <libsecret/secret.h>
 #endif
@@ -26,6 +29,24 @@ namespace {
 QString targetName(const QString &siteId)
 {
     return QStringLiteral("ZephyrFTP/site/%1").arg(siteId);
+}
+#elif defined(__APPLE__)
+// kSecAttrService fixed to this app's own name; kSecAttrAccount is the
+// per-site key — the direct analog of Windows' namespaced
+// targetName() and Linux's site_id schema attribute above. Every
+// query starts from this same class+service+account triple; save()
+// adds kSecValueData on top for the add/update calls, load()/remove()
+// use it as-is.
+CFMutableDictionaryRef baseQuery(const QString &siteId)
+{
+    CFMutableDictionaryRef query = CFDictionaryCreateMutable(
+        kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
+    CFDictionarySetValue(query, kSecAttrService, CFSTR("ZephyrFTP"));
+    const CFStringRef account = siteId.toCFString();
+    CFDictionarySetValue(query, kSecAttrAccount, account);
+    CFRelease(account);
+    return query;
 }
 #else
 // SECRET_SCHEMA_NONE (not SECRET_SCHEMA_DONT_MATCH_NAME) — this schema
@@ -96,6 +117,77 @@ bool hasSecret(const QString &siteId)
     // below, which already does this. Code review found these had drifted
     // apart: a future fix to load()'s behavior (error handling, encoding)
     // wouldn't otherwise have applied here too.
+    QString discard;
+    return load(siteId, &discard);
+}
+
+#elif defined(__APPLE__)
+
+bool save(const QString &siteId, const QString &secret)
+{
+    CFMutableDictionaryRef query = baseQuery(siteId);
+    const QByteArray secretUtf8 = secret.toUtf8();
+    const CFDataRef secretData = CFDataCreate(
+        kCFAllocatorDefault, reinterpret_cast<const UInt8 *>(secretUtf8.constData()), secretUtf8.size());
+    CFDictionarySetValue(query, kSecValueData, secretData);
+
+    OSStatus status = SecItemAdd(query, nullptr);
+    if (status == errSecDuplicateItem) {
+        // SecItemAdd() alone doesn't overwrite an existing item the
+        // way Windows' CredWriteW() and libsecret's
+        // secret_password_store_sync() both do unconditionally —
+        // SecItemUpdate() is the explicit second step needed to match
+        // this function's documented "overwrites any existing secret"
+        // contract. The query for the update must NOT itself carry
+        // kSecValueData (that belongs in the separate
+        // attributes-to-update dictionary), hence a fresh baseQuery()
+        // rather than reusing the one above.
+        CFMutableDictionaryRef updateQuery = baseQuery(siteId);
+        CFMutableDictionaryRef attributesToUpdate = CFDictionaryCreateMutable(
+            kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+        CFDictionarySetValue(attributesToUpdate, kSecValueData, secretData);
+        status = SecItemUpdate(updateQuery, attributesToUpdate);
+        CFRelease(attributesToUpdate);
+        CFRelease(updateQuery);
+    }
+
+    CFRelease(secretData);
+    CFRelease(query);
+    return status == errSecSuccess;
+}
+
+bool load(const QString &siteId, QString *secret)
+{
+    CFMutableDictionaryRef query = baseQuery(siteId);
+    CFDictionarySetValue(query, kSecReturnData, kCFBooleanTrue);
+    CFDictionarySetValue(query, kSecMatchLimit, kSecMatchLimitOne);
+
+    CFTypeRef result = nullptr;
+    const OSStatus status = SecItemCopyMatching(query, &result);
+    CFRelease(query);
+    if (status != errSecSuccess || !result)
+        return false;
+
+    const CFDataRef data = static_cast<CFDataRef>(result);
+    *secret = QString::fromUtf8(reinterpret_cast<const char *>(CFDataGetBytePtr(data)),
+                                 static_cast<int>(CFDataGetLength(data)));
+    CFRelease(result);
+    return true;
+}
+
+bool remove(const QString &siteId)
+{
+    CFMutableDictionaryRef query = baseQuery(siteId);
+    const OSStatus status = SecItemDelete(query);
+    CFRelease(query);
+    return status == errSecSuccess;
+}
+
+bool hasSecret(const QString &siteId)
+{
+    // Delegates to load() rather than its own SecItemCopyMatching
+    // call — matches both CredentialStore.h's documented contract and
+    // the Windows/Linux implementations above, which already do this.
     QString discard;
     return load(siteId, &discard);
 }

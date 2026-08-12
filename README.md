@@ -1,13 +1,14 @@
 # ZephyrFTP
 
-A dual-pane SFTP client for Windows and Linux — browse your local files
-and a remote server side by side, then drag, drop, or double-click to
-move things between them. Think FileZilla or WinSCP, built fresh in Qt6.
+A dual-pane SFTP client for Windows, macOS, and Linux — browse your
+local files and a remote server side by side, then drag, drop, or
+double-click to move things between them. Think FileZilla or WinSCP,
+built fresh in Qt6.
 
 **Current version: 0.6.29 — alpha.** Real functionality, but real gaps
 too — see [Known limitations](#known-limitations) before relying on
 this for anything you can't afford to get wrong. [Releases](https://github.com/arelas/zephyrftp/releases)
-has downloadable Windows and Linux builds; [CHANGELOG.md](CHANGELOG.md)
+has downloadable Windows, macOS, and Linux builds; [CHANGELOG.md](CHANGELOG.md)
 tracks what's changed between them.
 
 ![Dual-pane browsing, connected to a real SFTP server](docs/screenshots/dual-pane-browsing.png)
@@ -157,6 +158,13 @@ Grab the latest build from [Releases](https://github.com/arelas/zephyrftp/releas
 
 - **Windows**: `zephyrftp-windows-x64.zip` — unzip it, no installer, just
   launch `zephyrftp.exe`.
+- **macOS**: `ZephyrFTP.dmg` — Apple Silicon only (no Intel Mac build
+  yet, see Known limitations). Open the `.dmg` and drag ZephyrFTP into
+  Applications. The build is unsigned and unnotarized (no paid Apple
+  Developer account behind this project), so the first launch needs a
+  right-click → Open to get past Gatekeeper's "cannot be opened because
+  Apple cannot check it for malicious software" warning — after that
+  first confirmation, it opens normally.
 - **Linux**: four options.
   - `zephyrftp_<version>_amd64.deb` — Debian/Ubuntu, `apt install
     ./zephyrftp_*.deb` resolves dependencies automatically.
@@ -181,8 +189,8 @@ Grab the latest build from [Releases](https://github.com/arelas/zephyrftp/releas
 
 Every release is built and tested (the full automated test suite, not
 just "it compiled") by [`.github/workflows/build.yml`](.github/workflows/build.yml)
-before being attached — see ARCHITECTURE.md's "Windows and Linux builds
-(CI)" section for exactly what that verifies.
+before being attached — see ARCHITECTURE.md's "Windows, macOS, and
+Linux builds (CI)" section for exactly what that verifies.
 
 ## Getting started
 
@@ -307,6 +315,12 @@ rather than being half-implemented:
   just a folder or a selection.** If you only want to hand someone a
   few sites, the exported file is plain JSON text, so trimming it by
   hand afterward works fine in the meantime.
+- **The macOS build is Apple Silicon only, and unsigned.** No Intel Mac
+  build yet — a universal binary would need a meaningfully more complex
+  CI setup for a shrinking population of Intel Macs, not attempted so
+  far. The `.dmg` is also unsigned and unnotarized (no paid Apple
+  Developer account exists for this project), so Gatekeeper blocks the
+  first launch until you right-click → Open — see Download above.
 
 ## For developers and tinkerers
 

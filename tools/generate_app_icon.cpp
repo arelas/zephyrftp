@@ -79,7 +79,7 @@ QPixmap renderIconAtSize(int size)
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
 
-    const int sizes[] = {16, 24, 32, 48, 64, 128, 256, 512};
+    const int sizes[] = {16, 24, 32, 48, 64, 128, 256, 512, 1024};
     for (int size : sizes) {
         QPixmap pm = renderIconAtSize(size);
         const QString filename = QStringLiteral("app-icon-%1.png").arg(size);
