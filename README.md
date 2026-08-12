@@ -43,6 +43,13 @@ tracks what's changed between them.
   plain file this app controls) — that prompt still appears every time,
   just pre-filled, so it's never a silent auto-connect. Leave the box
   unchecked and nothing changes from before.
+- **Proxy support (SOCKS5 or HTTP CONNECT)** — set one in Preferences
+  and every SFTP/FTP/FTPS connection goes through it, no per-site setup
+  needed. For anyone behind a corporate network that requires an
+  outbound proxy, this is the difference between being able to use
+  ZephyrFTP at all and not — previously there was no way to connect
+  through one. A proxy password (if the proxy needs one) gets the same
+  OS-credential-store treatment described under Site Manager below.
 - **Host-key verification** — the first time you connect to a server,
   ZephyrFTP shows you its identity fingerprint and asks you to confirm
   it. If that fingerprint ever changes on a later connection, you get a
@@ -255,6 +262,14 @@ rather than being half-implemented:
   recursive "apply to everything inside," and no setuid/setgid/sticky
   — the same restraint this app already applies to deleting (no
   recursive delete) and renaming (one entry at a time).
+- **The proxy is one global setting, not per-site** — every connection
+  uses the same proxy (or none). If you only need a proxy for some
+  servers, there's no way yet to say so; it's all connections or
+  nothing. Also, an FTP/FTPS data connection only goes through the
+  proxy in the normal case (passive mode, which is what this app always
+  tries first) — the rare fallback to active mode, where the *server*
+  has to connect back to *you*, can't be proxied by anything on the
+  client side, proxy or not.
 
 ## For developers and tinkerers
 

@@ -8,6 +8,18 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Added
+
+- **Proxy support (SOCKS5 or HTTP CONNECT).** Set one in Preferences
+  and it applies to every SFTP/FTP/FTPS connection — no per-site setup.
+  Previously there was no way to connect through a proxy at all, which
+  meant anyone behind a corporate network requiring one couldn't use
+  this app. A proxy password, if needed, gets the same OS-credential-
+  store treatment as a saved site's password. One global setting, not
+  per-site; an FTP/FTPS data connection is only proxied in the normal
+  (passive-mode) case — the rare active-mode fallback can't be, on any
+  client, proxy or not.
+
 ## [0.6.25] — Chmod / permissions editing
 
 ### Added

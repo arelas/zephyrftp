@@ -33,12 +33,18 @@
 //   QT_QPA_PLATFORM=offscreen ./build/verify-credential-store
 #include <QCoreApplication>
 #include <QDebug>
+#include <QStandardPaths>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <cstdio>
 #include "backends/CredentialStore.h"
+#include "AppSettings.h"
 
 int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
+    QStandardPaths::setTestModeEnabled(true);   // AppSettings' own settings.json, isolated below
 
     bool allPass = true;
     auto check = [&](const QString &label, bool condition) {
@@ -89,6 +95,66 @@ int main(int argc, char *argv[])
           "consistently across save()/remove(), not just save()/load()",
           CredentialStore::remove(nonAsciiId));
     check("hasSecret() (non-ASCII id): false after remove()", !CredentialStore::hasSecret(nonAsciiId));
+
+    // AppSettings' one global proxy password (see AppSettings::
+    // setProxyPassword()'s own doc comment) — a real CredentialStore
+    // round trip through the actual production code path, keyed by a
+    // fixed sentinel string instead of a SavedSite::id, rather than
+    // duplicating that private key here and testing CredentialStore
+    // directly. Deliberately NOT covered by app-settings-test (required
+    // suite): that would mean a routinely, automatically run test
+    // writing a real secret into the developer's actual OS keyring on
+    // every run — exactly what CredentialStore.h's own doc comment and
+    // this file's header comment already establish no required target
+    // may do. This is the one place that's actually appropriate.
+    {
+        // Clear any leftover state from a previous run of this same
+        // binary first — CredentialStore isn't touched by
+        // QStandardPaths::setTestModeEnabled(true) the way settings.json
+        // is, so state here persists in the real keyring across runs
+        // unless explicitly cleaned up (a real gap found while writing
+        // this: the first version of this check assumed a fresh keyring
+        // and failed on a second run).
+        AppSettings cleanup;
+        cleanup.setProxyPassword(QString());
+
+        AppSettings settings;
+        check("AppSettings::proxyPassword(): empty before ever being set (after explicit cleanup above)",
+              settings.proxyPassword().isEmpty());
+
+        settings.setProxyPassword(QStringLiteral("real-global-proxy-password-🔒"));
+        AppSettings reader;
+        check("AppSettings::proxyPassword(): round-trips through a real CredentialStore "
+              "save+load, via a fresh AppSettings instance (not just the same one that "
+              "just set it)",
+              reader.proxyPassword() == QStringLiteral("real-global-proxy-password-🔒"));
+
+        // The one check that actually needs a real secret to have been
+        // set (app-settings-test's own coverage of this never calls the
+        // real setProxyPassword() at all — see its own comment) —
+        // confirms the secret genuinely never lands in settings.json
+        // even once a real one has actually been stored via
+        // CredentialStore, not just structurally absent by construction.
+        const QString settingsPath =
+            QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) + "/settings.json";
+        QFile settingsFile(settingsPath);
+        if (settingsFile.open(QIODevice::ReadOnly)) {
+            const QByteArray raw = settingsFile.readAll();
+            const QJsonObject obj = QJsonDocument::fromJson(raw).object();
+            check("settings.json NEVER contains a proxyPassword key, even after a real "
+                  "password was actually stored via CredentialStore above",
+                  !obj.contains("proxyPassword"));
+            check("settings.json NEVER contains the raw proxy password value anywhere in "
+                  "the file (defense in depth beyond just the key name)",
+                  !raw.contains("real-global-proxy-password-🔒"));
+        }
+
+        settings.setProxyPassword(QString());
+        AppSettings reader2;
+        check("AppSettings::proxyPassword(): setting it to an empty string removes the "
+              "stored secret, per setProxyPassword()'s own contract",
+              reader2.proxyPassword().isEmpty());
+    }
 
     // Belt-and-suspenders cleanup: remove() is a harmless no-op if the
     // entry is already gone (documented contract, see CredentialStore.h),

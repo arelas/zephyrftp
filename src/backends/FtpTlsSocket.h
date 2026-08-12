@@ -1,6 +1,7 @@
 #pragma once
 
 #include "FtpSocket.h"
+#include "ProxyConfig.h"
 
 class QTcpSocket;
 typedef struct ssl_st SSL;
@@ -49,6 +50,17 @@ class FtpTlsSocket : public FtpSocket {
 public:
     FtpTlsSocket();
     ~FtpTlsSocket() override;
+
+    // Must be called before connectToHost() to take effect. ProxyType::
+    // None (the default) is a no-op, same as never calling this.
+    // connectToHost() performs a manual SOCKS5/HTTP-CONNECT handshake
+    // (ProxyConnect.h) rather than QAbstractSocket::setProxy() — see
+    // that header's own doc comment for why: setProxy() completes a
+    // working tunnel through Qt's OWN read()/write() API, but a
+    // standalone probe confirmed socketDescriptor() afterward returns
+    // an unusable value, not the real underlying fd this class needs
+    // for SSL_set_fd() and its own raw poll()/recv()/send() loops.
+    void setProxy(const ProxyConfig &proxy) { m_proxy = proxy; }
 
     // Everything FtpBackend::verifyTlsPeer() needs to reproduce
     // verifyPeerCertificate()'s existing TOFU trust logic, sourced
@@ -152,6 +164,7 @@ private:
     void pump();
 
     QTcpSocket *m_qtSocket = nullptr;
+    ProxyConfig m_proxy;   // ProxyType::None by default — see setProxy()
     SSL_CTX *m_ctx = nullptr;
     SSL *m_ssl = nullptr;   // null until handshake() succeeds — see the class comment on pre-TLS I/O
     SSL_SESSION *m_session = nullptr;

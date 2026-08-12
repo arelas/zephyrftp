@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QByteArray>
 #include "backends/Protocol.h"
+#include "backends/ProxyConfig.h"
 
 // App-wide preferences, persisted the same way SiteStore persists
 // SavedSite — a hand-written JSON file under
@@ -49,6 +50,38 @@ public:
     QString externalEditorCommand() const { return m_externalEditorCommand; }
     void setExternalEditorCommand(const QString &command);
 
+    // A single global proxy, applied to every SFTP/FTP/FTPS connection
+    // (see MainWindow::startConnection()) — no per-site override, same
+    // "one shared value" shape as defaultProtocol above. No change
+    // signal — same reasoning as defaultProtocol/externalEditorCommand:
+    // nothing on screen needs to react live to this changing.
+    ProxyType proxyType() const { return m_proxyType; }
+    void setProxyType(ProxyType value);
+    QString proxyHost() const { return m_proxyHost; }
+    void setProxyHost(const QString &host);
+    int proxyPort() const { return m_proxyPort; }
+    void setProxyPort(int port);
+    QString proxyUsername() const { return m_proxyUsername; }
+    void setProxyUsername(const QString &username);
+
+    // The proxy password is deliberately NEVER a plain member here or a
+    // settings.json field — see CLAUDE.md's "no secrets in a file this
+    // app writes" rule, which applies just as much to settings.json as
+    // it does to sites.json. Routed through CredentialStore (the OS's
+    // own credential store) instead, keyed by a fixed sentinel string
+    // rather than a SavedSite::id, since there's exactly one global
+    // proxy config rather than one secret per saved site. Persists
+    // immediately on every call, same as every other field here — no
+    // opt-in "save password" checkbox the way SiteManagerDialog needs
+    // one for its N-saved-sites case, since there's only ever one proxy
+    // config and no other path to re-enter a not-saved password later.
+    void setProxyPassword(const QString &password);
+    QString proxyPassword() const;
+
+    // Assembles the above into one ProxyConfig for a real connection
+    // attempt — see SftpCredentials::proxy/FtpCredentials::proxy.
+    ProxyConfig resolvedProxyConfig() const;
+
 signals:
     void showHiddenFilesChanged(bool value);
 
@@ -62,4 +95,8 @@ private:
     QByteArray m_windowGeometry;
     QByteArray m_windowState;
     QString m_externalEditorCommand;
+    ProxyType m_proxyType = ProxyType::None;
+    QString m_proxyHost;
+    int m_proxyPort = 1080;
+    QString m_proxyUsername;
 };

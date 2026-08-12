@@ -76,6 +76,7 @@ set(SOURCES
     src/ui/EditSessionManager.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
+    src/backends/ProxyConnect.cpp
     src/backends/FtpBackend.cpp
     src/backends/FtpTlsSocket.cpp
     src/backends/SavedSite.cpp
@@ -279,6 +280,7 @@ qt_add_executable(smoke-test EXCLUDE_FROM_ALL
     src/ui/EditSessionManager.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
+    src/backends/ProxyConnect.cpp
     src/backends/FtpBackend.cpp   # MainWindow.cpp constructs one — see startConnection()
     src/backends/FtpTlsSocket.cpp
     src/backends/SavedSite.cpp
@@ -315,6 +317,7 @@ qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
     src/ui/EditSessionManager.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
+    src/backends/ProxyConnect.cpp
     src/backends/FtpBackend.cpp   # MainWindow.cpp constructs one — see startConnection()
     src/backends/FtpTlsSocket.cpp
     src/backends/SavedSite.cpp
@@ -344,9 +347,17 @@ target_link_libraries(site-store-test PRIVATE Qt6::Core)
 qt_add_executable(app-settings-test EXCLUDE_FROM_ALL
     src/app_settings_test.cpp
     src/AppSettings.cpp
+    src/backends/CredentialStore.cpp
 )
 target_include_directories(app-settings-test PRIVATE src)
-target_link_libraries(app-settings-test PRIVATE Qt6::Core)
+# CREDENTIAL_STORE_TARGET (not just Qt6::Core, as before) — AppSettings.cpp
+# now calls CredentialStore::save()/load()/remove() for the proxy
+# password (see AppSettings::setProxyPassword()). Whether the OS
+# credential store is actually available/unlocked in this environment
+# doesn't matter for what this required-suite test checks (see its own
+# comment) — only that settings.json itself never gets a plaintext
+# password, which doesn't depend on CredentialStore succeeding.
+target_link_libraries(app-settings-test PRIVATE Qt6::Core ${CREDENTIAL_STORE_TARGET})
 
 # --- Trust-prompt test: drives the REAL QMessageBox HostKeyVerifier/
 # CertificateVerifier pop, same live-dialog technique
@@ -364,6 +375,7 @@ target_link_libraries(trust-prompt-test PRIVATE Qt6::Widgets)
 qt_add_executable(navigation-test EXCLUDE_FROM_ALL
     src/navigation_test.cpp
     src/AppSettings.cpp
+    src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
@@ -374,12 +386,13 @@ qt_add_executable(navigation-test EXCLUDE_FROM_ALL
     resources/theme.qrc
 )
 target_include_directories(navigation-test PRIVATE src)
-target_link_libraries(navigation-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg Qt6::Test)
+target_link_libraries(navigation-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg Qt6::Test ${CREDENTIAL_STORE_TARGET})
 
 # --- Transfer pause/resume orchestration test (fake backend, no real server needed) ---
 qt_add_executable(transfer-pause-test EXCLUDE_FROM_ALL
     src/transfer_pause_test.cpp
     src/AppSettings.cpp
+    src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
@@ -393,7 +406,7 @@ qt_add_executable(transfer-pause-test EXCLUDE_FROM_ALL
     resources/theme.qrc
 )
 target_include_directories(transfer-pause-test PRIVATE src)
-target_link_libraries(transfer-pause-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
+target_link_libraries(transfer-pause-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
 
 # --- File management operations test (delete/rename/create, real LocalBackend + real temp dirs) ---
 qt_add_executable(file-operations-test EXCLUDE_FROM_ALL
@@ -415,6 +428,7 @@ target_link_libraries(file-operations-test PRIVATE Qt6::Core Qt6::Widgets)
 qt_add_executable(folder-transfer-test EXCLUDE_FROM_ALL
     src/folder_transfer_test.cpp
     src/AppSettings.cpp
+    src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
@@ -428,12 +442,13 @@ qt_add_executable(folder-transfer-test EXCLUDE_FROM_ALL
     resources/theme.qrc
 )
 target_include_directories(folder-transfer-test PRIVATE src)
-target_link_libraries(folder-transfer-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
+target_link_libraries(folder-transfer-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
 
 # --- Destination conflict resolution test (Overwrite/Skip, Write Into/Skip, real dialog interaction) ---
 qt_add_executable(conflict-resolution-test EXCLUDE_FROM_ALL
     src/conflict_resolution_test.cpp
     src/AppSettings.cpp
+    src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
@@ -447,7 +462,7 @@ qt_add_executable(conflict-resolution-test EXCLUDE_FROM_ALL
     resources/theme.qrc
 )
 target_include_directories(conflict-resolution-test PRIVATE src)
-target_link_libraries(conflict-resolution-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
+target_link_libraries(conflict-resolution-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
 
 # --- FTP directory-listing parser test (MLSD/LIST, realistic sample data — no real server available) ---
 # CertificateVerifier.cpp/Widgets are pulled in because FtpBackend.cpp
@@ -460,6 +475,7 @@ qt_add_executable(ftp-parsing-test EXCLUDE_FROM_ALL
     src/ftp_parsing_test.cpp
     src/backends/FtpBackend.cpp
     src/backends/FtpTlsSocket.cpp
+    src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
     src/ui/CertificateVerifier.cpp
 )
@@ -495,6 +511,7 @@ target_link_libraries(protocol-selection-test PRIVATE Qt6::Core Qt6::Gui Qt6::Wi
 qt_add_executable(sort-and-commands-test EXCLUDE_FROM_ALL
     src/sort_and_commands_test.cpp
     src/AppSettings.cpp
+    src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
@@ -507,7 +524,7 @@ qt_add_executable(sort-and-commands-test EXCLUDE_FROM_ALL
 )
 target_include_directories(sort-and-commands-test PRIVATE src)
 target_compile_definitions(sort-and-commands-test PRIVATE APP_VERSION="${PROJECT_VERSION}")
-target_link_libraries(sort-and-commands-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
+target_link_libraries(sort-and-commands-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
 
 # --- Remote-to-remote (server-to-server) staged-transfer orchestration
 # test: direction/phase assignment, the phase-1 (download-to-temp) ->
@@ -523,6 +540,7 @@ target_link_libraries(sort-and-commands-test PRIVATE Qt6::Widgets Qt6::Network Q
 qt_add_executable(remote-to-remote-test EXCLUDE_FROM_ALL
     src/remote_to_remote_test.cpp
     src/AppSettings.cpp
+    src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
@@ -536,7 +554,7 @@ qt_add_executable(remote-to-remote-test EXCLUDE_FROM_ALL
     resources/theme.qrc
 )
 target_include_directories(remote-to-remote-test PRIVATE src)
-target_link_libraries(remote-to-remote-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
+target_link_libraries(remote-to-remote-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
 
 # --- Move (server-side rename between two panes on the same
 # filesystem/server) test: TransferManager::moveEligible()'s
@@ -552,6 +570,7 @@ target_link_libraries(remote-to-remote-test PRIVATE Qt6::Widgets Qt6::Network Qt
 qt_add_executable(move-entry-test EXCLUDE_FROM_ALL
     src/move_entry_test.cpp
     src/AppSettings.cpp
+    src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
@@ -565,7 +584,7 @@ qt_add_executable(move-entry-test EXCLUDE_FROM_ALL
     resources/theme.qrc
 )
 target_include_directories(move-entry-test PRIVATE src)
-target_link_libraries(move-entry-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
+target_link_libraries(move-entry-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
 
 # --- Edit-in-place test: EditSessionManager's download -> real
 # QFileSystemWatcher-detected save -> re-upload -> re-edit-without-
@@ -579,6 +598,7 @@ target_link_libraries(move-entry-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Con
 qt_add_executable(edit-session-test EXCLUDE_FROM_ALL
     src/edit_session_test.cpp
     src/AppSettings.cpp
+    src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
@@ -593,7 +613,7 @@ qt_add_executable(edit-session-test EXCLUDE_FROM_ALL
     resources/theme.qrc
 )
 target_include_directories(edit-session-test PRIVATE src)
-target_link_libraries(edit-session-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
+target_link_libraries(edit-session-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
 
 # --- Queue persistence test: TransferQueueStore's save/load round trip,
 # TransferManager::restorePersistedQueue()'s LocalToLocal-dispatches-
@@ -608,6 +628,7 @@ target_link_libraries(edit-session-test PRIVATE Qt6::Widgets Qt6::Network Qt6::C
 qt_add_executable(queue-persistence-test EXCLUDE_FROM_ALL
     src/queue_persistence_test.cpp
     src/AppSettings.cpp
+    src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
@@ -622,7 +643,7 @@ qt_add_executable(queue-persistence-test EXCLUDE_FROM_ALL
     resources/theme.qrc
 )
 target_include_directories(queue-persistence-test PRIVATE src)
-target_link_libraries(queue-persistence-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg)
+target_link_libraries(queue-persistence-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
 
 # --- Live-server verification harnesses (NOT part of the ten-target
 # self-contained test suite above — these need an external server
@@ -632,6 +653,7 @@ qt_add_executable(verify-sftp-pubkey EXCLUDE_FROM_ALL
     src/verify_sftp_pubkey.cpp
     src/ui/HostKeyVerifier.cpp
     src/backends/SftpBackend.cpp
+    src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
     src/transfer/FolderEnumerator.cpp
 )
@@ -644,6 +666,7 @@ qt_add_executable(verify-sftp-pause-cancel EXCLUDE_FROM_ALL
     src/verify_sftp_pause_cancel.cpp
     src/ui/HostKeyVerifier.cpp
     src/backends/SftpBackend.cpp
+    src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
 )
 target_include_directories(verify-sftp-pause-cancel PRIVATE src)
@@ -662,6 +685,7 @@ target_link_libraries(verify-sftp-pause-cancel PRIVATE
 qt_add_executable(verify-sftp-move EXCLUDE_FROM_ALL
     src/verify_sftp_move.cpp
     src/AppSettings.cpp
+    src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
@@ -669,6 +693,7 @@ qt_add_executable(verify-sftp-move EXCLUDE_FROM_ALL
     src/ui/HostKeyVerifier.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
+    src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
     src/transfer/TransferManager.cpp
     src/transfer/TransferQueueStore.cpp
@@ -678,7 +703,7 @@ qt_add_executable(verify-sftp-move EXCLUDE_FROM_ALL
 )
 target_include_directories(verify-sftp-move PRIVATE src)
 target_link_libraries(verify-sftp-move PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET}
+    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${CREDENTIAL_STORE_TARGET}
 )
 
 # --- Remote-to-remote staged transfer against TWO REAL, independent
@@ -691,6 +716,7 @@ target_link_libraries(verify-sftp-move PRIVATE
 qt_add_executable(verify-remote-to-remote-live EXCLUDE_FROM_ALL
     src/verify_remote_to_remote_live.cpp
     src/AppSettings.cpp
+    src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
@@ -698,6 +724,7 @@ qt_add_executable(verify-remote-to-remote-live EXCLUDE_FROM_ALL
     src/ui/HostKeyVerifier.cpp
     src/backends/LocalBackend.cpp
     src/backends/SftpBackend.cpp
+    src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
     src/transfer/TransferManager.cpp
     src/transfer/TransferQueueStore.cpp
@@ -707,7 +734,7 @@ qt_add_executable(verify-remote-to-remote-live EXCLUDE_FROM_ALL
 )
 target_include_directories(verify-remote-to-remote-live PRIVATE src)
 target_link_libraries(verify-remote-to-remote-live PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET}
+    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${CREDENTIAL_STORE_TARGET}
 )
 
 # --- Move (server-side rename between two panes on the same connection)
@@ -721,6 +748,7 @@ target_link_libraries(verify-remote-to-remote-live PRIVATE
 qt_add_executable(verify-ftp-move EXCLUDE_FROM_ALL
     src/verify_ftp_move.cpp
     src/AppSettings.cpp
+    src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
@@ -729,6 +757,7 @@ qt_add_executable(verify-ftp-move EXCLUDE_FROM_ALL
     src/backends/LocalBackend.cpp
     src/backends/FtpBackend.cpp
     src/backends/FtpTlsSocket.cpp
+    src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
     src/transfer/TransferManager.cpp
     src/transfer/TransferQueueStore.cpp
@@ -738,7 +767,7 @@ qt_add_executable(verify-ftp-move EXCLUDE_FROM_ALL
 )
 target_include_directories(verify-ftp-move PRIVATE src)
 target_link_libraries(verify-ftp-move PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${OPENSSL_TARGET}
+    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${OPENSSL_TARGET} ${CREDENTIAL_STORE_TARGET}
 )
 
 # --- SSH-daemon diversity: real Dropbear (password auth), not just
@@ -750,6 +779,7 @@ qt_add_executable(verify-sftp-vendors EXCLUDE_FROM_ALL
     src/verify_sftp_vendors.cpp
     src/ui/HostKeyVerifier.cpp
     src/backends/SftpBackend.cpp
+    src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
 )
 target_include_directories(verify-sftp-vendors PRIVATE src)
@@ -766,6 +796,7 @@ qt_add_executable(verify-sftp-throughput EXCLUDE_FROM_ALL
     src/verify_sftp_throughput.cpp
     src/ui/HostKeyVerifier.cpp
     src/backends/SftpBackend.cpp
+    src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
 )
 target_include_directories(verify-sftp-throughput PRIVATE src)
@@ -777,6 +808,7 @@ qt_add_executable(verify-ftp-live EXCLUDE_FROM_ALL
     src/verify_ftp_live.cpp
     src/backends/FtpBackend.cpp
     src/backends/FtpTlsSocket.cpp
+    src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
     src/ui/CertificateVerifier.cpp
 )
@@ -791,6 +823,7 @@ qt_add_executable(verify-ftps-trust EXCLUDE_FROM_ALL
     src/ui/CertificateVerifier.cpp
     src/backends/FtpBackend.cpp
     src/backends/FtpTlsSocket.cpp
+    src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
 )
 target_include_directories(verify-ftps-trust PRIVATE src)
@@ -805,11 +838,52 @@ qt_add_executable(verify-ftp-vendors EXCLUDE_FROM_ALL
     src/verify_ftp_vendors.cpp
     src/backends/FtpBackend.cpp
     src/backends/FtpTlsSocket.cpp
+    src/backends/ProxyConnect.cpp
     src/backends/RemoteBackend.h
     src/ui/CertificateVerifier.cpp
 )
 target_include_directories(verify-ftp-vendors PRIVATE src)
 target_link_libraries(verify-ftp-vendors PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network ${OPENSSL_TARGET})
+
+# --- SOCKS5 proxy, real end to end — see src/verify_socks5_proxy.cpp's
+# own header comment. Needs tools/local-test-servers/
+# start-sftp-pubkey.sh, start-socks5-proxy.sh, start-ftp.sh, and
+# start-ftps-trusted.sh all already running (SFTP/FTP/FTPS each proxied
+# through the same real SOCKS5 proxy). ---
+qt_add_executable(verify-socks5-proxy EXCLUDE_FROM_ALL
+    src/verify_socks5_proxy.cpp
+    src/ui/HostKeyVerifier.cpp
+    src/ui/CertificateVerifier.cpp
+    src/backends/SftpBackend.cpp
+    src/backends/ProxyConnect.cpp
+    src/backends/FtpBackend.cpp
+    src/backends/FtpTlsSocket.cpp
+    src/backends/RemoteBackend.h
+)
+target_include_directories(verify-socks5-proxy PRIVATE src)
+target_link_libraries(verify-socks5-proxy PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Concurrent ${LIBSSH2_TARGET} ${OPENSSL_TARGET}
+)
+
+# --- HTTP CONNECT proxy, real end to end — see
+# src/verify_http_connect_proxy.cpp's own header comment. Needs
+# tools/local-test-servers/start-sftp-pubkey.sh,
+# start-http-connect-proxy.sh, start-ftp.sh, and start-ftps-trusted.sh
+# all already running. ---
+qt_add_executable(verify-http-connect-proxy EXCLUDE_FROM_ALL
+    src/verify_http_connect_proxy.cpp
+    src/ui/HostKeyVerifier.cpp
+    src/ui/CertificateVerifier.cpp
+    src/backends/SftpBackend.cpp
+    src/backends/ProxyConnect.cpp
+    src/backends/FtpBackend.cpp
+    src/backends/FtpTlsSocket.cpp
+    src/backends/RemoteBackend.h
+)
+target_include_directories(verify-http-connect-proxy PRIVATE src)
+target_link_libraries(verify-http-connect-proxy PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Concurrent ${LIBSSH2_TARGET} ${OPENSSL_TARGET}
+)
 
 # --- CredentialStore against the REAL OS credential store — see
 # src/verify_credential_store.cpp's own header comment. Unlike every
@@ -820,6 +894,7 @@ target_link_libraries(verify-ftp-vendors PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets
 qt_add_executable(verify-credential-store EXCLUDE_FROM_ALL
     src/verify_credential_store.cpp
     src/backends/CredentialStore.cpp
+    src/AppSettings.cpp
 )
 target_include_directories(verify-credential-store PRIVATE src)
 target_link_libraries(verify-credential-store PRIVATE Qt6::Core ${CREDENTIAL_STORE_TARGET})

@@ -49,12 +49,25 @@ int main(int argc, char *argv[])
         QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) + "/settings.json";
     QFile::remove(settingsPath);
 
+    // --- proxyTypeToKey()/proxyTypeFromKey() pure round trip, same shape
+    // as Protocol.h's protocolToKey()/protocolFromKey() coverage would be
+    // if it had any — no I/O needed ---
+    check("proxyTypeToKey/FromKey: Socks5 round-trips", proxyTypeFromKey(proxyTypeToKey(ProxyType::Socks5)) == ProxyType::Socks5);
+    check("proxyTypeToKey/FromKey: Http round-trips", proxyTypeFromKey(proxyTypeToKey(ProxyType::Http)) == ProxyType::Http);
+    check("proxyTypeToKey/FromKey: None round-trips", proxyTypeFromKey(proxyTypeToKey(ProxyType::None)) == ProxyType::None);
+    check("proxyTypeFromKey: unrecognized/absent key -> None (the correct migration for "
+          "every settings.json written before this field existed)",
+          proxyTypeFromKey(QStringLiteral("bogus")) == ProxyType::None
+              && proxyTypeFromKey(QString()) == ProxyType::None);
+
     // --- Fresh start: no file yet, defaults expected, no crash ---
     {
         AppSettings settings;
         check("fresh start (no file): showHiddenFiles defaults to false", !settings.showHiddenFiles());
         check("fresh start (no file): defaultProtocol defaults to Sftp",
               settings.defaultProtocol() == Protocol::Sftp);
+        check("fresh start (no file): proxyType defaults to None",
+              settings.proxyType() == ProxyType::None);
     }
 
     // --- Round-trip every field through a real save() (via the public
@@ -74,19 +87,55 @@ int main(int argc, char *argv[])
         check("round-trip: windowState", reader.windowState() == QByteArray("fake-state-blob"));
     }
 
+    // --- Proxy: type/host/port/username round-trip through settings.json
+    // like every other field above. Deliberately does NOT call
+    // setProxyPassword() here — that routes through the REAL OS
+    // credential store (see its own doc comment), and this is a
+    // required, self-contained suite target run routinely and
+    // automatically; CredentialStore.h's own doc comment and
+    // verify_credential_store.cpp's header comment already establish
+    // the rule this follows: no required target may touch a real,
+    // shared OS credential store as a side effect of routine testing.
+    // verify-credential-store (opt-in, live) covers setProxyPassword()/
+    // proxyPassword() for real, including confirming the password it
+    // sets doesn't leak into settings.json either. ---
+    {
+        AppSettings writer;
+        writer.setProxyType(ProxyType::Socks5);
+        writer.setProxyHost(QStringLiteral("proxy.example.com"));
+        writer.setProxyPort(9050);
+        writer.setProxyUsername(QStringLiteral("proxyuser"));
+
+        AppSettings reader;
+        check("round-trip: proxyType", reader.proxyType() == ProxyType::Socks5);
+        check("round-trip: proxyHost", reader.proxyHost() == QStringLiteral("proxy.example.com"));
+        check("round-trip: proxyPort", reader.proxyPort() == 9050);
+        check("round-trip: proxyUsername", reader.proxyUsername() == QStringLiteral("proxyuser"));
+    }
+
     // --- The file on disk is valid, well-formed JSON with the expected
     // keys — a basic sanity check on save()'s actual output, not just
-    // what a fresh AppSettings reads back ---
+    // what a fresh AppSettings reads back. Also the load-bearing check
+    // that no secret ever lands here: CLAUDE.md's "no secrets in a file
+    // this app writes" rule was written about sites.json, but applies
+    // just as much to settings.json now that it can hold proxy config —
+    // same discipline site-store-test's own raw-JSON key inspection
+    // already applies to sites.json. ---
     {
         QFile rawFile(settingsPath);
         check("settings.json exists on disk after save()", rawFile.open(QIODevice::ReadOnly));
-        const QJsonDocument doc = QJsonDocument::fromJson(rawFile.readAll());
+        const QByteArray raw = rawFile.readAll();
         rawFile.close();
+        const QJsonDocument doc = QJsonDocument::fromJson(raw);
         check("settings.json is a valid JSON object", doc.isObject());
         const QJsonObject obj = doc.object();
         check("settings.json has the expected keys",
               obj.contains("showHiddenFiles") && obj.contains("defaultProtocol")
-                  && obj.contains("windowGeometry") && obj.contains("windowState"));
+                  && obj.contains("windowGeometry") && obj.contains("windowState")
+                  && obj.contains("proxyType") && obj.contains("proxyHost")
+                  && obj.contains("proxyPort") && obj.contains("proxyUsername"));
+        check("settings.json NEVER contains a proxyPassword key",
+              !obj.contains("proxyPassword"));
     }
 
     // --- A change that toggles a value back to its already-in-memory
@@ -115,7 +164,8 @@ int main(int argc, char *argv[])
 
         AppSettings settings;
         check("corrupt settings.json: falls back to defaults instead of crashing",
-              !settings.showHiddenFiles() && settings.defaultProtocol() == Protocol::Sftp);
+              !settings.showHiddenFiles() && settings.defaultProtocol() == Protocol::Sftp
+                  && settings.proxyType() == ProxyType::None);
     }
 
     QFile::remove(settingsPath);

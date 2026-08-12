@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QTcpSocket>
+#include "ProxyConnect.h"
 #include <QStandardPaths>
 #include <QDir>
 #include <QMetaObject>
@@ -398,11 +399,18 @@ bool SftpBackend::ensureSession()
     // etc., none of which exist on MSVC). libssh2 just needs the native
     // socket descriptor once the connection is up.
     m_socket = new QTcpSocket();
-    m_socket->connectToHost(m_credentials.host, static_cast<quint16>(m_credentials.port));
-    if (!m_socket->waitForConnected(10000)) {
+    // connectThroughProxy() does a manual SOCKS5/HTTP-CONNECT handshake
+    // rather than QAbstractSocket::setProxy() — see ProxyConnect.h's own
+    // doc comment for why: setProxy() completes a working tunnel through
+    // Qt's OWN read()/write() API, but a standalone probe confirmed
+    // socketDescriptor() afterward returns an unusable value, not the
+    // real underlying fd libssh2 needs a few lines down. No-op (a plain
+    // connect) when m_credentials.proxy.type is ProxyType::None.
+    QString connectError;
+    if (!connectThroughProxy(m_socket, m_credentials.proxy, m_credentials.host,
+                              static_cast<quint16>(m_credentials.port), 10000, &connectError)) {
         emit connectionFailed(QStringLiteral("TCP connect to %1:%2 failed: %3")
-                               .arg(m_credentials.host).arg(m_credentials.port)
-                               .arg(m_socket->errorString()));
+                               .arg(m_credentials.host).arg(m_credentials.port).arg(connectError));
         delete m_socket;
         m_socket = nullptr;
         return false;

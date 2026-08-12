@@ -149,6 +149,16 @@ private:
 
     void teardown();
 
+    // Built once per connect/data-channel attempt from m_credentials.proxy
+    // — QNetworkProxy::NoProxy (a no-op when passed to setProxy()) when
+    // proxy.type is ProxyType::None, so every call site can apply this
+    // unconditionally rather than checking type itself. Shared by the
+    // control connection (ensureConnected()) and every PASV data
+    // connection (openDataChannel()) — active/PORT data connections
+    // (openActiveDataChannel()) don't call this, since a listen socket
+    // waiting for the server to dial back can't be proxied.
+    QNetworkProxy qtProxy() const;
+
     // Shared core of renameEntry()/moveEntry() — both issue the identical
     // RNFR/RNTO command pair; they differ only in what happens after
     // (self-refresh + fileOperationFailed vs. requestId-correlated

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include "ProxyConfig.h"
 
 // Passive mode always tried first — matches what essentially every
 // modern FTP client defaults to; active mode routinely fails behind
@@ -35,4 +36,12 @@ struct FtpCredentials {
     // — see that struct's comment.
     bool useHomeDirectory = true;
     QString startingDirectory;
+
+    // Same meaning as SftpCredentials::proxy — see that struct's
+    // comment. Applied to both the control connection and PASV data
+    // connections (see FtpBackend::ensureConnected()/openDataChannel());
+    // active/PORT data connections can't be proxied (they're a listen
+    // socket waiting for the server to dial back), a pre-existing
+    // limitation of active mode, not a new one.
+    ProxyConfig proxy;
 };

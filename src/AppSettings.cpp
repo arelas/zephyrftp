@@ -1,4 +1,5 @@
 #include "AppSettings.h"
+#include "backends/CredentialStore.h"
 
 #include <QStandardPaths>
 #include <QDir>
@@ -6,6 +7,15 @@
 #include <QSaveFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+
+namespace {
+// Not a real SavedSite::id (those are QUuid-formatted,
+// "{8-4-4-4-12 hex}") — CredentialStore is keyed by an arbitrary
+// QString, and this reuses it for the one global proxy secret instead
+// of building a second OS-credential-store integration for a single
+// value. See AppSettings::setProxyPassword()'s own doc comment.
+const QString kGlobalProxyCredentialKey = QStringLiteral("__zephyrftp_global_proxy__");
+}
 
 AppSettings::AppSettings(QObject *parent)
     : QObject(parent)
@@ -50,6 +60,64 @@ void AppSettings::setExternalEditorCommand(const QString &command)
     save();
 }
 
+void AppSettings::setProxyType(ProxyType value)
+{
+    if (m_proxyType == value)
+        return;
+    m_proxyType = value;
+    save();
+}
+
+void AppSettings::setProxyHost(const QString &host)
+{
+    if (m_proxyHost == host)
+        return;
+    m_proxyHost = host;
+    save();
+}
+
+void AppSettings::setProxyPort(int port)
+{
+    if (m_proxyPort == port)
+        return;
+    m_proxyPort = port;
+    save();
+}
+
+void AppSettings::setProxyUsername(const QString &username)
+{
+    if (m_proxyUsername == username)
+        return;
+    m_proxyUsername = username;
+    save();
+}
+
+void AppSettings::setProxyPassword(const QString &password)
+{
+    if (password.isEmpty())
+        CredentialStore::remove(kGlobalProxyCredentialKey);
+    else
+        CredentialStore::save(kGlobalProxyCredentialKey, password);
+}
+
+QString AppSettings::proxyPassword() const
+{
+    QString password;
+    CredentialStore::load(kGlobalProxyCredentialKey, &password);
+    return password;
+}
+
+ProxyConfig AppSettings::resolvedProxyConfig() const
+{
+    ProxyConfig config;
+    config.type = m_proxyType;
+    config.host = m_proxyHost;
+    config.port = m_proxyPort;
+    config.username = m_proxyUsername;
+    config.password = proxyPassword();
+    return config;
+}
+
 QString AppSettings::filePath()
 {
     return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
@@ -74,6 +142,10 @@ void AppSettings::load()
     m_windowState = QByteArray::fromBase64(
         obj.value(QStringLiteral("windowState")).toString().toLatin1());
     m_externalEditorCommand = obj.value(QStringLiteral("externalEditorCommand")).toString();
+    m_proxyType = proxyTypeFromKey(obj.value(QStringLiteral("proxyType")).toString());
+    m_proxyHost = obj.value(QStringLiteral("proxyHost")).toString();
+    m_proxyPort = obj.value(QStringLiteral("proxyPort")).toInt(1080);
+    m_proxyUsername = obj.value(QStringLiteral("proxyUsername")).toString();
 }
 
 void AppSettings::save() const
@@ -88,6 +160,12 @@ void AppSettings::save() const
     obj[QStringLiteral("windowGeometry")] = QString::fromLatin1(m_windowGeometry.toBase64());
     obj[QStringLiteral("windowState")] = QString::fromLatin1(m_windowState.toBase64());
     obj[QStringLiteral("externalEditorCommand")] = m_externalEditorCommand;
+    obj[QStringLiteral("proxyType")] = proxyTypeToKey(m_proxyType);
+    obj[QStringLiteral("proxyHost")] = m_proxyHost;
+    obj[QStringLiteral("proxyPort")] = m_proxyPort;
+    obj[QStringLiteral("proxyUsername")] = m_proxyUsername;
+    // No proxyPassword key, ever — see setProxyPassword()'s own doc
+    // comment; that secret lives only in CredentialStore.
 
     // QSaveFile (not QFile + Truncate) — writes the new content to a
     // temporary file first and only atomically replaces settings.json on

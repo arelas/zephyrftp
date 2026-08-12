@@ -13,7 +13,8 @@ for pidfile in \
     "${FTPS_TEST_SCRATCH:-/tmp/zephyrftp-local-test-servers/ftps}/server.pid" \
     "${FTP_LEGACY_TEST_SCRATCH:-/tmp/zephyrftp-local-test-servers/ftp-legacy-list}/server.pid" \
     "${FTPS_TRUSTED_TEST_SCRATCH:-/tmp/zephyrftp-local-test-servers/ftps-trusted}/server.pid" \
-    "${FTP_ACTIVE_TEST_SCRATCH:-/tmp/zephyrftp-local-test-servers/ftp-active-only}/server.pid"
+    "${FTP_ACTIVE_TEST_SCRATCH:-/tmp/zephyrftp-local-test-servers/ftp-active-only}/server.pid" \
+    "${SOCKS5_PROXY_SCRATCH:-/tmp/zephyrftp-local-test-servers/socks5-proxy}/ssh.pid"
 do
     if [ -f "$pidfile" ]; then
         pid=$(cat "$pidfile")
@@ -27,7 +28,7 @@ do
 done
 
 if command -v podman >/dev/null 2>&1; then
-    for container in zephyrftp-test-vsftpd zephyrftp-test-proftpd zephyrftp-test-dropbear; do
+    for container in zephyrftp-test-vsftpd zephyrftp-test-proftpd zephyrftp-test-dropbear zephyrftp-test-tinyproxy; do
         if podman container exists "$container" 2>/dev/null; then
             podman rm -f "$container" >/dev/null && echo "Stopped container $container"
         fi

@@ -5,6 +5,7 @@
 class QCheckBox;
 class QComboBox;
 class QLineEdit;
+class QSpinBox;
 class AppSettings;
 
 // A small preferences dialog — deliberately no OK/Cancel/Apply: every
@@ -19,8 +20,21 @@ public:
     explicit PreferencesDialog(AppSettings *settings, QWidget *parent = nullptr);
 
 private:
+    void updateProxyFieldsEnabled();
+
     AppSettings *m_settings;
     QCheckBox *m_showHiddenFilesCheck;
     QComboBox *m_defaultProtocolCombo;
     QLineEdit *m_externalEditorCommandEdit;
+
+    // A single global proxy applied to every SFTP/FTP/FTPS connection —
+    // see AppSettings::resolvedProxyConfig(). Host/port/username/
+    // password are disabled while type is None (updateProxyFieldsEnabled()),
+    // same "grey out what doesn't apply" idea ConnectionDialog's own
+    // auth fields already use.
+    QComboBox *m_proxyTypeCombo;
+    QLineEdit *m_proxyHostEdit;
+    QSpinBox *m_proxyPortSpin;
+    QLineEdit *m_proxyUsernameEdit;
+    QLineEdit *m_proxyPasswordEdit;
 };

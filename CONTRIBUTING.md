@@ -898,6 +898,55 @@ and checking the returned `RemoteEntry::permissions` string, since
 `SftpBackend`'s own `LIST`/attribute parsing (unlike `FtpBackend`'s)
 already reports real bits.
 
+Proxy support (SOCKS5/HTTP CONNECT) gets its own two harnesses, each
+proving `SftpBackend`, plain `FtpBackend`, and FTPS all genuinely
+tunnel through a real proxy — not just that `ProxyConfig`/
+`ConnectThroughProxy()` compiles. See `ARCHITECTURE.md`'s `ProxyConfig`
+entry for why a hand-rolled SOCKS5/HTTP-CONNECT handshake was needed at
+all (`QAbstractSocket::setProxy()` alone isn't enough for the two
+backends that need the real socket descriptor) and for the real
+containerization gotcha (`--network host`) getting the second harness
+below working against loopback-bound test servers:
+
+```
+tools/local-test-servers/start-sftp-pubkey.sh
+tools/local-test-servers/start-socks5-proxy.sh
+tools/local-test-servers/start-ftp.sh
+tools/local-test-servers/start-ftps-trusted.sh
+
+cmake --build build --target verify-socks5-proxy
+QT_QPA_PLATFORM=offscreen ./build/verify-socks5-proxy
+
+tools/local-test-servers/stop-all.sh
+```
+
+```
+tools/local-test-servers/start-sftp-pubkey.sh
+tools/local-test-servers/start-http-connect-proxy.sh
+tools/local-test-servers/start-ftp.sh
+tools/local-test-servers/start-ftps-trusted.sh
+
+cmake --build build --target verify-http-connect-proxy
+QT_QPA_PLATFORM=offscreen ./build/verify-http-connect-proxy
+
+tools/local-test-servers/stop-all.sh
+```
+
+`start-socks5-proxy.sh` needs no new dependency — it's OpenSSH's own
+`ssh -D` dynamic port forwarding, tunneled through the sshd
+`start-sftp-pubkey.sh` already starts, and `ssh` is already on `PATH`
+wherever `ssh-keygen` (that same script's own dependency) is.
+`start-http-connect-proxy.sh` needs `podman` (already a dependency for
+the vsftpd/proftpd/Dropbear containers above) — tinyproxy itself
+installs automatically inside its own throwaway container
+(`containers/Containerfile.tinyproxy`), same as vsftpd/proftpd, no
+separate host-side package needed. Both harnesses include a negative
+control (`verify-socks5-proxy`: a deliberately wrong, nothing-listening
+proxy port; `verify-http-connect-proxy`: deliberately wrong proxy
+credentials) that must make the connection attempt genuinely fail —
+without it, a silently-ignored proxy setting would make every other
+check pass just as easily via an accidental direct connection.
+
 One more harness goes a step further still: `verify-sftp-throughput`
 needs a real, externally-provided, non-loopback server — nothing in
 `tools/local-test-servers/` can substitute, since the whole point is a

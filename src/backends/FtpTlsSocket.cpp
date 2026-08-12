@@ -1,4 +1,5 @@
 #include "FtpTlsSocket.h"
+#include "ProxyConnect.h"
 
 #include <QTcpSocket>
 
@@ -31,9 +32,7 @@ FtpTlsSocket::~FtpTlsSocket()
 bool FtpTlsSocket::connectToHost(const QString &host, quint16 port, QString *errorOut)
 {
     m_qtSocket = new QTcpSocket();
-    m_qtSocket->connectToHost(host, port);
-    if (!m_qtSocket->waitForConnected(10000)) {
-        if (errorOut) *errorOut = m_qtSocket->errorString();
+    if (!connectThroughProxy(m_qtSocket, m_proxy, host, port, 10000, errorOut)) {
         delete m_qtSocket;
         m_qtSocket = nullptr;
         return false;

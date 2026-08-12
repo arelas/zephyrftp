@@ -561,11 +561,21 @@ void MainWindow::startConnection(const ConnectionRequest &request, FilePaneWidge
     // concrete backend types exist.
     RemoteBackend *backend = nullptr;
     switch (request.protocol) {
-    case Protocol::Sftp:
-        backend = new SftpBackend(request.sftp, m_hostKeyVerifier);
+    case Protocol::Sftp: {
+        // request is a const&, so the global proxy config (see
+        // AppSettings::resolvedProxyConfig()) is attached to a local
+        // mutable copy of its credentials rather than request.sftp
+        // itself — the only place proxy configuration enters the
+        // connection-construction path, since it's global rather than
+        // per-site (ConnectionRequest/ConnectionDialog/SavedSite are
+        // otherwise untouched by proxy support).
+        SftpCredentials creds = request.sftp;
+        creds.proxy = m_settings->resolvedProxyConfig();
+        backend = new SftpBackend(creds, m_hostKeyVerifier);
         break;
+    }
     case Protocol::Ftp:
-    case Protocol::Ftps:
+    case Protocol::Ftps: {
         // m_certificateVerifier is FTPS's equivalent of m_hostKeyVerifier:
         // an unverifiable server certificate (self-signed, unknown CA, ...)
         // goes through the same real trust-on-first-use prompt a changed
@@ -576,8 +586,11 @@ void MainWindow::startConnection(const ConnectionRequest &request, FilePaneWidge
         // all, which is exactly what "unencrypted" means, and why the
         // connection dialog labels it that way rather than leaving the
         // user to infer it.
-        backend = new FtpBackend(request.ftp, m_certificateVerifier);
+        FtpCredentials creds = request.ftp;
+        creds.proxy = m_settings->resolvedProxyConfig();
+        backend = new FtpBackend(creds, m_certificateVerifier);
         break;
+    }
     }
 
     if (!backend) {

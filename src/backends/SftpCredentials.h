@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include "ProxyConfig.h"
 
 enum class SftpAuthMethod {
     Password,
@@ -24,4 +25,11 @@ struct SftpCredentials {
     // explicitly (e.g. ConnectionDialog's one-off connections).
     bool useHomeDirectory = true;
     QString startingDirectory;   // only meaningful when useHomeDirectory == false
+
+    // Default-constructed (ProxyType::None) means "connect directly" —
+    // every existing construction site is unaffected. Populated from
+    // AppSettings::resolvedProxyConfig() by MainWindow::startConnection()
+    // right before the backend is constructed; see SftpBackend::
+    // ensureSession() for where it's actually applied.
+    ProxyConfig proxy;
 };

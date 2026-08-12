@@ -4,6 +4,7 @@
 #include <QSslSocket>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QNetworkProxy>
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
@@ -365,6 +366,17 @@ bool FtpBackend::verifyTlsPeer(const FtpTlsSocket::PeerInfo &info, bool isDataCo
     return trusted;
 }
 
+QNetworkProxy FtpBackend::qtProxy() const
+{
+    if (m_credentials.proxy.type == ProxyType::None)
+        return QNetworkProxy(QNetworkProxy::NoProxy);
+    const QNetworkProxy::ProxyType qtType = m_credentials.proxy.type == ProxyType::Socks5
+        ? QNetworkProxy::Socks5Proxy : QNetworkProxy::HttpProxy;
+    return QNetworkProxy(qtType, m_credentials.proxy.host,
+                          static_cast<quint16>(m_credentials.proxy.port),
+                          m_credentials.proxy.username, m_credentials.proxy.password);
+}
+
 bool FtpBackend::ensureConnected()
 {
     if (m_connected)
@@ -379,6 +391,7 @@ bool FtpBackend::ensureConnected()
         // QSslSocket can't do this.
         m_controlSocket = new FtpTlsSocket();
         auto *tlsSocket = static_cast<FtpTlsSocket *>(m_controlSocket);
+        tlsSocket->setProxy(m_credentials.proxy);
         QString connectError;
         if (!tlsSocket->connectToHost(m_credentials.host, static_cast<quint16>(m_credentials.port), &connectError)) {
             emit connectionFailed(QStringLiteral("TCP connect to %1:%2 failed: %3")
@@ -391,6 +404,7 @@ bool FtpBackend::ensureConnected()
         // is simply never called for this mode.
         auto *qtSocket = new QSslSocket();
         m_controlSocket = new QtSocketAdapter(qtSocket);
+        qtSocket->setProxy(qtProxy());
         qtSocket->connectToHost(m_credentials.host, static_cast<quint16>(m_credentials.port));
         if (!qtSocket->waitForConnected(10000)) {
             emit connectionFailed(QStringLiteral("TCP connect to %1:%2 failed: %3")
@@ -592,6 +606,7 @@ bool FtpBackend::openDataChannel(DataChannel *channel, QString *errorOut)
     // active/PORT.
     if (m_credentials.ftpsMode == FtpsMode::Explicit) {
         auto *tlsSocket = new FtpTlsSocket();
+        tlsSocket->setProxy(m_credentials.proxy);
         QString connectError;
         if (!tlsSocket->connectToHost(dataHost, dataPort, &connectError)) {
             if (errorOut) {
@@ -604,6 +619,7 @@ bool FtpBackend::openDataChannel(DataChannel *channel, QString *errorOut)
         channel->socket = tlsSocket;
     } else {
         auto *dataSocket = new QSslSocket();
+        dataSocket->setProxy(qtProxy());
         dataSocket->connectToHost(dataHost, dataPort);
         if (!dataSocket->waitForConnected(10000)) {
             if (errorOut) {

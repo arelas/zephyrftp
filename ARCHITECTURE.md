@@ -635,6 +635,111 @@ to drive FileZilla itself for a same-desktop comparison.
   ever called once the source and destination backends'
   `connectionIdentity()` already compared equal — implementations don't
   re-check that themselves; see `TransferManager::moveEligible()` below.
+- `ProxyConfig` (`src/backends/ProxyConfig.h`) — a global SOCKS5/HTTP
+  CONNECT proxy config (type/host/port/username/password), applied to
+  every SFTP/FTP/FTPS connection. `SftpCredentials`/`FtpCredentials`
+  each carry a `proxy` member (default `ProxyType::None`, a no-op —
+  every existing construction site, tests included, is unaffected);
+  `MainWindow::startConnection()` is the one place that fills it in,
+  from `AppSettings::resolvedProxyConfig()`, right before constructing
+  the backend — `ConnectionRequest`/`ConnectionDialog`/`SavedSite`/
+  `SiteStore` are otherwise untouched, since this is a global setting,
+  not a per-site one (no precedent for a per-site override exists
+  anywhere else in `AppSettings` either — see that entry below).
+  `LocalBackend` never touches this; a local filesystem has nothing to
+  proxy.
+
+  **How the proxy is actually applied — `connectThroughProxy()`
+  (`src/backends/ProxyConnect.h/.cpp`) — is the one genuinely
+  surprising part of this feature.** The obvious approach —
+  `QAbstractSocket::setProxy(QNetworkProxy(...))` before
+  `connectToHost()` — does work, but only through Qt's own
+  `read()`/`write()` API (`QSocks5SocketEngine` internally). A
+  standalone probe built while implementing this confirmed that
+  `socketDescriptor()` afterward returns an unusable value (observed: a
+  small, obviously-bogus fd number, not the real underlying socket) —
+  a hard blocker for `SftpBackend::ensureSession()` (hands the fd to
+  `libssh2_session_handshake()`) and `FtpTlsSocket` (hands it to
+  OpenSSL's `SSL_set_fd()`, plus its own raw `poll()`/`recv()`/`send()`
+  loops) — both need the *real* fd, not a Qt-internal one. First
+  attempts at both used `setProxy()` and passed every check except
+  actually connecting through the real proxy — `verify-socks5-proxy`
+  (below) is what caught it: the plain-FTP phase passed immediately,
+  but SFTP failed with a raw libssh2 "SSH handshake failed" and FTPS
+  failed with "Server did not send a valid welcome banner" — both
+  symptoms of reading garbage off a bad descriptor, not a proxy
+  problem. `connectThroughProxy()` fixes this by doing the SOCKS5 (RFC
+  1928/1929, including username/password subnegotiation) or HTTP
+  CONNECT handshake **manually**, blocking, directly on an
+  ordinary, not-yet-`setProxy()`'d `QTcpSocket` — after the handshake,
+  `socketDescriptor()` returns the real fd, now a transparent
+  byte-for-byte pipe to the target, exactly as if it were a direct
+  connection. `SftpBackend::ensureSession()` and
+  `FtpTlsSocket::connectToHost()` both use this. `FtpBackend`'s
+  plain-FTP control/data connections (`QtSocketAdapter` over
+  `QSslSocket`-as-TCP) are the one path that still uses
+  `QAbstractSocket::setProxy()` directly — correct and simpler there,
+  since that path never extracts a raw descriptor at all, only ever
+  reading/writing through Qt's own socket API from connect through
+  teardown.
+
+  Verified against real proxies, not just this project's own code
+  talking to itself: `verify-socks5-proxy` (`src/
+  verify_socks5_proxy.cpp`) drives SFTP, plain FTP, and FTPS through a
+  genuine SOCKS5 proxy — OpenSSH's own `ssh -D` dynamic port
+  forwarding, tunneled through the same local `sshd`
+  `start-sftp-pubkey.sh` already provides (`tools/local-test-servers/
+  start-socks5-proxy.sh`) — plus a negative control (a deliberately
+  wrong, nothing-listening proxy port must make the whole connection
+  attempt fail, proving `setProxy()`/`connectThroughProxy()` is
+  genuinely in the path rather than silently ignored, which would
+  otherwise make every "success" above just as green via an accidental
+  direct connection). `verify-http-connect-proxy` (`src/
+  verify_http_connect_proxy.cpp`) does the same against a real
+  tinyproxy instance (`tools/local-test-servers/
+  start-http-connect-proxy.sh`, a throwaway podman container —
+  `containers/Containerfile.tinyproxy`/`tinyproxy.conf`), with a real
+  BasicAuth username/password tinyproxy actually enforces, exercising
+  `connectThroughProxy()`'s `Proxy-Authorization` header path for real;
+  its negative control is wrong credentials rather than a wrong port,
+  proving that header is genuinely checked. **One real containerization
+  gotcha found and fixed getting that second harness working:**
+  tinyproxy's container initially used a normal port-mapped network
+  (`-p 8888:8888`), under which `127.0.0.1` inside the container is the
+  *container's own* loopback, not the host's — every CONNECT to the
+  host-loopback-bound test servers failed with tinyproxy's own "500
+  Unable to connect", nothing to do with the proxy protocol itself.
+  Fixed by running the container with `--network host` instead,
+  matching `start-socks5-proxy.sh`'s native (non-containerized) `ssh -D`
+  process, which never had this problem because it already shares the
+  host's network namespace.
+
+  `AppSettings` (see its own entry below) stores the non-secret fields
+  (`proxyType`/`proxyHost`/`proxyPort`/`proxyUsername`) as plain
+  `settings.json` keys; the password routes through `CredentialStore`
+  instead, keyed by a fixed sentinel string
+  (`__zephyrftp_global_proxy__`) rather than a `SavedSite::id`, since
+  there's exactly one global proxy config to store a secret for, not
+  one per site — a deliberate, disclosed reuse of the existing
+  per-site secret store rather than a second storage mechanism.
+  `app-settings-test` (required suite) confirms the password never
+  lands in `settings.json`; `verify-credential-store` (opt-in, touches
+  the real OS keyring) confirms the password genuinely round-trips
+  through `CredentialStore` for real — deliberately NOT the other way
+  around, since a routinely, automatically run required-suite test
+  writing a real secret into the developer's actual OS keyring on every
+  run would violate the exact principle `CredentialStore.h`'s own doc
+  comment already establishes (a real bug this session's own first
+  draft of `app-settings-test`'s coverage had, caught by
+  `verify-credential-store` failing on its second run — fixed by moving
+  the real-secret-touching check there instead).
+
+  Deliberately NOT proxied: `FtpBackend::openActiveDataChannel()`'s
+  `SslAcceptingTcpServer` is a *listening* socket waiting for the FTP
+  server to connect back — proxying only affects outbound connects, so
+  active-mode data channels remain unproxied. Not a new limitation:
+  active mode is already NAT-hostile and generally unusable from behind
+  any restrictive network, proxy or not.
 - `LocalBackend` — wraps `QDir`/`QFile`. Runs on the GUI thread; local
   listing/copy is fast enough that this hasn't been a problem, but it's a
   design decision worth revisiting if it ever needs to handle slow
@@ -1575,6 +1680,12 @@ to drive FileZilla itself for a same-desktop comparison.
   pass: `save()` was calling `QStandardPaths::writableLocation()` twice
   per invocation (once directly, once again inside `filePath()`) —
   minor, but redundant on every single preference change.
+  Also gained `proxyType`/`proxyHost`/`proxyPort`/`proxyUsername`
+  (plain fields, same `settings.json` treatment as everything else
+  here) and `proxyPassword()`/`setProxyPassword()`/
+  `resolvedProxyConfig()` — see the `ProxyConfig` entry above for the
+  full story, including why the password specifically does NOT follow
+  this class's own `settings.json` pattern.
 - `PreferencesDialog` (`src/ui/PreferencesDialog.h/.cpp`) — a "Show
   hidden files" checkbox, a default-protocol combo box, and two more
   checkboxes added later ("Show Transfers pane on start", "Show Commands
@@ -1611,6 +1722,16 @@ to drive FileZilla itself for a same-desktop comparison.
   suite run, all still passing. Also removed an unused `#include
   <QLabel>` (this dialog never constructs one directly —
   `QFormLayout::addRow(QString, QWidget*)` builds its own labels).
+  Also gained a Proxy section — type combo (None/SOCKS5/HTTP), host,
+  port, username, password — same immediate-persist convention as
+  every other field here, routed to `AppSettings`' new proxy
+  getters/setters (see that entry and the `ProxyConfig` entry above).
+  The four detail fields disable themselves when type is None
+  (`updateProxyFieldsEnabled()`), verified visually via the same
+  disposable offscreen-probe screenshot technique used elsewhere in
+  this file's history — confirmed both states (a populated SOCKS5
+  config with all fields enabled; the None default with all four
+  detail fields correctly greyed out).
 - `HostKeyVerifier` — lives on the GUI thread for the app's lifetime.
   `SftpBackend`'s worker thread calls into it via
   `QMetaObject::invokeMethod(..., Qt::BlockingQueuedConnection)` to get a
