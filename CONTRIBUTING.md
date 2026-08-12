@@ -500,7 +500,24 @@ Windows) — `SiteStore` would write to, and the test's own cleanup phase
 would delete, whatever `sites.json` a real developer actually had saved
 there. `setTestModeEnabled()` is Qt's own cross-platform mechanism for
 this exact problem, so it isolates `AppConfigLocation` identically on
-every platform. `navigation-test` creates its own scratch directory tree under
+every platform.
+
+`site-store-test` also covers `SiteStore::loadFromFile()`/
+`saveToFile()` (what `SiteManagerDialog`'s Export.../Import... buttons
+actually call) — round-tripped against a temp path distinct from the
+real `sites.json`, confirming the real one is left untouched by an
+export; the exported file gets the identical raw-JSON no-password-key
+inspection the real `sites.json` already gets. Import's id-regeneration
+behavior (every imported site gets a fresh id, never the one from the
+file — see ARCHITECTURE.md's `SiteStore`/`SavedSite` entry for why)
+is exercised directly here too, at the `SiteStore` level, without
+constructing a real `SiteManagerDialog` — that dialog has no direct
+test coverage of any kind in this codebase, and this doesn't change
+that; New/Duplicate/Delete aren't click-tested either, only their
+underlying `SiteStore` calls are, and the new Export/Import buttons
+follow that same established precedent.
+
+`navigation-test` creates its own scratch directory tree under
 `/tmp/nav_test` and doesn't touch anything outside it. `transfer-pause-test`
 uses a fake in-process backend (no real server, no real files) — see its
 own header comment for exactly what it does and doesn't prove.

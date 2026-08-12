@@ -48,6 +48,15 @@ tracks what's changed between them.
   plain file this app controls) — that prompt still appears every time,
   just pre-filled, so it's never a silent auto-connect. Leave the box
   unchecked and nothing changes from before.
+- **Import/export saved sites** — Export... in Site Manager writes your
+  whole site list to a JSON file (safe to hand to someone else or move
+  to another machine: it's the same secret-free format `sites.json`
+  itself already is — no password is ever in it, saved or not). Import...
+  reads one back in and adds those sites to what you already have,
+  never replacing it; each imported site gets a fresh identity, so it
+  starts fresh with no assumptions about a password having come along
+  with it — you'll just be prompted the first time you connect, same as
+  any new site.
 - **Quick connect** — a toolbar field for a fast one-off connection:
   type `[protocol://][user@]host[:port]` (e.g. `alice@example.com` or
   `ftps://bob@ftp.example.com:2121`) and press Enter. Protocol defaults
@@ -294,6 +303,10 @@ rather than being half-implemented:
   each pane's filter text is cleared the moment you navigate away or
   close the app — only whether the filter row is shown at all is
   remembered across restarts, not what was typed into it.
+- **Export always exports every saved site — there's no way to export
+  just a folder or a selection.** If you only want to hand someone a
+  few sites, the exported file is plain JSON text, so trimming it by
+  hand afterward works fine in the meantime.
 
 ## For developers and tinkerers
 

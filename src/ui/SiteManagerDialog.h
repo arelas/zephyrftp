@@ -49,6 +49,8 @@ private slots:
     void onNewSite();
     void onDuplicateSite();
     void onDeleteSite();
+    void onExportSites();
+    void onImportSites();
     void onFieldEdited();
     void onConnectClicked();
     void updateAuthFieldsVisibility();

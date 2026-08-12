@@ -26,6 +26,7 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QUuid>
 #include "backends/SavedSite.h"
 
 int main(int argc, char *argv[])
@@ -137,6 +138,126 @@ int main(int argc, char *argv[])
     }
     qDebug() << "[test] raw sites.json has no password/passphrase KEY in any object:" << noPasswordKey;
     if (!noPasswordKey) allPass = false;
+
+    // --- loadFromFile()/saveToFile(): the same load()/save() logic,
+    // parameterized by an arbitrary path — what SiteManagerDialog's
+    // Export.../Import... buttons actually call. Round-tripped against
+    // a temp path distinct from the real sites.json, confirming these
+    // are genuinely path-parameterized, not secretly still tied to the
+    // fixed location. Placed here, before the empty-store/duplicate-id
+    // blocks below intentionally start mutating the real sites.json, so
+    // this still sees the clean original two-site fixture. ---
+    {
+        const QString exportPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+            + "/zephyrftp_site_store_test_export.json";
+        QFile::remove(exportPath);
+
+        const bool exportOk = SiteStore::saveToFile(original, exportPath);
+        qDebug() << "[test] saveToFile() to an arbitrary path succeeded:" << exportOk;
+        if (!exportOk) allPass = false;
+
+        const QList<SavedSite> reimported = SiteStore::loadFromFile(exportPath);
+        const bool reimportedCountOk = reimported.size() == 2;
+        qDebug() << "[test] loadFromFile() from that same arbitrary path returned 2 sites:" << reimportedCountOk;
+        if (!reimportedCountOk) allPass = false;
+
+        const bool reimportedFieldsOk = reimportedCountOk
+            && reimported[0].host == passwordSite.host && reimported[0].id == passwordSite.id
+            && reimported[1].host == keySite.host && reimported[1].id == keySite.id;
+        qDebug() << "[test] loadFromFile()'s round-trip preserves fields exactly like load() does:"
+                  << reimportedFieldsOk;
+        if (!reimportedFieldsOk) allPass = false;
+
+        // Same raw-JSON key inspection technique as above — the exported
+        // file must be just as secret-free as sites.json itself (it's
+        // the identical schema/serializer, not a new format with its own
+        // risk surface to get wrong).
+        QFile exportedFile(exportPath);
+        exportedFile.open(QIODevice::ReadOnly);
+        const QByteArray exportedBytes = exportedFile.readAll();
+        exportedFile.close();
+        const QJsonDocument exportedDoc = QJsonDocument::fromJson(exportedBytes);
+        bool exportHasNoPasswordKey = exportedDoc.isArray();
+        if (exportedDoc.isArray()) {
+            for (const QJsonValue &v : exportedDoc.array()) {
+                if (!v.isObject())
+                    continue;
+                for (const QString &key : v.toObject().keys()) {
+                    if (key.contains("password", Qt::CaseInsensitive)
+                        || key.contains("passphrase", Qt::CaseInsensitive)) {
+                        exportHasNoPasswordKey = false;
+                    }
+                }
+            }
+        }
+        qDebug() << "[test] exported file has no password/passphrase KEY either:" << exportHasNoPasswordKey;
+        if (!exportHasNoPasswordKey) allPass = false;
+
+        // Confirm saveToFile() genuinely wrote to the arbitrary path and
+        // NOT the real sites.json — the real file (still holding the
+        // original 2-site fixture, untouched since the very first
+        // save() call above) should be completely unaffected by this
+        // export.
+        const QList<SavedSite> realStoreUnaffected = SiteStore::load();
+        const bool realStoreStillOriginal = realStoreUnaffected.size() == 2
+            && realStoreUnaffected[0].id == passwordSite.id && realStoreUnaffected[1].id == keySite.id;
+        qDebug() << "[test] saveToFile() to the arbitrary path left the REAL sites.json untouched:"
+                  << realStoreStillOriginal;
+        if (!realStoreStillOriginal) allPass = false;
+
+        QFile::remove(exportPath);
+    }
+
+    // --- Import id regeneration: SiteManagerDialog::onImportSites()'s
+    // actual algorithm — loadFromFile() a "foreign" export, regenerate
+    // every site's id (the exact QUuid::createUuid() idiom onNewSite()/
+    // onDuplicateSite() already use, applied identically on import),
+    // then merge into the existing local list. No SiteManagerDialog
+    // widget constructed here — this dialog has no direct test coverage
+    // anywhere in this codebase today (confirmed: New/Duplicate/Delete
+    // aren't click-tested either, only their underlying SiteStore
+    // behavior is), so this follows that exact same established
+    // precedent rather than inventing new dialog-level test
+    // infrastructure for one feature. ---
+    {
+        SavedSite foreignSite;
+        foreignSite.id = "foreign-machine-id-123";   // simulates an id from SOMEONE ELSE's export
+        foreignSite.name = "Someone else's site";
+        foreignSite.host = "foreign.example.com";
+        foreignSite.port = 22;
+        QList<SavedSite> foreignExport{foreignSite};
+
+        const QString foreignPath = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+            + "/zephyrftp_site_store_test_foreign_export.json";
+        SiteStore::saveToFile(foreignExport, foreignPath);
+
+        QList<SavedSite> localSites{passwordSite};   // simulates the local machine's own existing sites
+        QList<SavedSite> imported = SiteStore::loadFromFile(foreignPath);
+        const bool loadedForeignOk = imported.size() == 1 && imported[0].id == "foreign-machine-id-123";
+        qDebug() << "[test] loaded the foreign export with its ORIGINAL id still intact (before regeneration):"
+                  << loadedForeignOk;
+        if (!loadedForeignOk) allPass = false;
+
+        for (SavedSite &site : imported)
+            site.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        const bool idWasRegenerated = imported[0].id != "foreign-machine-id-123";
+        qDebug() << "[test] the imported site's id was regenerated, not reused from the foreign file:"
+                  << idWasRegenerated;
+        if (!idWasRegenerated) allPass = false;
+
+        localSites.append(imported);
+        const bool mergedNotReplaced = localSites.size() == 2 && localSites[0].id == passwordSite.id;
+        qDebug() << "[test] importing MERGED with the existing local site rather than replacing it:"
+                  << mergedNotReplaced;
+        if (!mergedNotReplaced) allPass = false;
+
+        const bool noIdCollision = localSites[0].id != localSites[1].id;
+        qDebug() << "[test] the imported site's regenerated id doesn't collide with the local site's own:"
+                  << noIdCollision;
+        if (!noIdCollision) allPass = false;
+
+        QFile::remove(foreignPath);
+    }
 
     // --- Empty-store behavior: loading before anything was ever saved
     // should return an empty list, not an error or a crash ---

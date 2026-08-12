@@ -1358,6 +1358,37 @@ to drive FileZilla itself for a same-desktop comparison.
   "duplicate-id"` comes back with two distinct ids (the first keeping
   the original, confirmed via a real pre-fix control that the old code
   returned both entries still sharing the same id).
+  `load()`/`save()` are now thin wrappers (`load() { return
+  loadFromFile(filePath()); }`) around two new path-parameterized
+  primitives, `loadFromFile(path)`/`saveToFile(sites, path)` — what
+  `SiteManagerDialog`'s Export.../Import... buttons actually call, on
+  an arbitrary user-chosen path rather than the fixed `sites.json`
+  location. Every existing call site keeps its exact original
+  zero-arg signature and behavior unchanged; the refactor's only
+  effect is that all of `load()`'s defensive parsing (missing-field
+  defaults, the duplicate-id dedup pass above, failing soft to an
+  empty list on a corrupt/unreadable file) now also applies for free
+  to an imported file — exactly the tolerance a hand-edited or
+  foreign/older-version export wants, with no separate import-parsing
+  code to write or get wrong. The export format is deliberately
+  `SavedSite`'s own existing JSON schema, not a new interchange
+  format — already documented, and already secret-free **by
+  construction**, not by a stripping step this feature has to get
+  right: `SavedSite` has no password/passphrase field to accidentally
+  serialize in the first place (see this entry's own opening
+  paragraph), a materially stronger guarantee than FileZilla's own XML
+  site export, which does store passwords and has to be told not to.
+  The one real design question import raises is what happens to an
+  imported site's `id`, since it's also the `CredentialStore` lookup
+  key: `SiteManagerDialog::onImportSites()` always regenerates it
+  (`QUuid::createUuid().toString(QUuid::WithoutBraces)`, the exact same
+  idiom `onNewSite()`/`onDuplicateSite()` already use for the same
+  reason) — never reused from the file, both because it could collide
+  with a real local site's id and because any `CredentialStore` secret
+  named by the original id was stored on the *exporting* machine's own
+  OS credential store and could never resolve on this one anyway.
+  Imported sites are appended to the existing list, never replacing it
+  — importing must never destroy what's already saved locally.
 - `CredentialStore` (`src/backends/CredentialStore.h/.cpp`) — the OS
   credential store, opt-in, and the only place a secret from this app
   is ever written to disk. `save`/`load`/`remove`/`hasSecret`, keyed by
@@ -1581,6 +1612,29 @@ to drive FileZilla itself for a same-desktop comparison.
   call path instead, consistent with this project's "say so explicitly
   rather than letting it read as verified" standard where a real test
   isn't a safe option.
+  Gained **Export.../Import...** buttons later, below Duplicate/Delete
+  (`arrow-up.svg`/`arrow-down.svg`, reused from `TransferQueueWidget`'s
+  own upload/download-direction icons — same "data leaving/entering the
+  app" metaphor, a different UI surface that never appears alongside
+  it). `onExportSites()` writes **every** saved site (not the current
+  selection/folder — the primary use case is a full backup/migrate, and
+  scoping to a selection is real UI surface not needed for that) via
+  `SiteStore::saveToFile()` to a user-chosen path
+  (`FileDialogs::pickSitesExportFile()`, the first `getSaveFileName()`
+  call site in this codebase). `onImportSites()` reads a file back via
+  `SiteStore::loadFromFile()`, regenerates every imported site's `id`
+  (see the `SiteStore`/`SavedSite` entry above for why that's not
+  optional), and appends to `m_sites` — merges with the existing list,
+  never replaces it — followed by the same `SiteStore::save(m_sites)` +
+  `rebuildTree()` pair every other mutation here already ends with.
+  Neither button has direct test coverage of its own click handler —
+  matching this dialog's own existing, established precedent (New/
+  Duplicate/Delete aren't click-tested either, only their underlying
+  `SiteStore` behavior is); the actual algorithm (`loadFromFile()` +
+  id regeneration + merge) is covered directly in `site-store-test`
+  instead, without constructing a `SiteManagerDialog` — the first
+  direct test coverage of any kind for that specific class remains
+  none, unchanged by this addition.
 - `AppSettings` (`src/AppSettings.h/.cpp`) — app-wide preferences, the
   first general settings mechanism this project has had (there was
   nothing to persist before this). Follows `SiteStore`'s own convention

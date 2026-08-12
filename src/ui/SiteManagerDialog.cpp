@@ -83,10 +83,31 @@ void SiteManagerDialog::buildUi()
     treeActionsRow->addWidget(m_duplicateButton);
     treeActionsRow->addWidget(m_deleteButton);
 
+    // Export/Import — a separate row from New/Duplicate/Delete above:
+    // those mutate ONE site, these operate on the whole list via a file.
+    // arrow-up/arrow-down.svg reused from TransferQueueWidget's own
+    // upload/download-direction icons (TransferQueueWidget.cpp) — same
+    // "data leaving/entering the app" metaphor, a different UI surface
+    // that never appears alongside it, so not a collision. Green/Blue
+    // match this app's own established color semantics (Green =
+    // create/upload/success family, Blue = primary/navigation/download).
+    auto *exportButton = new QPushButton(tr("Export..."), this);
+    exportButton->setIcon(IconTheme::tintedIcon(":/icons/arrow-up.svg", IconTheme::Green));
+    connect(exportButton, &QPushButton::clicked, this, &SiteManagerDialog::onExportSites);
+
+    auto *importButton = new QPushButton(tr("Import..."), this);
+    importButton->setIcon(IconTheme::tintedIcon(":/icons/arrow-down.svg", IconTheme::Blue));
+    connect(importButton, &QPushButton::clicked, this, &SiteManagerDialog::onImportSites);
+
+    auto *importExportRow = new QHBoxLayout;
+    importExportRow->addWidget(exportButton);
+    importExportRow->addWidget(importButton);
+
     auto *leftLayout = new QVBoxLayout;
     leftLayout->addWidget(newSiteButton);
     leftLayout->addWidget(m_tree, 1);
     leftLayout->addLayout(treeActionsRow);
+    leftLayout->addLayout(importExportRow);
     auto *leftWidget = new QWidget(this);
     leftWidget->setLayout(leftLayout);
 
@@ -632,6 +653,60 @@ void SiteManagerDialog::onDeleteSite()
 
     m_selectedId.clear();
     rebuildTree();
+}
+
+void SiteManagerDialog::onExportSites()
+{
+    // Exports ALL sites unconditionally — not just the current selection
+    // or folder. The primary use case is a full backup/migrate, and
+    // scoping to a selection is real additional UI surface this doesn't
+    // need; a natural follow-up later if ever actually asked for.
+    const QString path = FileDialogs::pickSitesExportFile(this);
+    if (path.isEmpty())
+        return;
+
+    if (SiteStore::saveToFile(m_sites, path)) {
+        QMessageBox::information(this, tr("Export Sites"),
+            tr("Exported %1 site(s) to:\n%2").arg(m_sites.size()).arg(path));
+    } else {
+        QMessageBox::warning(this, tr("Export Sites"),
+            tr("Couldn't write to:\n%1").arg(path));
+    }
+}
+
+void SiteManagerDialog::onImportSites()
+{
+    const QString path = FileDialogs::pickSitesImportFile(this);
+    if (path.isEmpty())
+        return;
+
+    QList<SavedSite> imported = SiteStore::loadFromFile(path);
+    if (imported.isEmpty()) {
+        QMessageBox::warning(this, tr("Import Sites"),
+            tr("No sites found in:\n%1").arg(path));
+        return;
+    }
+
+    // Every imported site's id is regenerated — never reused from the
+    // file — the exact same QUuid::createUuid() idiom onNewSite()/
+    // onDuplicateSite() above already use. Two real reasons, not one:
+    // an id from someone else's export could collide with a real local
+    // site's id, AND even a guaranteed-unique original id is still
+    // useless here — any CredentialStore secret it names was stored in
+    // the EXPORTING machine's own OS credential store, keyed by that
+    // id, and can never resolve on this one. Appended (merged), never
+    // replacing m_sites — importing must never destroy existing local
+    // sites. A same-named site already existing locally isn't treated
+    // as a conflict either: two sites sharing a display name is already
+    // unremarkable in this app, nothing prevents it today.
+    for (SavedSite &site : imported)
+        site.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    m_sites.append(imported);
+    SiteStore::save(m_sites);
+
+    rebuildTree();
+    QMessageBox::information(this, tr("Import Sites"),
+        tr("Imported %1 site(s).").arg(imported.size()));
 }
 
 void SiteManagerDialog::onConnectClicked()

@@ -82,11 +82,28 @@ class SiteStore {
 public:
     // Returns an empty list (not an error) if the file doesn't exist yet
     // — that's the expected state on first run, not a failure.
-    static QList<SavedSite> load();
+    static QList<SavedSite> load() { return loadFromFile(filePath()); }
 
     // Returns false if the file couldn't be written (e.g. permissions).
     // Creates the containing directory if it doesn't exist yet.
-    static bool save(const QList<SavedSite> &sites);
+    static bool save(const QList<SavedSite> &sites) { return saveToFile(sites, filePath()); }
+
+    // The same parsing/serialization load()/save() use above, against an
+    // ARBITRARY path rather than the fixed sites.json location — what
+    // SiteManagerDialog's Export.../Import... actually call. Not a
+    // separate implementation: load()/save() are thin wrappers around
+    // these, so every existing defensive-parsing behavior (missing-field
+    // defaults, the duplicate-id backfill, failing soft to an empty list
+    // on a corrupt/unreadable file) is exactly what an imported file
+    // gets too, for free — the same tolerance a hand-edited or
+    // older-version sites.json already gets. Export's file is exactly
+    // this struct's existing JSON schema, not a separate interchange
+    // format — already documented, already secret-free by construction
+    // (SavedSite has no password field to accidentally serialize; see
+    // its own doc comment), so nothing extra is needed to make an
+    // exported file safe to hand to someone else.
+    static QList<SavedSite> loadFromFile(const QString &path);
+    static bool saveToFile(const QList<SavedSite> &sites, const QString &path);
 
 private:
     static QString filePath();

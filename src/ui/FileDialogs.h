@@ -24,4 +24,23 @@ inline QString pickPrivateKeyFile(QWidget *parent)
     return QFileDialog::getOpenFileName(parent, QObject::tr("Select Private Key File"));
 }
 
+// Export/import destination pickers for SiteManagerDialog's Export.../
+// Import... buttons — the first callers of getSaveFileName() in this
+// codebase. Deliberately given a filename filter and (for export) a
+// suggested default name, unlike pickPrivateKeyFile() above's bare
+// filter-less call: a key file can be anything, but an exported site
+// list is always this app's own JSON schema, so a filter genuinely
+// helps here.
+inline QString pickSitesExportFile(QWidget *parent)
+{
+    return QFileDialog::getSaveFileName(parent, QObject::tr("Export Sites"),
+        QStringLiteral("zephyrftp-sites.json"), QObject::tr("JSON files (*.json);;All files (*)"));
+}
+
+inline QString pickSitesImportFile(QWidget *parent)
+{
+    return QFileDialog::getOpenFileName(parent, QObject::tr("Import Sites"),
+        QString(), QObject::tr("JSON files (*.json);;All files (*)"));
+}
+
 }

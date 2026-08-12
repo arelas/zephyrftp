@@ -3,6 +3,7 @@
 #include <QStandardPaths>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -46,11 +47,11 @@ QString SiteStore::filePath()
         + QStringLiteral("/sites.json");
 }
 
-QList<SavedSite> SiteStore::load()
+QList<SavedSite> SiteStore::loadFromFile(const QString &path)
 {
     QList<SavedSite> sites;
 
-    QFile file(filePath());
+    QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
         return sites;   // no file yet — expected on first run, not an error
     }
@@ -120,10 +121,10 @@ QList<SavedSite> SiteStore::load()
     return sites;
 }
 
-bool SiteStore::save(const QList<SavedSite> &sites)
+bool SiteStore::saveToFile(const QList<SavedSite> &sites, const QString &path)
 {
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
-    if (!QDir().mkpath(dir))
+    const QFileInfo pathInfo(path);
+    if (!QDir().mkpath(pathInfo.absolutePath()))
         return false;
 
     QJsonArray array;
@@ -145,7 +146,7 @@ bool SiteStore::save(const QList<SavedSite> &sites)
         array.append(obj);
     }
 
-    QFile file(filePath());
+    QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
         return false;
 

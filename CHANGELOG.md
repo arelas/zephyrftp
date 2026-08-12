@@ -8,6 +8,18 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Added
+
+- **Import/export saved sites.** Export... in Site Manager writes your
+  whole site list to a JSON file — safe to hand to someone else or move
+  to another machine, since it's the same secret-free format
+  `sites.json` itself already is (no password is ever in it, saved or
+  not). Import... reads one back in and adds those sites to what you
+  already have, never replacing it; each imported site gets a fresh
+  identity, so you're just prompted for its password the first time
+  you connect, same as any new site. Export always exports every saved
+  site — no per-folder/selection scoping yet.
+
 ## [0.6.28] — Filter by name
 
 ### Added
