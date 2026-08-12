@@ -729,7 +729,13 @@ jobs:
       # openssl) and copies/rewrites those the same way.
       - name: Deploy non-Qt libraries (libssh2, openssl) into app bundle
         run: |
-          dylibbundler -od -b \
+          # -of (overwrite individual FILES), not -od (overwrite the
+          # whole destination DIRECTORY) — confirmed the hard way on a
+          # real CI run: -od's actual behavior is `rm -r` the entire
+          # Contents/Frameworks tree before copying anything, which
+          # silently destroyed everything macdeployqt had just placed
+          # there in the previous step, undoing that fix's whole point.
+          dylibbundler -of -b \
             -x build/zephyrftp.app/Contents/MacOS/zephyrftp \
             -d build/zephyrftp.app/Contents/Frameworks \
             -p @executable_path/../Frameworks/
@@ -752,6 +758,22 @@ jobs:
             otool -L build/zephyrftp.app/Contents/MacOS/zephyrftp | grep "/opt/homebrew"
             exit 1
           fi
+          # Also confirm the files these load commands point at genuinely
+          # exist on disk, not just that the load commands look right —
+          # found the hard way (a real CI failure): dylibbundler's -od
+          # flag erased the entire Contents/Frameworks tree (destroying
+          # what macdeployqt had already placed there) without this
+          # step catching it, since it only checked the binary's load
+          # commands, not the actual directory contents.
+          for f in build/zephyrftp.app/Contents/Frameworks/QtWidgets.framework/Versions/A/QtWidgets \
+                   build/zephyrftp.app/Contents/Frameworks/libssh2.*.dylib; do
+            if [ ! -f "$f" ]; then
+              echo "::error::Expected bundled file missing after deploy steps: $f"
+              echo "Contents of build/zephyrftp.app/Contents/Frameworks/:"
+              ls -la build/zephyrftp.app/Contents/Frameworks/ || echo "(directory does not exist)"
+              exit 1
+            fi
+          done
 
       # Built directly with hdiutil from the exact build/zephyrftp.app
       # tree the two deploy steps above just modified in place — NOT
