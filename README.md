@@ -22,6 +22,11 @@ tracks what's changed between them.
   side, a server on the other" — connect both panes to different servers
   and transfer between them directly. Back, forward, and up buttons
   beside each pane's location bar, same as any file manager.
+- **Filter by name** — a field under each pane's path bar narrows a
+  busy directory listing as you type (case-insensitive, matches
+  anywhere in the name). Each pane's filter is independent, so you can
+  narrow one side without affecting the other. Hide it if you don't
+  want it via View → Filename Filter.
 - **File management from the right-click menu** — create a new file or
   folder, rename, or delete, on either side (your computer or the
   server). Delete works on multiple selected items at once, with a
@@ -284,6 +289,11 @@ rather than being half-implemented:
   always connects the right-hand pane, the same fixed shortcut the
   toolbar's own Connect... button already uses, not whichever pane you
   last clicked in.
+- **The filename filter is a simple substring match, and doesn't
+  remember what you typed.** No wildcards or regular expressions, and
+  each pane's filter text is cleared the moment you navigate away or
+  close the app — only whether the filter row is shown at all is
+  remembered across restarts, not what was typed into it.
 
 ## For developers and tinkerers
 

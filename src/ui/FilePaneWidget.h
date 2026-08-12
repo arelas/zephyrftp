@@ -123,6 +123,15 @@ public:
     // parenting the backend directly to this widget.
     void setBackend(RemoteBackend *backend, QThread *thread = nullptr);
 
+    // Shows/hides the filename-filter row — called by MainWindow's View
+    // menu toggle on both panes at once (see AppSettings::
+    // filenameFilterVisible's own doc comment). Hiding also clears the
+    // filter text (which itself triggers rebuildModel() via the
+    // existing textChanged connection) — a hidden field must not leave
+    // a stale, invisible filter silently narrowing the list with no
+    // visible control left to clear it.
+    void setFilterFieldVisible(bool visible);
+
 signals:
     // Emitted on double-click of a file (not directory) — MainWindow wires
     // this to "transfer to the other pane".
@@ -264,6 +273,11 @@ private:
     QToolButton *m_homeButton;
     QLineEdit *m_pathBar;
     QAction *m_pathBarLeadingIcon = nullptr;   // owned by m_pathBar once added; tracked so it can be replaced
+    // Case-insensitive substring filter by name — composes with
+    // showHiddenFiles in rebuildModel()'s own filter loop, not a
+    // separate pass (see that method's own comment). Own per-pane text;
+    // visibility is shared across both panes via setFilterFieldVisible().
+    QLineEdit *m_filterEdit;
     QLabel *m_statusLabel;
     QStandardItemModel *m_model;
     // The filtered set currently rendered in m_model — NOT necessarily in

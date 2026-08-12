@@ -1647,6 +1647,34 @@ to drive FileZilla itself for a same-desktop comparison.
   *filtered* set, while a separate `m_lastRawEntries` holds everything
   the last `listDirectory()` actually returned, so a live toggle can
   re-filter and redraw instantly without a pointless backend round-trip.
+  A per-pane filename filter (`m_filterEdit`, a `QLineEdit` below the
+  path bar, object name `"filterEdit"` so tests can find it unambiguously
+  now that the pane has two `QLineEdit`s) composes in the exact SAME
+  predicate as `showHiddenFiles` above, not a separate pass — case-
+  insensitive `QString::contains()`, deliberately not wildcard/regex.
+  There is no `QSortFilterProxyModel` anywhere in this codebase — column
+  sorting is done directly on `m_model` via `QStandardItem::operator<`
+  overrides (see below) — so the filter follows the same "filter the raw
+  cached entries, then rebuild the model" shape `showHiddenFiles`
+  already established, rather than introducing a proxy-model layer.
+  Live, as-you-type (`textChanged` → `rebuildModel()`), the same
+  mechanism `showHiddenFilesChanged` already triggers; confirmed a
+  non-issue performance-wise for this app's realistic directory sizes,
+  since `rebuildModel()` already does a full clear-and-rebuild of the
+  model on every hidden-files toggle today, same order of work.
+  `setFilterFieldVisible(bool)` (public) is called by `MainWindow`'s
+  View-menu toggle on *each* pane independently — hiding also clears
+  the filter text (firing `textChanged` → `rebuildModel()` on its own),
+  since a hidden field must not leave a stale, invisible filter
+  silently narrowing the list with no visible control left to clear
+  it. Initial visibility is read directly from `AppSettings::
+  filenameFilterVisible()` in the pane's own constructor — unlike
+  `MainWindow`'s quick-connect field (which had to be built inside
+  `buildMenuBar()` specifically so the View menu's own toggle could
+  reference the one widget that needed to exist by that point), each
+  pane already owns its `AppSettings*` and is constructed well before
+  `buildMenuBar()`'s toggle is ever actually triggered by a real user
+  action, so there's no equivalent ordering hazard here.
   **A real bug found by a dedicated code review of this file — its
   first, and its first-ever test coverage of any kind:** `save()` wrote
   `settings.json` in place (`QFile::open(WriteOnly | Truncate)`), so a
@@ -1690,6 +1718,10 @@ to drive FileZilla itself for a same-desktop comparison.
   see `MainWindow`'s entry above for the full story of why this field
   exists at all: `QMainWindow::saveState()` doesn't capture an
   arbitrary toolbar widget's visibility the way it does a dock's).
+  Also gained `filenameFilterVisible` (bool, default `true`, same
+  shape) — controls BOTH panes' filter-field visibility at once (see
+  `FilePaneWidget`'s entry above), though each pane's own filter text
+  is never persisted here — only whether the row is shown at all.
 - `PreferencesDialog` (`src/ui/PreferencesDialog.h/.cpp`) — a "Show
   hidden files" checkbox, a default-protocol combo box, and two more
   checkboxes added later ("Show Transfers pane on start", "Show Commands
@@ -3050,6 +3082,19 @@ to drive FileZilla itself for a same-desktop comparison.
   own visibility read as more confusing than useful, and every
   plausible icon choice would visually collide with the existing green
   `plug.svg` **Connect...** action right next to the field.
+  The View menu's **Filename Filter** toggle, added later, is the same
+  shape — a plain checkable `QAction`, no `toggleViewAction()` — but
+  controls BOTH panes' filter-field visibility at once
+  (`m_leftPane->setFilterFieldVisible(visible)`/
+  `m_rightPane->setFilterFieldVisible(visible)`) rather than one
+  `MainWindow`-owned widget. No construction-order hazard here despite
+  `m_leftPane`/`m_rightPane` not existing yet when `buildMenuBar()` runs
+  (`buildLayout()` creates them afterward): the toggle's lambda only
+  dereferences them at toggle time — a later, real user action — never
+  at construction time, and each pane already sets its OWN initial
+  filter-field visibility from `AppSettings` directly in its own
+  constructor rather than waiting for this toggle to do it. See
+  `FilePaneWidget`'s entry above for the filter field itself.
   `startConnection()` and `disconnectPane()` both check
   `targetPane->isConnecting()` first (via a shared `stillConnecting()`
   helper — see below) and refuse (a status-bar message instead) if it's

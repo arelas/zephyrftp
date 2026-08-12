@@ -584,6 +584,21 @@ builds and wipes its own scratch directory (`/tmp/sort_test`) at the top
 of `main()`, same convention `transfer-queue-test`/`folder-transfer-test`
 use.
 
+Also covers the per-pane filename filter: narrowing/restoring
+`rowCount()` against the same real `LocalBackend` fixture, and (via a
+`FakeLoggingBackend`-supplied dotfile, since `LocalBackend` itself never
+returns dotfiles — see ARCHITECTURE.md's `FilePaneWidget` entry) that it
+composes with `showHiddenFiles` as AND, not two independent filters
+that happen to both work alone. That composition check is the one place
+in this file that constructs a real `AppSettings` — a real,
+intermittent bug found by running this test twice in a row: the
+test-mode `settings.json` path persists ACROSS separate runs of the
+binary (unlike a fresh in-memory default), so a freshly-constructed
+`AppSettings` there could start with `showHiddenFiles()` already `true`
+left over from a previous run, silently invalidating the "starts off"
+assumption the first check depends on — fixed by explicitly resetting
+it right after construction rather than trusting the default.
+
 ### `remote-to-remote-test`
 
 Same treatment as `sort-and-commands-test` above — self-contained,

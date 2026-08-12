@@ -51,6 +51,9 @@
 #include <QDropEvent>
 #include <QElapsedTimer>
 #include <QImage>
+#include <QStandardPaths>
+#include <QLineEdit>
+#include "AppSettings.h"
 #include "ui/FilePaneWidget.h"
 #include "ui/FileTreeView.h"
 #include "ui/CommandsPaneWidget.h"
@@ -79,6 +82,16 @@ public:
     // Not a slot — called directly by the test, same process/thread, no
     // dispatch needed.
     void emitFakeLine(const QString &line) { emit commandLogged(line); }
+
+    // Same reasoning — a direct-call test hook, not routed through
+    // listDirectory()'s own hardcoded-empty stub. Used to hand
+    // FilePaneWidget a fabricated listing (e.g. containing a dotfile)
+    // that a REAL LocalBackend fixture can't produce, since LocalBackend
+    // itself never returns dotfiles at all (see rebuildModel()'s own
+    // comment on that pre-existing inconsistency).
+    void emitFakeListing(const QString &path, const QList<RemoteEntry> &entries) {
+        emit directoryListed(path, entries);
+    }
 
 public slots:
     void connectToHost() override { emit connected(); }
@@ -398,6 +411,35 @@ int main(int argc, char *argv[])
         check("selection survived a same-directory refresh (bravo.txt still selected)",
               stillSelected.size() == 1 && stillSelected.first() == QStringLiteral("bravo.txt"));
 
+        // ---------- Filename filter: narrows rowCount(), clearing
+        // restores the full set, and matching is case-insensitive
+        // substring — reuses this fixture's already-known 5 entries
+        // (zulu/, alpha/, delta.txt, bravo.txt, Aaa.txt). ----------
+        {
+            auto *filterModel = sortPane->findChild<QTreeView *>()->model();
+            auto filterTextAt = [&](int row) {
+                return filterModel->data(filterModel->index(row, 0), Qt::DisplayRole).toString();
+            };
+            auto *filterEdit = sortPane->findChild<QLineEdit *>(QStringLiteral("filterEdit"));
+            check("found the file pane's filter QLineEdit", filterEdit != nullptr);
+            if (filterEdit) {
+                filterEdit->setText(QStringLiteral("ravo"));
+                check("filter \"ravo\": narrows to exactly bravo.txt",
+                      filterModel->rowCount() == 1 && filterTextAt(0) == QStringLiteral("bravo.txt"));
+
+                filterEdit->setText(QStringLiteral("RAVO"));
+                check("filter is case-insensitive (\"RAVO\" still matches bravo.txt)",
+                      filterModel->rowCount() == 1 && filterTextAt(0) == QStringLiteral("bravo.txt"));
+
+                filterEdit->setText(QStringLiteral("zzz-no-match"));
+                check("filter with no matches: rowCount is 0", filterModel->rowCount() == 0);
+
+                filterEdit->clear();
+                check("clearing the filter restores the full 5-entry listing",
+                      filterModel->rowCount() == 5);
+            }
+        }
+
         // ---------- Regression: rebuildModel()'s selection-restore-by-
         // name must NOT fire across a genuine navigation to a DIFFERENT
         // directory, even when a same-named file exists there — a real
@@ -491,6 +533,59 @@ int main(int argc, char *argv[])
         qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
         app.exit(allPass ? 0 : 1);
     });
+
+    // ---------- Filename filter composes with showHiddenFiles as AND,
+    // not two independent filters that happen to both work alone — a
+    // dotfile matching the filter text must stay excluded while
+    // showHiddenFiles is off, and appear once it's turned on. Needs a
+    // fake backend supplying a dotfile directly: LocalBackend itself
+    // never returns dotfiles at all (see rebuildModel()'s own comment),
+    // so the fixture above (real LocalBackend) can't exercise this.
+    // Fully synchronous — emitFakeListing() is a direct call, not routed
+    // through Qt::QueuedConnection, so no event-loop wait is needed
+    // (same reasoning Part 2's emitFakeLine() checks already rely on).
+    // QStandardPaths::setTestModeEnabled(true) isolates the real
+    // AppSettings instance this needs (to actually toggle
+    // showHiddenFiles) from a real developer's own settings.json. ----------
+    {
+        QStandardPaths::setTestModeEnabled(true);
+        auto *hiddenSettings = new AppSettings();
+        // A real bug found by running this test twice in a row: the
+        // test-mode settings.json path persists ACROSS separate runs of
+        // this binary (unlike a fresh in-memory default), so a
+        // freshly-constructed AppSettings here can start with
+        // showHiddenFiles() already true if a previous run (of this
+        // test, or any other AppSettings-touching test sharing the same
+        // test-mode directory) last left it that way — silently
+        // invalidating the "starts off" assumption the first check below
+        // depends on. Explicit, not assumed.
+        hiddenSettings->setShowHiddenFiles(false);
+        auto *hiddenBackend = new FakeLoggingBackend();
+        auto *hiddenPane = new FilePaneWidget(hiddenBackend, nullptr, hiddenSettings);
+
+        RemoteEntry alpha;
+        alpha.name = QStringLiteral("alpha.txt");
+        alpha.isDir = false;
+        RemoteEntry hiddenAlpha;
+        hiddenAlpha.name = QStringLiteral(".alpha_secret");
+        hiddenAlpha.isDir = false;
+        hiddenBackend->emitFakeListing(QStringLiteral("/fake"), {alpha, hiddenAlpha});
+
+        auto *hiddenModel = hiddenPane->findChild<QTreeView *>()->model();
+        auto *hiddenFilterEdit = hiddenPane->findChild<QLineEdit *>(QStringLiteral("filterEdit"));
+        check("filter+hidden composition fixture: found the filter field", hiddenFilterEdit != nullptr);
+        if (hiddenFilterEdit) {
+            hiddenFilterEdit->setText(QStringLiteral("alpha"));
+            check("filter+hidden composition: a dotfile matching the filter text stays "
+                  "excluded while showHiddenFiles is off",
+                  hiddenModel->rowCount() == 1);
+
+            hiddenSettings->setShowHiddenFiles(true);
+            check("filter+hidden composition: turning showHiddenFiles on reveals the "
+                  "matching dotfile too (both rows now match \"alpha\")",
+                  hiddenModel->rowCount() == 2);
+        }
+    }
 
     return app.exec();
 }

@@ -126,6 +126,14 @@ void AppSettings::setQuickConnectFieldVisible(bool visible)
     save();
 }
 
+void AppSettings::setFilenameFilterVisible(bool visible)
+{
+    if (m_filenameFilterVisible == visible)
+        return;
+    m_filenameFilterVisible = visible;
+    save();
+}
+
 QString AppSettings::filePath()
 {
     return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
@@ -155,6 +163,7 @@ void AppSettings::load()
     m_proxyPort = obj.value(QStringLiteral("proxyPort")).toInt(1080);
     m_proxyUsername = obj.value(QStringLiteral("proxyUsername")).toString();
     m_quickConnectFieldVisible = obj.value(QStringLiteral("quickConnectFieldVisible")).toBool(true);
+    m_filenameFilterVisible = obj.value(QStringLiteral("filenameFilterVisible")).toBool(true);
 }
 
 void AppSettings::save() const
@@ -176,6 +185,7 @@ void AppSettings::save() const
     // No proxyPassword key, ever — see setProxyPassword()'s own doc
     // comment; that secret lives only in CredentialStore.
     obj[QStringLiteral("quickConnectFieldVisible")] = m_quickConnectFieldVisible;
+    obj[QStringLiteral("filenameFilterVisible")] = m_filenameFilterVisible;
 
     // QSaveFile (not QFile + Truncate) — writes the new content to a
     // temporary file first and only atomically replaces settings.json on

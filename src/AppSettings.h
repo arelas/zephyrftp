@@ -92,6 +92,18 @@ public:
     bool quickConnectFieldVisible() const { return m_quickConnectFieldVisible; }
     void setQuickConnectFieldVisible(bool visible);
 
+    // Whether each pane's filename-filter field is shown — toggled from
+    // the View menu, applied to BOTH panes at once (see MainWindow's
+    // toggle). Defaults to true, same "burying a new feature behind an
+    // opt-in toggle would defeat the point" reasoning as
+    // quickConnectFieldVisible above. No change signal — each
+    // FilePaneWidget reads this once, itself, at construction (it
+    // already owns an AppSettings*), and MainWindow's toggle drives both
+    // panes' setFilterFieldVisible() directly; nothing needs a live
+    // notification path through AppSettings itself.
+    bool filenameFilterVisible() const { return m_filenameFilterVisible; }
+    void setFilenameFilterVisible(bool visible);
+
 signals:
     void showHiddenFilesChanged(bool value);
 
@@ -110,4 +122,5 @@ private:
     int m_proxyPort = 1080;
     QString m_proxyUsername;
     bool m_quickConnectFieldVisible = true;
+    bool m_filenameFilterVisible = true;
 };

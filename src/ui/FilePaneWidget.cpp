@@ -103,6 +103,7 @@ FilePaneWidget::FilePaneWidget(RemoteBackend *backend, QWidget *parent, AppSetti
     , m_upButton(nullptr)
     , m_homeButton(nullptr)
     , m_pathBar(nullptr)
+    , m_filterEdit(nullptr)
     , m_statusLabel(nullptr)
     , m_model(new QStandardItemModel(this))
     , m_settings(settings)
@@ -254,6 +255,33 @@ void FilePaneWidget::buildUi()
     pathRow->addWidget(m_pathBar, 1);
     layout->addLayout(pathRow);
 
+    // Case-insensitive substring filter by name — composes with
+    // showHiddenFiles in rebuildModel()'s own filter loop (see that
+    // method's own comment), not a separate proxy-model pass; there is
+    // no QSortFilterProxyModel anywhere in this codebase, and sorting is
+    // already done directly on m_model via QStandardItem::operator<
+    // overrides, so filtering follows the same "filter the raw cached
+    // entries, then rebuild the model" shape showHiddenFiles already
+    // established rather than introducing a second mechanism.
+    // setClearButtonEnabled(true) is Qt's own built-in "x" to clear —
+    // no custom button needed. Initial visibility from AppSettings
+    // (shared across both panes via setFilterFieldVisible(), but each
+    // pane's own filter TEXT stays independent) — defaults to visible
+    // when m_settings is null (every test constructing a pane directly),
+    // same "true" default filenameFilterVisible() itself uses.
+    m_filterEdit = new QLineEdit(this);
+    // Same convention ConnectionDialog's own fields use — lets tests
+    // find this specific QLineEdit unambiguously now that the pane has
+    // two (this one and m_pathBar).
+    m_filterEdit->setObjectName(QStringLiteral("filterEdit"));
+    m_filterEdit->setPlaceholderText(tr("Filter by name..."));
+    m_filterEdit->setClearButtonEnabled(true);
+    m_filterEdit->setVisible(!m_settings || m_settings->filenameFilterVisible());
+    connect(m_filterEdit, &QLineEdit::textChanged, this, [this](const QString &) {
+        rebuildModel();
+    });
+    layout->addWidget(m_filterEdit);
+
     m_model->setHorizontalHeaderLabels({tr("Name"), tr("Size"), tr("Modified"), tr("Permissions")});
 
     m_view = new FileTreeView(this, this);
@@ -306,6 +334,13 @@ void FilePaneWidget::buildUi()
 
     m_statusLabel = new QLabel(this);
     layout->addWidget(m_statusLabel);
+}
+
+void FilePaneWidget::setFilterFieldVisible(bool visible)
+{
+    m_filterEdit->setVisible(visible);
+    if (!visible)
+        m_filterEdit->clear();   // fires textChanged -> rebuildModel() on its own
 }
 
 void FilePaneWidget::updatePathBarIcon()
@@ -429,10 +464,18 @@ void FilePaneWidget::rebuildModel()
     // with no way to change either. Filtering centrally here, once,
     // applies the same rule to every backend uniformly.
     const bool showHidden = m_settings && m_settings->showHiddenFiles();
+    // Case-insensitive substring match — deliberately not wildcard/regex,
+    // same "simplest thing that solves the real problem" restraint this
+    // project applies elsewhere (chmod's 9-bits-only, quick-connect's
+    // no-IPv6 boundary). Composed with showHidden in the SAME predicate,
+    // not a second pass — a dotfile matching the filter text still stays
+    // excluded unless showHiddenFiles is also on.
+    const QString filterText = m_filterEdit ? m_filterEdit->text().trimmed() : QString();
 
     QList<RemoteEntry> filtered;
     for (const RemoteEntry &e : m_lastRawEntries) {
-        if (showHidden || !e.name.startsWith(QLatin1Char('.')))
+        if ((showHidden || !e.name.startsWith(QLatin1Char('.')))
+            && (filterText.isEmpty() || e.name.contains(filterText, Qt::CaseInsensitive)))
             filtered.append(e);
     }
 

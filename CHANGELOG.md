@@ -8,6 +8,15 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Added
+
+- **Filter by name.** A field under each pane's path bar narrows a busy
+  directory listing as you type — case-insensitive, matches anywhere in
+  the name. Each pane's filter is independent; hide the field via View →
+  Filename Filter if you don't want it. Simple substring match only (no
+  wildcards or regular expressions), and only whether the field is shown
+  is remembered across restarts, not what was typed into it.
+
 ## [0.6.27] — Quick connect
 
 ### Added

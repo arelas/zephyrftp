@@ -72,6 +72,9 @@ int main(int argc, char *argv[])
               "(shown by default — burying a new feature behind an opt-in toggle "
               "would defeat the point of adding it)",
               settings.quickConnectFieldVisible());
+        check("fresh start (no file): filenameFilterVisible defaults to true "
+              "(same shown-by-default reasoning as quickConnectFieldVisible)",
+              settings.filenameFilterVisible());
     }
 
     // --- Round-trip every field through a real save() (via the public
@@ -84,6 +87,7 @@ int main(int argc, char *argv[])
         writer.setWindowGeometry(QByteArray("fake-geometry-blob"));
         writer.setWindowState(QByteArray("fake-state-blob"));
         writer.setQuickConnectFieldVisible(false);   // deliberately the non-default value
+        writer.setFilenameFilterVisible(false);      // deliberately the non-default value
 
         AppSettings reader;
         check("round-trip: showHiddenFiles", reader.showHiddenFiles() == true);
@@ -91,6 +95,7 @@ int main(int argc, char *argv[])
         check("round-trip: windowGeometry", reader.windowGeometry() == QByteArray("fake-geometry-blob"));
         check("round-trip: windowState", reader.windowState() == QByteArray("fake-state-blob"));
         check("round-trip: quickConnectFieldVisible", reader.quickConnectFieldVisible() == false);
+        check("round-trip: filenameFilterVisible", reader.filenameFilterVisible() == false);
     }
 
     // --- Proxy: type/host/port/username round-trip through settings.json
@@ -140,7 +145,7 @@ int main(int argc, char *argv[])
                   && obj.contains("windowGeometry") && obj.contains("windowState")
                   && obj.contains("proxyType") && obj.contains("proxyHost")
                   && obj.contains("proxyPort") && obj.contains("proxyUsername")
-                  && obj.contains("quickConnectFieldVisible"));
+                  && obj.contains("quickConnectFieldVisible") && obj.contains("filenameFilterVisible"));
         check("settings.json NEVER contains a proxyPassword key",
               !obj.contains("proxyPassword"));
     }
@@ -173,7 +178,8 @@ int main(int argc, char *argv[])
         check("corrupt settings.json: falls back to defaults instead of crashing",
               !settings.showHiddenFiles() && settings.defaultProtocol() == Protocol::Sftp
                   && settings.proxyType() == ProxyType::None
-                  && settings.quickConnectFieldVisible());
+                  && settings.quickConnectFieldVisible()
+                  && settings.filenameFilterVisible());
     }
 
     QFile::remove(settingsPath);

@@ -205,6 +205,25 @@ void MainWindow::buildMenuBar()
         m_settings->setQuickConnectFieldVisible(visible);
     });
 
+    // Same shape as the quick-connect toggle above — one shared toggle
+    // controls BOTH panes' filter-field visibility at once (each pane's
+    // own filter TEXT stays independent, since the two panes usually
+    // show different directories). Unlike m_quickConnectEdit, m_leftPane/
+    // m_rightPane don't exist yet here (buildLayout() creates them AFTER
+    // buildMenuBar() runs) — no ordering hazard though, since this
+    // lambda only dereferences them at toggle time (a later, real user
+    // action), never at construction time; each pane sets its OWN
+    // initial filter-field visibility directly from AppSettings in its
+    // own constructor instead of waiting for this toggle to do it.
+    QAction *filenameFilterToggle = viewMenu->addAction(tr("Filename &Filter"));
+    filenameFilterToggle->setCheckable(true);
+    filenameFilterToggle->setChecked(m_settings->filenameFilterVisible());
+    connect(filenameFilterToggle, &QAction::toggled, this, [this](bool visible) {
+        m_leftPane->setFilterFieldVisible(visible);
+        m_rightPane->setFilterFieldVisible(visible);
+        m_settings->setFilenameFilterVisible(visible);
+    });
+
     QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
     QAction *aboutAction = helpMenu->addAction(tr("&About ZephyrFTP..."));
     connect(aboutAction, &QAction::triggered, this, &MainWindow::onAboutTriggered);
