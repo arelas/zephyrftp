@@ -8,6 +8,21 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.3] — Synchronized browsing
+
+### Added
+
+- **Synchronized browsing.** A new "Synchronized Browsing" toggle in
+  the View menu (off by default) — once on, navigating one pane (Back,
+  Forward, Up, Home, the path bar, double-clicking into a folder) drives
+  the other pane to the same relative path automatically. If the other
+  side doesn't have a matching subfolder, that pane just shows its
+  ordinary "couldn't open that folder" message — nothing moves there,
+  and the pane you actually navigated is never affected by what happens
+  on the other side. Reconnecting either pane while this is on turns it
+  back off automatically, rather than continuing to track against
+  wherever the old connection used to be.
+
 ## [0.7.2] — Bandwidth throttling
 
 ### Added
@@ -1584,7 +1599,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.3
 [0.7.2]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.2
 [0.7.1]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.1
 [0.7.0]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.0
