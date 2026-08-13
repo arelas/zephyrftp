@@ -27,6 +27,7 @@
 #include <QDir>
 #include <QAction>
 #include <QStandardPaths>
+#include <cstdio>
 #include <functional>
 #include "ui/MainWindow.h"
 #include "ui/FilePaneWidget.h"
@@ -36,6 +37,12 @@ bool allPass = true;
 void check(const QString &label, bool condition)
 {
     qDebug() << (condition ? "[PASS]" : "[FAIL]") << label;
+    // TEMPORARY diagnostic (matches project_ci_containerized_debugging's
+    // established technique): qDebug() output doesn't reliably reach the
+    // terminal under this wine setup, stderr does — needed to attribute a
+    // real CI-only failure to a specific check. Remove once diagnosed.
+    fprintf(stderr, "%s %s\n", condition ? "[PASS]" : "[FAIL]", qPrintable(label));
+    fflush(stderr);
     if (!condition) allPass = false;
 }
 
