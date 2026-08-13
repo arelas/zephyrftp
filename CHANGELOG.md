@@ -8,6 +8,16 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.5] — Windows build is back
+
+### Fixed
+
+- **Windows build was missing from the last two releases (0.7.3,
+  0.7.4).** A CI infrastructure issue caused the Windows build to fail
+  its test suite unpredictably, so it was left out rather than ship
+  something unverified. Root-caused and fixed; the Windows `.zip` is
+  included in this release and will be going forward.
+
 ## [0.7.4] — macOS packaging fix, take two
 
 ### Fixed
@@ -1620,7 +1630,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.4...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.5...HEAD
+[0.7.5]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.5
 [0.7.4]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.4
 [0.7.3]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.3
 [0.7.2]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.2
