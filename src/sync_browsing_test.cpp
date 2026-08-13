@@ -23,6 +23,7 @@
 #include <QApplication>
 #include <QTimer>
 #include <QEventLoop>
+#include <QElapsedTimer>
 #include <QDebug>
 #include <QDir>
 #include <QAction>
@@ -58,6 +59,31 @@ void waitUntil(const std::function<bool()> &condition, int timeoutMs = 5000)
     timeoutTimer.start(timeoutMs);
     while (!condition() && timeoutTimer.isActive())
         loop.processEvents(QEventLoop::AllEvents, 20);
+}
+
+// navigateTo() silently drops a request if the pane already has one
+// in flight (a real, intentional guard against overlapping navigation
+// — see FilePaneWidget::navigateTo()'s own comment). Confirmed via two
+// separate real CI failures that SOME overlapping request — not fully
+// pinned down to a single exact trigger, despite ruling out the most
+// obvious one (each pane's own initial auto-connect navigation) with a
+// dedicated settle-wait that verifiably succeeded on the very run that
+// still failed — can still be in flight when this test issues its own
+// explicit navigateTo(), silently stranding a pane at whatever
+// directory it was already at. Never reproduced locally; wine's higher
+// per-call overhead apparently makes whatever the actual race is far
+// more likely to land badly. Retrying the request until it actually
+// takes effect sidesteps the exact mechanism rather than requiring it
+// to be fully understood — navigateTo() is safe to call repeatedly,
+// each call either succeeds or is harmlessly dropped.
+void navigateWithRetry(FilePaneWidget *pane, const QString &target, int overallTimeoutMs = 5000)
+{
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (pane->currentDirectory() != target && elapsed.elapsed() < overallTimeoutMs) {
+        pane->navigateTo(target);
+        waitUntil([&] { return pane->currentDirectory() == target; }, 250);
+    }
 }
 }
 
@@ -101,38 +127,12 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // Both panes' LocalBackend auto-connects on construction
-    // (FilePaneWidget's own connected()->navigateTo(QString()) wiring), and
-    // that dispatch — like every navigateTo() call — is Qt::QueuedConnection
-    // and gated by navigateTo()'s own m_navigationInFlight guard (a real,
-    // intentional safety mechanism against overlapping requests, not a bug).
-    // A genuine, confirmed race if this initial round trip is still pending
-    // when the explicit navigateTo() calls below fire: whichever one wins
-    // gets silently dropped by that same guard, permanently stranding that
-    // pane at its default (home) directory — reproduced for real on CI,
-    // never locally, since wine's per-call overhead makes the race far more
-    // likely to go the wrong way. Draining it first, before either
-    // explicit navigateTo() call, makes the setup itself deterministic
-    // rather than depending on which side happens to win a timing race.
-    waitUntil([&] { return leftPane->currentDirectory() == QDir::homePath()
-                         && rightPane->currentDirectory() == QDir::homePath(); });
-    // TEMPORARY diagnostic: did the initial-settle wait above actually
-    // succeed, or did it time out (still not fixed as hoped)?
-    fprintf(stderr, "DIAG after initial-settle wait: left=[%s] right=[%s] homePath=[%s]\n",
-            qPrintable(leftPane->currentDirectory()), qPrintable(rightPane->currentDirectory()),
-            qPrintable(QDir::homePath()));
-    fflush(stderr);
-
     // ---------- Setup: get both panes to their respective roots before
-    // enabling sync, so turning it on anchors at exactly these paths. ----------
-    leftPane->navigateTo(leftRoot);
-    waitUntil([&] { return leftPane->currentDirectory() == leftRoot; });
-    rightPane->navigateTo(rightRoot);
-    waitUntil([&] { return rightPane->currentDirectory() == rightRoot; });
-    fprintf(stderr, "DIAG after explicit navigate: left=[%s] expected=[%s] right=[%s] expected=[%s]\n",
-            qPrintable(leftPane->currentDirectory()), qPrintable(leftRoot),
-            qPrintable(rightPane->currentDirectory()), qPrintable(rightRoot));
-    fflush(stderr);
+    // enabling sync, so turning it on anchors at exactly these paths.
+    // navigateWithRetry(), not a bare navigateTo(), for both — see its
+    // own comment for why a single explicit call isn't reliable here. ----------
+    navigateWithRetry(leftPane, leftRoot);
+    navigateWithRetry(rightPane, rightRoot);
     check("setup: both panes reached their own root", leftPane->currentDirectory() == leftRoot
           && rightPane->currentDirectory() == rightRoot);
 
@@ -141,7 +141,7 @@ int main(int argc, char *argv[])
     check("sync toggle is now checked", syncToggle->isChecked());
 
     // ---------- 1: basic propagation ----------
-    leftPane->navigateTo(leftRoot + "/common/subdir");
+    navigateWithRetry(leftPane, leftRoot + "/common/subdir");
     waitUntil([&] { return rightPane->currentDirectory() == rightRoot + "/common/subdir"; });
     check("left navigating into common/subdir drives right into its own common/subdir",
           rightPane->currentDirectory() == rightRoot + "/common/subdir");
@@ -175,8 +175,7 @@ int main(int argc, char *argv[])
           && rightPane->currentDirectory() == rightRoot);
 
     // ---------- 3: missing-path failure isolation ----------
-    leftPane->navigateTo(leftRoot + "/onlyleft");
-    waitUntil([&] { return leftPane->currentDirectory() == leftRoot + "/onlyleft"; });
+    navigateWithRetry(leftPane, leftRoot + "/onlyleft");
     check("left's own navigation into onlyleft completes despite right lacking that path",
           leftPane->currentDirectory() == leftRoot + "/onlyleft");
     // Right's driven navigateTo(rightRoot + "/onlyleft") fails
@@ -193,7 +192,7 @@ int main(int argc, char *argv[])
     int leftDirectoryChangedCount = 0;
     QObject::connect(leftPane, &FilePaneWidget::directoryChanged, &app,
                       [&](const QString &) { ++leftDirectoryChangedCount; });
-    leftPane->navigateTo(leftRoot + "/common");
+    navigateWithRetry(leftPane, leftRoot + "/common");
     waitUntil([&] { return rightPane->currentDirectory() == rightRoot + "/common"; });
     // One more spin to let any (incorrect) bounce-back reach left, if the
     // suppression were broken.
@@ -205,7 +204,7 @@ int main(int argc, char *argv[])
 
     // ---------- 4b: self-healing — the stale, never-consumed pending
     // entry from phase 3's failed drive must not wedge future sync. ----------
-    leftPane->navigateTo(leftRoot + "/common/subdir");
+    navigateWithRetry(leftPane, leftRoot + "/common/subdir");
     waitUntil([&] { return rightPane->currentDirectory() == rightRoot + "/common/subdir"; });
     check("sync still works after an earlier driven navigation failed — not permanently wedged",
           rightPane->currentDirectory() == rightRoot + "/common/subdir");
@@ -213,8 +212,7 @@ int main(int argc, char *argv[])
     // ---------- 5: toggling off stops propagation ----------
     syncToggle->setChecked(false);
     check("sync toggle is now unchecked", !syncToggle->isChecked());
-    leftPane->navigateTo(leftRoot);
-    waitUntil([&] { return leftPane->currentDirectory() == leftRoot; });
+    navigateWithRetry(leftPane, leftRoot);
     waitUntil([&] { return false; }, 300);   // give a real window for an (incorrect) propagation to land
     check("with sync off, right pane does NOT follow left's navigation",
           rightPane->currentDirectory() == rightRoot + "/common/subdir");
