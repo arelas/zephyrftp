@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.6] — Concurrency and synchronized-browsing bug fixes
+
 ### Fixed
 
 - **Synchronized Browsing could drive the other pane into the wrong
@@ -1658,7 +1660,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.5...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.6...HEAD
+[0.7.6]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.6
 [0.7.5]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.5
 [0.7.4]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.4
 [0.7.3]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.3
