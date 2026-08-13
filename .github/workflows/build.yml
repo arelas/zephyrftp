@@ -86,7 +86,7 @@ jobs:
           smoke-test transfer-queue-test site-store-test app-settings-test trust-prompt-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
-          move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test
+          move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test sync-browsing-test
           -- -j$(nproc)
 
       # windeployqt isn't packaged for this cross toolchain at all (and
