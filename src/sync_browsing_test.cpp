@@ -107,6 +107,15 @@ int main(int argc, char *argv[])
     waitUntil([&] { return leftPane->currentDirectory() == leftRoot; });
     rightPane->navigateTo(rightRoot);
     waitUntil([&] { return rightPane->currentDirectory() == rightRoot; });
+    // TEMPORARY diagnostic: print the actual vs. expected strings to
+    // attribute a real CI-only failure (see check()'s own comment).
+    fprintf(stderr, "DIAG left actual=[%s] expected=[%s]\n",
+            qPrintable(leftPane->currentDirectory()), qPrintable(leftRoot));
+    fprintf(stderr, "DIAG right actual=[%s] expected=[%s]\n",
+            qPrintable(rightPane->currentDirectory()), qPrintable(rightRoot));
+    fprintf(stderr, "DIAG leftRoot exists=%d rightRoot exists=%d\n",
+            QDir(leftRoot).exists(), QDir(rightRoot).exists());
+    fflush(stderr);
     check("setup: both panes reached their own root", leftPane->currentDirectory() == leftRoot
           && rightPane->currentDirectory() == rightRoot);
 
