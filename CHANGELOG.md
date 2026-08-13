@@ -25,6 +25,16 @@ in the README), so anything may still change between 0.x releases.
   conflict response could append a new item to the queue while that
   dialog was still open, reallocating the queue's backing storage out
   from under the held reference.
+- **Resuming a paused server-to-server transfer could silently stall**
+  if it had been paused mid-upload and something else was using the
+  source server's connection — the resume wrongly waited for that
+  unrelated connection to free up, even though the resume itself no
+  longer needed it.
+- **A rare double-dispatch risk on the same server connection** if a
+  pane's connection changed while a transfer to it was still waiting
+  on a destination-conflict check — could let two transfers run against
+  the same connection at once, confirmed via a dedicated test as a
+  genuine race, not just a theoretical one.
 
 ## [0.7.5] — Windows build is back
 

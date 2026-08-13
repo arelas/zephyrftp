@@ -52,6 +52,20 @@ public:
     void requestCancel() override { m_cancelRequested = true; }
     void requestPause() override { }   // not exercised by this test
 
+    // Test hook for scenario 3's reconnect-during-conflict-check
+    // regression below — when true, checkExists() stashes the request
+    // instead of answering immediately, giving the test a real window to
+    // swap a pane's backend out from under an already-claimed item before
+    // its conflict check ever resolves, the same async gap a real
+    // Disconnect+Connect during a real network round trip could land in.
+    bool holdCheckExists = false;
+    void releaseHeldCheckExists() {
+        if (m_pendingCheckExistsRequestId >= 0)
+            emit existsChecked(m_pendingCheckExistsPath, false, false, m_pendingCheckExistsRequestId);
+        m_pendingCheckExistsRequestId = -1;
+    }
+    bool hasPendingCheckExists() const { return m_pendingCheckExistsRequestId >= 0; }
+
 public slots:
     void connectToHost() override { emit connected(); }
     void listDirectory(const QString &path) override { emit directoryListed(path, {}); }
@@ -75,10 +89,16 @@ public slots:
     void createFile(const QString &) override {}
     void setPermissions(const QString &, int) override {}
     void listDirectoryForEnumeration(const QString &, int) override {}
-    // Must actually respond — startNext() always issues a checkExists()
+    // Must actually respond (unless deliberately held — see
+    // holdCheckExists above) — startNext() always issues a checkExists()
     // call before dispatching a transfer and waits for existsChecked()
     // before proceeding; a no-op stub would hang every scenario below.
     void checkExists(const QString &path, int requestId) override {
+        if (holdCheckExists) {
+            m_pendingCheckExistsPath = path;
+            m_pendingCheckExistsRequestId = requestId;
+            return;
+        }
         emit existsChecked(path, false, false, requestId);
     }
 
@@ -111,6 +131,8 @@ private:
     qint64 m_done = 0;
     qint64 m_total = 0;
     bool m_cancelRequested = false;
+    QString m_pendingCheckExistsPath;
+    int m_pendingCheckExistsRequestId = -1;
 };
 
 }
@@ -213,8 +235,91 @@ int main(int argc, char *argv[])
         if (item.id == otherItemId) { otherItemStatus = item.status; otherItemBytesDone = item.bytesDone; }
     });
 
+    // Scenario 3 setup — a real code-review-found bug: ActiveTransfer::
+    // claimedBackends (captured at claim time in startNext(), from
+    // item.sourcePane->backend()/item.destPane->backend()) could desync
+    // from currentExecutor (captured separately, later, in
+    // dispatchActiveItem() via a FRESH re-fetch of the same calls) if a
+    // pane's backend is swapped (Disconnect/Connect) during the async gap
+    // between them. swappableFake1's holdCheckExists lets this test land
+    // deliberately inside that exact gap, the same one a real network
+    // round trip's own latency could land in.
+    auto *swappableFake1 = new FakeAsyncBackend();
+    auto *swappableFake2 = new FakeAsyncBackend();
+    auto *swappablePane = new FilePaneWidget(swappableFake1);
+    auto *localE = new FilePaneWidget(new LocalBackend());
+    auto *localF = new FilePaneWidget(new LocalBackend());
+    QDir().mkpath("/tmp/transfer_concurrency_test/e");
+    QDir().mkpath("/tmp/transfer_concurrency_test/f");
+    localE->navigateTo("/tmp/transfer_concurrency_test/e");
+    localF->navigateTo("/tmp/transfer_concurrency_test/f");
+    auto *manager3 = new TransferManager(&app);
+
+    int targetItemId = -1, otherSwapItemId = -1;
+    TransferStatus targetItemStatus = TransferStatus::Queued;
+    TransferStatus otherSwapItemStatus = TransferStatus::Queued;
+
+    QObject::connect(manager3, &TransferManager::itemAdded, &app, [&](const TransferItem &item) {
+        if (item.fileName == "target.bin") targetItemId = item.id;
+        if (item.fileName == "other.bin") otherSwapItemId = item.id;
+    });
+    QObject::connect(manager3, &TransferManager::itemUpdated, &app, [&](const TransferItem &item) {
+        if (item.id == targetItemId) targetItemStatus = item.status;
+        if (item.id == otherSwapItemId) otherSwapItemStatus = item.status;
+    });
+
+    // ---------- Scenario 3: a pane's backend swapped mid-conflict-check
+    // must not leave claimedBackends pointing at the old backend ----------
+    auto runScenario3 = [&]() {
+        swappableFake1->holdCheckExists = true;
+        manager3->enqueue(localE, swappablePane, "target.bin");   // claims swappableFake1, checkExists() held
+
+        waitUntil([&]() { return swappableFake1->hasPendingCheckExists(); });
+
+        // Simulates Disconnect+Connect landing exactly inside the async
+        // conflict-check gap — nothing in FilePaneWidget::setBackend()'s
+        // real callers guards against this either.
+        swappablePane->setBackend(swappableFake2, nullptr);
+        swappableFake1->releaseHeldCheckExists();   // resolves against the OLD backend's own held request
+
+        waitUntil([&]() {
+            return targetItemStatus == TransferStatus::InProgress;
+        });
+        check("scenario 3: the item genuinely dispatched against the NEW backend after the swap",
+              targetItemStatus == TransferStatus::InProgress);
+
+        // A second, unrelated item targeting the pane's CURRENT (new)
+        // backend, enqueued while the first is still actively running on
+        // it. Pre-fix, claimedBackends still holds the OLD backend, so
+        // isBackendClaimed(swappableFake2) wrongly reports it free and
+        // this second item dispatches concurrently too — a genuine
+        // double-dispatch on one backend instance, the exact invariant
+        // this whole rewrite exists to enforce. Post-fix, it correctly
+        // stays Queued until the first item is done with swappableFake2.
+        manager3->enqueue(localF, swappablePane, "other.bin");
+
+        waitUntil([&]() {
+            return otherSwapItemStatus == TransferStatus::InProgress || targetItemStatus == TransferStatus::Done;
+        }, 2000);
+        check("scenario 3: the second item was never InProgress AT THE SAME TIME as the first "
+              "on the SAME (new) backend instance — no double-dispatch",
+              !(otherSwapItemStatus == TransferStatus::InProgress && targetItemStatus == TransferStatus::InProgress));
+
+        waitUntil([&]() { return targetItemStatus == TransferStatus::Done; }, 3000);
+        check("scenario 3: the first item still completes normally", targetItemStatus == TransferStatus::Done);
+        waitUntil([&]() {
+            return otherSwapItemStatus == TransferStatus::InProgress || otherSwapItemStatus == TransferStatus::Done;
+        }, 3000);
+        check("scenario 3: the second item started only after the first was done with the new backend "
+              "— not permanently stuck",
+              otherSwapItemStatus == TransferStatus::InProgress || otherSwapItemStatus == TransferStatus::Done);
+
+        qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
+        app.exit(allPass ? 0 : 1);
+    };
+
     // ---------- Scenario 2: cancelling one of two concurrently-active
-    // items affects only that item ----------
+    // items affects only that item, then chains directly into scenario 3 ----------
     auto runScenario2 = [&]() {
         manager2->enqueue(localC, cancelTargetPane, "cancelme.bin");
         manager2->enqueue(localD, otherPane, "keepgoing.bin");
@@ -233,8 +338,7 @@ int main(int argc, char *argv[])
         check("the OTHER concurrently-active item (a different backend) was unaffected "
               "and ran to Done on its own", otherItemStatus == TransferStatus::Done);
 
-        qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
-        app.exit(allPass ? 0 : 1);
+        runScenario3();
     };
 
     // ---------- Scenario 1: cross-backend concurrency + same-backend

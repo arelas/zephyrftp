@@ -21,9 +21,11 @@
 #include <QApplication>
 #include <QTimer>
 #include <QDebug>
+#include <QDir>
 #include <QFile>
 #include <QByteArray>
 #include "ui/FilePaneWidget.h"
+#include "backends/LocalBackend.h"
 #include "backends/RemoteBackend.h"
 #include "transfer/TransferManager.h"
 
@@ -219,6 +221,16 @@ int main(int argc, char *argv[])
     auto *destPane = new FilePaneWidget(destFake);
     auto *manager = new TransferManager(&app);
 
+    // Scenario F's own blocker item needs a local source pane distinct
+    // from sourcePane/destPane — its whole point is to claim sourceFake
+    // as an UNRELATED item's executor, which needs a real (if empty)
+    // local directory to navigate to, even though the fake executor never
+    // actually reads the local path it's given.
+    QDir("/tmp/remote_to_remote_test_f").removeRecursively();
+    QDir().mkpath("/tmp/remote_to_remote_test_f");
+    auto *blockerLocalPane = new FilePaneWidget(new LocalBackend());
+    blockerLocalPane->navigateTo("/tmp/remote_to_remote_test_f");
+
     bool allPass = true;
     auto check = [&](const QString &label, bool condition) {
         qDebug() << (condition ? "[PASS]" : "[FAIL]") << label;
@@ -243,6 +255,7 @@ int main(int argc, char *argv[])
         D_WaitUploadStarted, D_WaitFailed, D_WaitRetryDownloadStarted, D_WaitDone,
         E_WaitDownloadStarted, E_WaitPausedPhase1, E_WaitResumedPhase1,
         E_WaitUploadStarted, E_WaitPausedPhase2, E_WaitResumedPhase2, E_WaitDone,
+        F_WaitUploadStarted, F_WaitPaused, F_WaitBlockerStarted, F_WaitResumedDespiteBlocker,
         AllDone
     };
     Stage stage = Stage::A_WaitDownloadStarted;
@@ -253,6 +266,16 @@ int main(int argc, char *argv[])
     qint64 pausedBytesDoneE1 = -1;   // scenario E's paused offset, phase 1
     qint64 pausedBytesDoneE2 = -1;   // scenario E's paused offset, phase 2
     QString pausedTempPathE;        // scenario E's temp path, captured at the phase-1 pause
+
+    // Scenario F's own tracking — needs to watch TWO items at once (the
+    // paused RemoteToRemote item AND the unrelated blocker on the same
+    // source backend), unlike every earlier scenario's single
+    // currentItemId. Handled by a separate connection below, not by
+    // reusing the main one above, so scenarios A-E stay untouched.
+    int f1ItemId = -1, f2ItemId = -1;
+    TransferStatus f1Status = TransferStatus::Queued;
+    TransferStatus f2Status = TransferStatus::Queued;
+    qint64 f1BytesDoneAtPause = -1;
 
     QObject::connect(manager, &TransferManager::itemAdded, &app, [&](const TransferItem &item) {
         currentItemId = item.id;
@@ -483,13 +506,100 @@ int main(int argc, char *argv[])
             if (item.status == TransferStatus::Done) {
                 check("scenario E: after pausing/resuming BOTH phases, the item still completes normally end to end",
                       item.status == TransferStatus::Done);
+                stage = Stage::F_WaitUploadStarted;
+                manager->enqueue(sourcePane, destPane, "fakefile.bin");
+            }
+            break;
+
+        // ---------- Scenario F: a real bug found by a later code review —
+        // resumeItem() never resets phase for RemoteToRemote (unlike
+        // retryItem(), which does), so a resume from mid-phase-2
+        // (Uploading) reached requiredBackendsForDispatch() with
+        // phase == Uploading, which unconditionally demanded BOTH source
+        // and destination backends regardless of phase — wrongly
+        // re-claiming the source backend an Uploading-phase resume no
+        // longer needs at all (dispatchActiveItem()'s own Uploading
+        // branch never touches it). Reproduced here directly: pause mid-
+        // phase-2, let a completely UNRELATED item claim sourceFake, then
+        // confirm resuming the paused item is NOT blocked by that
+        // unrelated item still running — the rest of this scenario is
+        // handled by the dedicated connection below, since it needs to
+        // track TWO items at once (this one and the blocker), unlike
+        // every case above. ----------
+        case Stage::F_WaitUploadStarted:
+            if (realProgressTick && item.phase == TransferPhase::Uploading) {
+                stage = Stage::F_WaitPaused;
+                manager->pauseItem(currentItemId);
+            }
+            break;
+        case Stage::F_WaitPaused:
+            if (item.status == TransferStatus::Paused) {
+                check("scenario F: paused while in phase 2 (Uploading)", item.phase == TransferPhase::Uploading);
+                f1ItemId = currentItemId;
+                f1BytesDoneAtPause = item.bytesDone;
+                stage = Stage::F_WaitBlockerStarted;
+                // An UNRELATED item, deliberately targeting sourceFake as
+                // ITS OWN executor (LocalToRemote: destPane == sourcePane,
+                // so dstBackend == sourceFake) — sourceFake is otherwise
+                // completely idle right now (phase 1 for the paused item
+                // above finished long ago), so this claims it freely.
+                manager->enqueue(blockerLocalPane, sourcePane, "blocker.bin");
+            }
+            break;
+        case Stage::F_WaitBlockerStarted:
+        case Stage::F_WaitResumedDespiteBlocker:
+            break;   // handled entirely by the dedicated connection below, not this one
+        case Stage::AllDone:
+            break;
+        }
+    });
+
+    // Scenario F's dedicated tracking — needs BOTH f1 (the paused item)
+    // and f2 (the unrelated blocker) at once, once f2 exists; reusing the
+    // main handler's single currentItemId gate above would silently drop
+    // every further update for f1 the instant f2 is enqueued (itemAdded
+    // unconditionally reassigns currentItemId to whichever item was added
+    // most recently). A separate connection, filtering by f1ItemId/
+    // f2ItemId explicitly, sidesteps that entirely without touching
+    // scenarios A-E's own working logic above.
+    QObject::connect(manager, &TransferManager::itemAdded, &app, [&](const TransferItem &item) {
+        if (item.fileName == "blocker.bin")
+            f2ItemId = item.id;
+    });
+    QObject::connect(manager, &TransferManager::itemUpdated, &app, [&](const TransferItem &item) {
+        if (item.id == f2ItemId) {
+            f2Status = item.status;
+            if (stage == Stage::F_WaitBlockerStarted
+                && f2Status == TransferStatus::InProgress && item.bytesDone > 0) {
+                check("scenario F: the unrelated blocker item genuinely claimed sourceFake",
+                      sourceFake->lastUploadLocalPath.endsWith("blocker.bin"));
+                stage = Stage::F_WaitResumedDespiteBlocker;
+                manager->resumeItem(f1ItemId);
+            }
+        }
+        if (item.id == f1ItemId) {
+            f1Status = item.status;
+            if (stage == Stage::F_WaitResumedDespiteBlocker
+                && f1Status == TransferStatus::InProgress && item.bytesDone > 0) {
+                // The real assertion: the blocker must still be genuinely
+                // running (not yet Done) at the exact moment the resumed
+                // item reaches InProgress — reaching InProgress at all is
+                // trivially true either way (the buggy pre-fix behavior
+                // isn't "never resumes", it's "resumes only once the
+                // unrelated blocker happens to finish and free sourceFake
+                // first"), so f2 still being mid-flight right here is what
+                // actually distinguishes "resume proceeded independently"
+                // from "resume silently waited its turn behind an item it
+                // never needed to".
+                check("scenario F: resuming a phase-2-paused item is NOT blocked waiting for an "
+                      "unrelated item still actively running on the source backend it no longer needs",
+                      f2Status == TransferStatus::InProgress);
+                check("scenario F: resume continues phase 2 from the paused offset, not from zero",
+                      item.bytesDone >= f1BytesDoneAtPause);
                 stage = Stage::AllDone;
                 qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
                 app.exit(allPass ? 0 : 1);
             }
-            break;
-        case Stage::AllDone:
-            break;
         }
     });
 

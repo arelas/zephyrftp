@@ -2380,6 +2380,76 @@ to drive FileZilla itself for a same-desktop comparison.
   `Paused` `RemoteToRemote` item too now, matching the existing
   `InProgress` treatment — "Paused - Downloading (1/2)"/"Paused -
   Uploading (2/2)", not just "Paused" with no indication of which half.
+  **Two more real bugs found by a later code review of the concurrency
+  rewrite, both in the same neighborhood as `capturedDestBackend`'s fix
+  above — a stale backend snapshot outliving the moment it's actually
+  correct — fixed together, each with its own regression test:**
+  1. **A resumed `Paused` item at phase `Uploading` wrongly re-claimed
+     the source backend it no longer needed.** `requiredBackendsForDispatch()`
+     (used by `startNext()`'s pre-dispatch busy-check, added by this
+     rewrite) claimed BOTH backends for every `RemoteToRemote` item
+     unconditionally — correct for a fresh dispatch (`phase ==
+     Downloading`, matching its own doc comment's stated invariant), but
+     `resumeItem()` routes back through `startNext()` too, and
+     deliberately does NOT reset `phase` (a resume continues from
+     wherever it was paused, unlike `retryItem()`'s full restart) — so a
+     `RemoteToRemote` item paused mid-`Uploading` reached this helper
+     with `phase == Uploading`, silently violating its own "phase is
+     never Uploading here" comment. `dispatchActiveItem()`'s own
+     Uploading branch never touches the source backend at all (only
+     `capturedDestBackend`), so demanding it as a dispatch precondition
+     could make an otherwise-ready resume silently stay `Queued`
+     indefinitely if some unrelated item happened to be using the source
+     backend for anything at all, even something with zero real relation
+     to this item anymore. Fixed by making the helper phase-aware: claim
+     both only at `phase == Downloading`, claim only
+     `capturedDestBackend` at `phase == Uploading`.
+  2. **`ActiveTransfer::claimedBackends` — captured once, at claim time
+     in `startNext()`, from `item.sourcePane->backend()`/
+     `item.destPane->backend()` — could desync from `currentExecutor`,
+     captured separately (and later) in `dispatchActiveItem()` via a
+     FRESH re-fetch of the same two calls.** The two reads are separated
+     by `startNext()`'s own async `checkExists()` round trip; if either
+     pane's backend is swapped (Disconnect/Connect — nothing guards
+     against this mid-conflict-check, `FilePaneWidget::setBackend()`'s
+     callers only check `stillConnecting()`, unrelated) during that
+     window, `claimedBackends` keeps pointing at the OLD backend while
+     `currentExecutor` correctly points at the new one —
+     `isBackendClaimed()` (checks `claimedBackends`) then wrongly reports
+     the new backend as free, letting a second, unrelated item dispatch
+     to it concurrently: two `uploadFile()`/`downloadFile()` calls racing
+     on the same libssh2 session or FTP control connection, exactly the
+     invariant this whole rewrite exists to enforce. Fixed by refreshing
+     `claimedBackends` inside `dispatchActiveItem()` itself, right where
+     `currentExecutor` is set, from the same fresh backend pointers —
+     never left holding a stale claim-time snapshot past the point
+     reality is actually known. As a direct consequence, this also fully
+     closes bug #1 above at the model level, not just at the dispatch
+     gate: once a `RemoteToRemote` item's phase-2 dispatch actually runs
+     (resumed or not), `claimedBackends` correctly drops down to just
+     `capturedDestBackend` — the source backend is genuinely free for
+     other items from that exact point on, not just exempted from a
+     resume's own claim check.
+  Both confirmed via dedicated regression scenarios, not just reasoned
+  about — neither was a "trust the fix by inspection" case:
+  `remote-to-remote-test`'s new scenario F pauses an item mid-`Uploading`,
+  lets a completely unrelated item claim the source backend, then
+  resumes — before the fix, the resumed item only reaches `InProgress`
+  once the unrelated blocker item has already finished (the blocker is
+  `Done`, not `InProgress`, at the moment of resume); confirmed via a
+  before/after `git stash` control. Bug #2's window (a live pane reconnect
+  racing a specific in-flight `checkExists()` response) needed a new test
+  hook to land deterministically rather than racing real timing —
+  `transfer-concurrency-test`'s `FakeAsyncBackend` gained `holdCheckExists`/
+  `releaseHeldCheckExists()`, letting its new scenario 3 stash a
+  `checkExists()` request, swap the pane's backend out from under the
+  already-claimed item, then release the OLD backend's held response and
+  confirm dispatch correctly lands on the NEW one. A second, unrelated
+  item is then enqueued against that same new backend while the first is
+  still running on it — pre-fix, both are observed `InProgress` on the
+  identical backend instance AT THE SAME TIME (a genuine double-dispatch,
+  confirmed via the same before/after `git stash` control); post-fix, the
+  second correctly stays `Queued` until the first is done with it.
   **Known, accepted gap, not attempted here:** the destination conflict
   check (`checkExists()`) only ever runs once, before phase 1 begins —
   phase 2's upload is never re-checked. A file created at the destination

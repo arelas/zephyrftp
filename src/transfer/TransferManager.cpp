@@ -673,6 +673,29 @@ void TransferManager::dispatchActiveItem(int itemIndex)
     }
 
     active.currentExecutor = executor;
+    // Refreshed here, not left as whatever startNext() captured into
+    // claimedBackends back at claim time — srcBackend/dstBackend above
+    // are re-fetched fresh from the panes on every call, and if either
+    // pane's backend was swapped (Disconnect/Connect) during the async
+    // checkExists() gap between this item being claimed and this actual
+    // dispatch, the claim-time snapshot is stale: isBackendClaimed()
+    // would keep reporting the OLD (possibly already-destroyed) backend
+    // busy while this item actually runs against a different one,
+    // letting some other item wrongly dispatch to that new backend too.
+    // A RemoteToRemote item at phase == Downloading still holds BOTH
+    // (matching requiredBackendsForDispatch()'s own reasoning — the
+    // destination needs to stay claimed through the upcoming phase
+    // transition); every other case, including a RemoteToRemote item
+    // already at phase == Uploading, only needs the resolved executor
+    // itself from this point on — the source backend's part in this
+    // item is already done.
+    active.claimedBackends.clear();
+    active.claimedBackends.append(executor);
+    if (item.direction == TransferDirection::RemoteToRemote
+        && item.phase == TransferPhase::Downloading
+        && dstBackend && dstBackend != executor) {
+        active.claimedBackends.append(dstBackend);
+    }
     ensureTransferSignalsConnected(executor);
     // item.bytesDone doubles as the resume offset — 0 for a fresh
     // item, nonzero when re-starting a previously Paused one (see
@@ -918,16 +941,36 @@ QVarLengthArray<RemoteBackend *, 2> TransferManager::requiredBackendsForDispatch
             result.append(srcBackend);
         break;
     case TransferDirection::RemoteToRemote:
-        // Both backends claimed up front, for the item's whole two-phase
-        // lifetime — see ActiveTransfer::claimedBackends' own doc comment
-        // for why. A freshly-Queued (or retried) RemoteToRemote item is
-        // always phase == Downloading; the phase-2 re-dispatch from
+        // A freshly-Queued (or retried) RemoteToRemote item is always
+        // phase == Downloading here, and the phase-2 re-dispatch from
         // onBackendFinished() doesn't go through startNext()/this helper
-        // at all, so phase is never Uploading here.
-        if (srcBackend)
-            result.append(srcBackend);
-        if (dstBackend && dstBackend != srcBackend)
-            result.append(dstBackend);
+        // at all — but resumeItem() DOES route back through startNext(),
+        // and deliberately does NOT reset phase (a resume continues from
+        // wherever it was paused, unlike retryItem()'s full restart), so
+        // a RemoteToRemote item paused mid-Uploading reaches here with
+        // phase == Uploading. Claiming BOTH backends in that case would
+        // be wrong: phase 1 (and the source backend's part in this item)
+        // is already done, only capturedDestBackend matters for the rest
+        // of this item's life — dispatchActiveItem()'s own Uploading
+        // branch never touches srcBackend either. Claiming an
+        // unnecessary source backend here can make an otherwise-ready
+        // resume silently stay Queued if some unrelated item happens to
+        // be using that backend for something that no longer overlaps
+        // with this one at all.
+        if (item.phase == TransferPhase::Downloading) {
+            // Both claimed up front, for the rest of THIS phase — see
+            // ActiveTransfer::claimedBackends' own doc comment: without
+            // holding the destination too, a different item could grab
+            // it in the gap between this phase finishing and phase 2's
+            // own dispatch.
+            if (srcBackend)
+                result.append(srcBackend);
+            if (dstBackend && dstBackend != srcBackend)
+                result.append(dstBackend);
+        } else {   // Uploading — reached only via a resume, per above
+            if (item.capturedDestBackend)
+                result.append(item.capturedDestBackend);
+        }
         break;
     case TransferDirection::Move:
     case TransferDirection::Unsupported:
