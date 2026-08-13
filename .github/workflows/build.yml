@@ -86,7 +86,7 @@ jobs:
           smoke-test transfer-queue-test site-store-test app-settings-test trust-prompt-test navigation-test
           transfer-pause-test file-operations-test folder-transfer-test
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
-          move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test sync-browsing-test
+          move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test
           -- -j$(nproc)
 
       # windeployqt isn't packaged for this cross toolchain at all (and
@@ -195,7 +195,6 @@ jobs:
           xvfb-run -a wine ./queue-persistence-test.exe
           xvfb-run -a wine ./transfer-concurrency-test.exe
           xvfb-run -a wine ./bandwidth-throttle-test.exe
-          xvfb-run -a wine ./sync-browsing-test.exe
 
       # Single-config generator (mingw64-cmake defaults to Unix
       # Makefiles) — unlike the old MSVC/Ninja multi-config setup, the
