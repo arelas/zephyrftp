@@ -224,6 +224,21 @@ its own console I/O has already shown it isn't perfectly Windows-faithful
 source of truth the way ARCHITECTURE.md already does for the rest of
 this project's Windows-specific claims.
 
+**Running the whole suite (not just one test) under wine: reset the
+wineserver between invocations.** CI's own `build.yml` wraps every
+`xvfb-run -a wine ./<target>.exe` call with `wineserver -k -w`
+immediately after — found the hard way (2026-08) after `build-windows`
+failed for days with Xvfb dying partway through the ~20-test sequence,
+zero test output, never reproducing locally. Root cause: every
+invocation against the same `WINEPREFIX` shares one long-lived
+background `wineserver` daemon, and state/resources accumulated in it
+across enough sequential test runs to eventually crash Xvfb — killing
+and waiting for a fresh wineserver after each test breaks that
+accumulation. If reproducing a multi-test CI failure locally by looping
+over several `.exe`s in a row, do the same (`wineserver -k -w` after
+each one) rather than assuming a single-test repro's environment
+generalizes to the full sequence.
+
 ### A build gotcha worth knowing before it costs you an hour
 
 Any test target that pulls in a `Q_OBJECT` header (`RemoteBackend.h` is
@@ -943,6 +958,29 @@ its very first assertion ("sync toggle starts unchecked") immediately,
 cascading into unrelated-looking failures after it. Same fix
 `site-store-test`/`app-settings-test` already established for the
 identical class of problem.
+
+**A second real bug, found only on real `build-windows` CI (2026-08),
+never locally**: this test's own explicit `navigateTo()` calls could
+occasionally race against a pane's *implicit* initial auto-connect
+navigation (`FilePaneWidget`'s own `connected()` → `navigateTo(QString())`
+wiring) and lose — `navigateTo()` silently drops a request if one is
+already in flight (`FilePaneWidget::navigateTo()`'s own
+`m_navigationInFlight` guard, a real, intentional safety mechanism, not
+a bug), stranding a pane at wine's default home directory instead of
+the intended path. A first fix attempt (an explicit wait for both
+panes' initial navigation to settle before issuing further requests)
+did NOT resolve it — confirmed directly: a real CI run's diagnostics
+showed that settle-wait succeeding while the very next explicit
+`navigateTo()` still failed, meaning the exact overlapping-request
+trigger was never fully pinned down. Fixed pragmatically instead with a
+`navigateWithRetry()` helper (reissues a `navigateTo()` request every
+250ms, up to an overall 5-second budget, until it actually takes
+effect) used in place of every bare `navigateTo()` call this test
+itself drives — sidesteps the race rather than requiring it to be
+fully diagnosed, since `navigateTo()` is safe to call repeatedly. Never
+reproduced in dozens of local runs; wine's higher per-call overhead on
+GitHub's actual runners apparently makes the race far more likely to
+land badly there than on a local, less-constrained machine.
 
 ### `app-settings-test`
 

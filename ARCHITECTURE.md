@@ -3527,6 +3527,30 @@ toolchain — and the test suite runs for real under `wine` (wrapped in
 gotcha below, are in CONTRIBUTING.md's "Cross-compiling for Windows
 locally" section.
 
+**Blocked releases for days (2026-08) with a genuine CI-infrastructure
+bug, not a code regression** — every run of this job's "Run test suite
+under wine" step failed identically: the virtual X server (`Xvfb`, via
+`xvfb-run`) died partway through the ~20-test sequence, zero test
+output produced, never reproducing in an identical local
+podman/`fedora:44`/wine repro across many attempts. Root cause,
+confirmed via a targeted diagnostic (dropping just the LAST test in the
+sequence made the whole step pass): all ~20 sequential `wine`
+invocations in that one step share a single `WINEPREFIX`, hence one
+long-lived background `wineserver` daemon, and resources/state
+accumulated in it across enough invocations to eventually crash Xvfb.
+`LIBGL_ALWAYS_SOFTWARE=1` (tried first, based on a `libEGL`/DRI3
+warning that appeared alongside every failure) genuinely eliminated
+that specific warning but had zero effect on the actual crash — a real,
+confirmed instance of a visible symptom not being the cause, worth
+remembering before chasing the next one. Fixed for real by killing and
+waiting for the wineserver (`wineserver -k -w`) after *every single*
+test invocation in this step, forcing a fully fresh one each time —
+see CONTRIBUTING.md's "Cross-compiling for Windows locally" section for
+the reusable local-reproduction version of this lesson. A second,
+unrelated bug in `sync-browsing-test`'s own setup code surfaced once
+the above was fixed and the test could finally run at all — see
+CONTRIBUTING.md's `sync-browsing-test` entry for that one.
+
 **`build-linux`** is a plain native build on `ubuntu-latest` — same
 dependencies CONTRIBUTING.md documents for local Linux development
 (`cmake build-essential qt6-base-dev qt6-svg-dev libssh2-1-dev
@@ -3555,14 +3579,21 @@ Macs, judged not worth it for now. `CredentialStore`'s third backend
 exists specifically for this job; `verify-credential-store` runs here
 same as every other platform, and is the one target that actually
 proves that backend round-trips against a real, live keychain rather
-than just compiling. Packaging differs from every other job: rather
-than the Linux block's `install()`+CPack-DEB/RPM approach, `CMakeLists.txt`
-has a separate `if(APPLE)` block setting `MACOSX_BUNDLE` properties
-(bundle identifier, `.icns`, version) and `CPACK_GENERATOR
-"DragNDrop"` — `cpack` then produces a real `.dmg` with the `.app`
-alongside an `/Applications` symlink, the drag-to-install convention
-every Mac user expects, not the bare-binary tarball Linux ships as its
-simplest option. The `.icns` itself is generated fresh in this job
+than just compiling. Packaging differs from every other job, and
+differently than it used to: `CMakeLists.txt`'s `if(APPLE)` block
+still sets `MACOSX_BUNDLE` properties (bundle identifier, `.icns`,
+version) and `install(TARGETS zephyrftp BUNDLE DESTINATION .)`, but
+the `.dmg` itself is now built directly in `build.yml` with `hdiutil`
+(a hand-assembled staging directory holding the `.app` plus an
+`/Applications` symlink, the same drag-to-install convention every Mac
+user expects), NOT via CPack's `DragNDrop` generator the way every
+other packaged format in this project still is. Found the hard way
+(2026-08, see the packaging-bug writeup below): `cpack -G DragNDrop`
+re-stages the bundle from that `install()` rule's own build-time
+manifest rather than copying whatever the build tree currently
+contains, silently dropping `Contents/Frameworks` — added to the
+tree *after* that manifest was fixed, by the deploy steps described
+below — every time. The `.icns` itself is generated fresh in this job
 (assembling an `.iconset` from the same committed PNGs
 `tools/generate_app_icon.cpp` produces, then `iconutil -c icns`) —
 `iconutil` only exists on macOS, so unlike every other icon asset in
@@ -3611,21 +3642,56 @@ See CONTRIBUTING.md's own entries on each of the three CI-discovered
 timing fixes for the mechanism-level detail.
 
 **A real, end-user-breaking packaging bug shipped undetected through
-v0.7.0-v0.7.2** — `cpack -G DragNDrop` packaged whatever the raw
-`cmake --build` output was, with no framework-bundling step at all, so
-the `.app`'s Qt/libssh2/openssl load commands still pointed at the CI
-runner's own Homebrew prefix (`/opt/homebrew/...`). This job's own
-"Run test suite" step never caught it because it runs the binary on
-the very machine that prefix already resolves on — the bug was only
-visible to a real end user on a different Mac, who hit an
+v0.7.0-v0.7.2, and took three separate fixes across two releases
+(v0.7.3, v0.7.4) to actually resolve** — `cpack -G DragNDrop` packaged
+whatever the raw `cmake --build` output was, with no framework-bundling
+step at all, so the `.app`'s Qt/libssh2/openssl load commands still
+pointed at the CI runner's own Homebrew prefix (`/opt/homebrew/...`).
+This job's own "Run test suite" step never caught it because it runs
+the binary on the very machine that prefix already resolves on — the
+bug was only visible to a real end user on a different Mac, who hit an
 `EXC_CRASH`/`DYLD ... Library not loaded` on launch. Found via exactly
-that (a user reporting a launch crash on a released `.dmg`), fixed by
-adding `macdeployqt` (Qt's own frameworks/plugins) and `dylibbundler`
-(everything macdeployqt doesn't know about — libssh2, openssl@3, both
-outside the Qt prefix) before packaging, plus an `otool -L` check that
-fails the build if any `/opt/homebrew` reference survives both
-deploy steps — a regression guard for this exact class of bug, since
-nothing else in this pipeline can catch it.
+that (a user reporting a launch crash on a released `.dmg`):
+
+1. **First fix (shipped as v0.7.3, still broken)**: added `macdeployqt`
+   (Qt's own frameworks/plugins) and `dylibbundler` (everything
+   macdeployqt doesn't know about — libssh2, openssl@3, both outside
+   the Qt prefix) before packaging, plus an `otool -L` check confirming
+   the binary's load commands no longer reference `/opt/homebrew`. That
+   check passed — but proved nothing about whether the referenced files
+   actually shipped. They didn't: the SAME user hit the exact same
+   crash on the "fixed" release, with a diagnostic this time showing
+   the load command was correctly `@executable_path/../Frameworks/...`
+   but the file at that path simply didn't exist in the `.dmg`.
+2. **Second fix (still within the v0.7.4 cycle)**: root cause was
+   `cpack -G DragNDrop` itself re-staging the bundle from CMake's own
+   `install()` manifest — see the packaging paragraph above — silently
+   dropping `Contents/Frameworks`. Fixed by dropping CPack for macOS
+   entirely and building the `.dmg` directly with `hdiutil` from the
+   exact tree the deploy steps had just modified in place, plus a
+   SECOND verification step that mounts the actual built `.dmg` and
+   confirms the framework file genuinely exists inside — the `otool -L`
+   check alone had already proven insufficient once.
+3. **That fix's very next CI run still failed** — the NEW mount-and-
+   verify check caught it before it could ship again: `dylibbundler
+   -od` (used for the libssh2/openssl step) doesn't mean "overwrite
+   individual files," it means "erase the entire destination
+   *directory*" — confirmed directly in the job log (`rm -r
+   Contents/Frameworks/` followed by `mkdir -p`) — silently deleting
+   everything `macdeployqt` had just bundled moments earlier in the
+   SAME job. Fixed by switching to `-of` (overwrite files).
+   **v0.7.4, released after this third fix, is the actual working
+   one** — confirmed via both verification checks passing on a real
+   CI run. If recommending a download, v0.7.3 should never be pointed
+   at for macOS specifically.
+
+**Lesson, worth remembering for any future "deploy dependencies into a
+packaged artifact" work on any platform**: verify the actual shipped
+artifact's contents directly (mount/extract it, check for real files)
+— not the intermediate build tree, not a tool's own "success" exit
+code, not even a check on the pre-packaging state. Three genuinely
+different bugs in this exact class each looked fixed at every
+intermediate step while the final artifact was still broken.
 
 **Confirmed working end-to-end on GitHub's own runners**, not just
 locally: the Windows and Linux build jobs pass, the full test suite
