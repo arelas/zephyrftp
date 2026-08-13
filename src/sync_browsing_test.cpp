@@ -27,7 +27,6 @@
 #include <QDir>
 #include <QAction>
 #include <QStandardPaths>
-#include <cstdio>
 #include <functional>
 #include "ui/MainWindow.h"
 #include "ui/FilePaneWidget.h"
@@ -37,12 +36,6 @@ bool allPass = true;
 void check(const QString &label, bool condition)
 {
     qDebug() << (condition ? "[PASS]" : "[FAIL]") << label;
-    // TEMPORARY diagnostic (matches project_ci_containerized_debugging's
-    // established technique): qDebug() output doesn't reliably reach the
-    // terminal under this wine setup, stderr does — needed to attribute a
-    // real CI-only failure to a specific check. Remove once diagnosed.
-    fprintf(stderr, "%s %s\n", condition ? "[PASS]" : "[FAIL]", qPrintable(label));
-    fflush(stderr);
     if (!condition) allPass = false;
 }
 
@@ -101,21 +94,28 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    // Both panes' LocalBackend auto-connects on construction
+    // (FilePaneWidget's own connected()->navigateTo(QString()) wiring), and
+    // that dispatch — like every navigateTo() call — is Qt::QueuedConnection
+    // and gated by navigateTo()'s own m_navigationInFlight guard (a real,
+    // intentional safety mechanism against overlapping requests, not a bug).
+    // A genuine, confirmed race if this initial round trip is still pending
+    // when the explicit navigateTo() calls below fire: whichever one wins
+    // gets silently dropped by that same guard, permanently stranding that
+    // pane at its default (home) directory — reproduced for real on CI,
+    // never locally, since wine's per-call overhead makes the race far more
+    // likely to go the wrong way. Draining it first, before either
+    // explicit navigateTo() call, makes the setup itself deterministic
+    // rather than depending on which side happens to win a timing race.
+    waitUntil([&] { return leftPane->currentDirectory() == QDir::homePath()
+                         && rightPane->currentDirectory() == QDir::homePath(); });
+
     // ---------- Setup: get both panes to their respective roots before
     // enabling sync, so turning it on anchors at exactly these paths. ----------
     leftPane->navigateTo(leftRoot);
     waitUntil([&] { return leftPane->currentDirectory() == leftRoot; });
     rightPane->navigateTo(rightRoot);
     waitUntil([&] { return rightPane->currentDirectory() == rightRoot; });
-    // TEMPORARY diagnostic: print the actual vs. expected strings to
-    // attribute a real CI-only failure (see check()'s own comment).
-    fprintf(stderr, "DIAG left actual=[%s] expected=[%s]\n",
-            qPrintable(leftPane->currentDirectory()), qPrintable(leftRoot));
-    fprintf(stderr, "DIAG right actual=[%s] expected=[%s]\n",
-            qPrintable(rightPane->currentDirectory()), qPrintable(rightRoot));
-    fprintf(stderr, "DIAG leftRoot exists=%d rightRoot exists=%d\n",
-            QDir(leftRoot).exists(), QDir(rightRoot).exists());
-    fflush(stderr);
     check("setup: both panes reached their own root", leftPane->currentDirectory() == leftRoot
           && rightPane->currentDirectory() == rightRoot);
 
