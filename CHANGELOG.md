@@ -37,6 +37,12 @@ in the README), so anything may still change between 0.x releases.
   on a destination-conflict check — could let two transfers run against
   the same connection at once, confirmed via a dedicated test as a
   genuine race, not just a theoretical one.
+- **Merging into an existing folder ("Write Into") always showed a
+  confusing "Create folder failed... Something with that name already
+  exists" error dialog**, even though the merge itself completed
+  successfully. The folder's own root was always re-created as part of
+  the merge, which was always guaranteed to fail since Write Into only
+  ever applies to a folder that's already there.
 
 ## [0.7.5] — Windows build is back
 

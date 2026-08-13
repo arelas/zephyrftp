@@ -403,7 +403,7 @@ void TransferManager::dispatchMoveEntry(FilePaneWidget *sourcePane, FilePaneWidg
 }
 
 void TransferManager::startFolderEnumeration(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
-                                              const QString &folderName)
+                                              const QString &folderName, bool rootAlreadyExists)
 {
     RemoteBackend *srcBackend = sourcePane->backend();
     const QString rootPath = joinPath(sourcePane->currentDirectory(), folderName);
@@ -412,9 +412,9 @@ void TransferManager::startFolderEnumeration(FilePaneWidget *sourcePane, FilePan
     emit folderTransferStarted(folderName);
 
     connect(enumerator, &FolderEnumerator::finished, this,
-            [this, enumerator, sourcePane, destPane, folderName](const QList<EnumeratedItem> &items) {
+            [this, enumerator, sourcePane, destPane, folderName, rootAlreadyExists](const QList<EnumeratedItem> &items) {
         enumerator->deleteLater();
-        startFolderFileTransfers(sourcePane, destPane, folderName, items);
+        startFolderFileTransfers(sourcePane, destPane, folderName, items, rootAlreadyExists);
     });
     connect(enumerator, &FolderEnumerator::failed, this,
             [this, enumerator, folderName](const QString &reason) {
@@ -426,21 +426,35 @@ void TransferManager::startFolderEnumeration(FilePaneWidget *sourcePane, FilePan
 }
 
 void TransferManager::startFolderFileTransfers(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
-                                                const QString &folderName, const QList<EnumeratedItem> &items)
+                                                const QString &folderName, const QList<EnumeratedItem> &items,
+                                                bool rootAlreadyExists)
 {
     RemoteBackend *dstBackend = destPane->backend();
 
     // Create every directory first, in FolderEnumerator's guaranteed
     // parent-before-child order. Not waited on individually — see this
     // method's doc comment in the header for why the queued-connection
-    // FIFO ordering alone is sufficient here. "Already exists" (e.g. the
-    // destination happens to already have some of this structure —
-    // expected now that Write Into is an explicit, deliberate choice) is
-    // not treated as an error for this bulk path — createDirectory()'s
-    // fileOperationFailed signal for that case simply isn't listened to
-    // here at all, unlike the single right-click "New Folder" action.
+    // FIFO ordering alone is sufficient here. "Already exists" for any
+    // OTHER directory (e.g. the destination happens to already have some
+    // of this structure — expected now that Write Into is an explicit,
+    // deliberate choice) is not treated as an error for this bulk path —
+    // createDirectory()'s fileOperationFailed signal for that case simply
+    // isn't listened to HERE at all, unlike the single right-click "New
+    // Folder" action. The root item (FolderEnumerator's own first result,
+    // relativePath == folderName) is skipped entirely when the caller
+    // already confirmed it exists (rootAlreadyExists) — unlike a nested
+    // subdirectory's "already exists", which is silently fine because
+    // nothing else is watching for it, the root's own creation call would
+    // ALWAYS fail in that case, and FilePaneWidget's own unconditional
+    // fileOperationFailed handling (shared with the single "New Folder"
+    // UI action, which very much does want to see real failures) would
+    // pop a real, confusing "Create folder failed" dialog for something
+    // that isn't actually an error — a real bug found and fixed while
+    // stabilizing this exact scenario's own test coverage.
     for (const EnumeratedItem &item : items) {
         if (!item.isDir)
+            continue;
+        if (rootAlreadyExists && item.relativePath == folderName)
             continue;
         const QString destDirPath = joinPath(destPane->currentDirectory(), item.relativePath);
         QMetaObject::invokeMethod(dstBackend, "createDirectory", Qt::QueuedConnection,
@@ -1070,7 +1084,7 @@ void TransferManager::onDestinationExistsChecked(const QString &path, bool exist
         const QString folderName = pending.folderName;
 
         if (!exists) {
-            startFolderEnumeration(sourcePane, destPane, folderName);
+            startFolderEnumeration(sourcePane, destPane, folderName, /*rootAlreadyExists=*/false);
             return;
         }
 
@@ -1089,7 +1103,7 @@ void TransferManager::onDestinationExistsChecked(const QString &path, bool exist
         }
 
         if (proceed)
-            startFolderEnumeration(sourcePane, destPane, folderName);
+            startFolderEnumeration(sourcePane, destPane, folderName, /*rootAlreadyExists=*/true);
         else
             emit folderTransferSkipped(folderName);
         return;

@@ -20,30 +20,11 @@
 #include <QMessageBox>
 #include <QCheckBox>
 #include <QAbstractButton>
-#include <QEventLoop>
-#include <functional>
 #include "ui/FilePaneWidget.h"
 #include "backends/LocalBackend.h"
 #include "transfer/TransferManager.h"
 
 namespace {
-
-// Same polling-with-timeout technique established elsewhere in this
-// project's tests (transfer_pause_test.cpp, sync_browsing_test.cpp) —
-// avoids trusting a fixed wall-clock delay to have been enough. Safe to
-// use for waiting on the dialog's own existence (unlike waiting on a
-// SIGNAL the dialog's dismissal would trigger — see Phase E's own
-// comment on why that's a different, structurally unsafe case).
-void waitUntil(const std::function<bool()> &condition, int timeoutMs = 5000)
-{
-    QEventLoop loop;
-    QTimer timeoutTimer;
-    timeoutTimer.setSingleShot(true);
-    QObject::connect(&timeoutTimer, &QTimer::timeout, &loop, &QEventLoop::quit);
-    timeoutTimer.start(timeoutMs);
-    while (!condition() && timeoutTimer.isActive())
-        loop.processEvents(QEventLoop::AllEvents, 20);
-}
 bool writeFile(const QString &path, const QString &content)
 {
     QFile f(path);
@@ -263,35 +244,36 @@ int main(int argc, char *argv[])
     // here more directly (not via a second Move dialog) by firing many
     // real TransferManager::enqueue() calls — each one a genuine
     // m_items.append(), the same operation the Move branch performs —
-    // from a timer proven to fire WHILE the target item's own conflict
-    // dialog is still open, then confirming that item's own conflict
-    // resolution still lands on the item it was actually about.
+    // while the target item's own conflict dialog is still open, then
+    // confirming that item's own conflict resolution still lands on the
+    // item it was actually about.
+    //
+    // Driven by plain independent QTimer::singleShot() offsets, same
+    // shape as phases A-D above — deliberately NOT a nested
+    // processEvents()-based poll waiting for the dialog to appear. That
+    // was tried first and is fundamentally unsound, not just fragile: the
+    // dialog opens SYNCHRONOUSLY, on the same call stack, as a direct
+    // result of the very processEvents() call that would be doing the
+    // "waiting" — askConflict()'s QMessageBox::exec() is itself a nested
+    // QEventLoop entered from inside that delivery, so the OUTER
+    // processEvents() call cannot return (and the poll's own condition
+    // can never be re-checked) until the dialog is dismissed by
+    // something else. Confirmed directly: an earlier version reliably
+    // stalled until an unrelated 20-second safety-net timer's own
+    // app.exit() forcibly unwound the stuck nested loop, every single
+    // time, not just occasionally. Trusting a fixed delay for the dialog
+    // to open (like every phase above already does successfully) sidesteps
+    // this entirely — the top-level app.exec() loop delivers the
+    // checkExists() response and opens the dialog on its own, between
+    // scheduled timers, well before the next one fires.
     // ===================================================================
-    bool sawReentrancyResolvedCorrectly = false;
-    QObject::connect(manager, &TransferManager::itemUpdated, &app, [&](const TransferItem &item) {
-        if (item.status == TransferStatus::Skipped && item.fileName == "reentrancy.txt"
-            && item.destPath == base + "/dst/reentrancy.txt") {
-            sawReentrancyResolvedCorrectly = true;
-        }
-    });
-
     QTimer::singleShot(5600, &app, [&]() {
         writeFile(base + "/src/reentrancy.txt", "should survive the flood");
         writeFile(base + "/dst/reentrancy.txt", "OLD reentrancy");   // real conflict — opens a dialog
         manager->enqueue(srcPane, dstPane, "reentrancy.txt");
     });
 
-    QTimer::singleShot(5750, &app, [&]() {
-        // Polled, not assumed after a fixed 150ms gap — reentrancy.txt's
-        // checkExists() round trip (QueuedConnection to LocalBackend,
-        // then the dialog's own construction) is fast but not
-        // instantaneous, and a machine under heavier load (e.g. running
-        // right after several other test binaries in one session) can
-        // make a short fixed gap too tight.
-        waitUntil([&] {
-            return qobject_cast<QMessageBox *>(QApplication::activeModalWidget()) != nullptr;
-        }, 5000);
-
+    QTimer::singleShot(6100, &app, [&]() {
         const bool dialogOpen = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()) != nullptr;
         check("Phase E: reentrancy.txt's conflict dialog is open before the flood", dialogOpen);
 
@@ -301,52 +283,39 @@ int main(int argc, char *argv[])
         // every one of these enqueue() calls appends to m_items and then
         // finds that backend busy and stays harmlessly Queued: no
         // dispatch, no filesystem I/O, no dialog of its own, no
-        // cascading async round trips to swamp the test's timeline —
-        // just the bare m_items.append() call itself, genuinely
-        // happening WHILE askConflict() for reentrancy.txt is still on
-        // the call stack. 500 is well past QList's growth increments
-        // from this test's ~9 prior items, so this is guaranteed to
-        // force at least one real reallocation, not just a theoretical
-        // possibility.
-        for (int i = 0; i < 500; ++i)
+        // cascading async round trips — just the bare m_items.append()
+        // call itself, genuinely happening WHILE askConflict() for
+        // reentrancy.txt is still on the call stack. This loop is purely
+        // synchronous (no event-loop pumping happens inside it, so
+        // nothing else can run or change state until it returns) — 80 is
+        // well past QList's growth increments from this test's ~9 prior
+        // items, so this is guaranteed to force at least one real
+        // reallocation, not just a theoretical possibility, while staying
+        // cheap: enqueue() unconditionally calls startNext() internally,
+        // which rescans the WHOLE queue every time, making this loop
+        // O(n²) in the queue's own size.
+        for (int i = 0; i < 80; ++i)
             manager->enqueue(srcPane, dstPane, QString("decoy%1.txt").arg(i));
     });
 
-    QTimer::singleShot(6000, &app, [&]() {
-        // The flood's 500 enqueue() calls each pay for a full O(current
-        // queue length) rescan inside startNext() (`startNext()` walks
-        // the WHOLE queue every call, by design — see TransferManager.cpp's
-        // own comment on why), so the flood's total synchronous cost
-        // grows with its own size; a fixed short gap after it isn't
-        // reliably enough time for the dialog to still be found as the
-        // active modal widget on a loaded machine. Poll for it instead
-        // of assuming — safe here since we're waiting on the dialog's
-        // own EXISTENCE (already open independently since before the
-        // flood even started), not on anything that depends on this
-        // callback itself returning first.
-        waitUntil([&] {
-            return qobject_cast<QMessageBox *>(QApplication::activeModalWidget()) != nullptr;
-        }, 5000);
-
+    QTimer::singleShot(6600, &app, [&]() {
         const bool clicked = clickConflictDialog(/*checkApplyToAll=*/false, "Skip");
         check("Phase E: a dialog was still there to click after the flood", clicked);
-        // Deliberately NOT waited-on synchronously here (e.g. via a
-        // nested event-loop poll called from inside this very callback)
-        // — clicking the button only SCHEDULES the dialog's own
-        // QEventLoop to quit; askConflict()'s exec() call, and
-        // everything after it in onDestinationExistsChecked(), can only
-        // actually resume and run once THIS callback returns and control
-        // unwinds back to it. A poll started here would just spin
-        // pointlessly until its own timeout, since the very code it's
-        // waiting on is blocked further down the call stack, underneath
-        // this callback. A separate, later timer gives the stack room to
-        // unwind first — same shape Phases A/B/D already use between
-        // their own click and check timers — scheduled RELATIVE to this
-        // click (not a fixed absolute time), since the poll just above
-        // can itself eat a variable amount of time on a loaded machine,
-        // and an absolute deadline would silently erode the margin the
-        // final check actually gets.
-        QTimer::singleShot(500, &app, [&]() {
+        // The rest (confirming reentrancy.txt's own resolution) is NOT
+        // waited on here — clicking only SCHEDULES the dialog's own
+        // QEventLoop to quit; askConflict()'s exec() call, and everything
+        // after it in onDestinationExistsChecked(), can only actually
+        // resume once THIS callback returns and control unwinds back to
+        // it. Handled entirely by the itemUpdated connection below
+        // instead, which reacts to the REAL signal once it actually
+        // fires — no further timer or poll needed.
+    });
+
+    bool sawReentrancyResolvedCorrectly = false;
+    QObject::connect(manager, &TransferManager::itemUpdated, &app, [&](const TransferItem &item) {
+        if (item.status == TransferStatus::Skipped && item.fileName == "reentrancy.txt"
+            && item.destPath == base + "/dst/reentrancy.txt") {
+            sawReentrancyResolvedCorrectly = true;
             check("Phase E: reentrancy.txt's own dialog response resolved reentrancy.txt itself — "
                   "correct id/fileName/destPath, not a value corrupted by the append flood",
                   sawReentrancyResolvedCorrectly);
@@ -355,7 +324,20 @@ int main(int argc, char *argv[])
 
             qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
             app.exit(allPass ? 0 : 1);
-        });
+        }
+    });
+
+    // Safety net, not the primary mechanism — same reasoning
+    // remote_to_remote_test.cpp's own equivalent deadline uses: if a real
+    // bug ever breaks the expected sequence, this turns an indefinite
+    // hang into a clear, fast, informative failure instead of tying up a
+    // CI job until its outer timeout.
+    QTimer::singleShot(20000, &app, [&]() {
+        if (sawReentrancyResolvedCorrectly)
+            return;
+        check("test timed out waiting for reentrancy.txt's own resolution", false);
+        qDebug() << "[test] AT LEAST ONE FAILURE";
+        app.exit(1);
     });
 
     return app.exec();

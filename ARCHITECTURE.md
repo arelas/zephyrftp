@@ -2560,6 +2560,32 @@ to drive FileZilla itself for a same-desktop comparison.
   ordering on queued connections is what guarantees the destination
   backend processes them in that exact sequence regardless of how long
   each individual creation takes, so there's nothing to wait on.
+  **A real bug found by a later code review**: `FolderEnumerator`
+  always emits the folder's own root as its first result (needed so a
+  *fresh* transfer creates the root before anything nests under it), so
+  the directory-creation loop above always tried to `createDirectory()`
+  the root too — including on a "Write Into" merge, where the root is
+  by definition already there (that's the whole premise of the
+  conflict just resolved). `TransferManager` itself doesn't listen for
+  that specific failure (deliberately — see the loop's own comment),
+  but `FilePaneWidget`'s `fileOperationFailed` handling is unconditional
+  (shared with the single right-click "New Folder" action, which very
+  much does want to see a real failure) and popped a real, confusing
+  "Create folder failed" error dialog on **every** Write Into merge,
+  for something that was never actually an error. Fixed by threading a
+  `rootAlreadyExists` bool from `onDestinationExistsChecked()`'s two
+  `startFolderEnumeration()` call sites (false for a fresh transfer,
+  true for Write Into) through to `startFolderFileTransfers()`, which
+  now skips the root's own `createDirectory()` call specifically when
+  it's already known to exist — every other directory in the walk is
+  unaffected. Found while stabilizing `conflict-resolution-test`'s own
+  Phase E (a Write Into merge sits earlier in that same file's timeline)
+  — the stray dialog could become the active modal widget at an
+  unpredictable moment (`createDirectory()` is a queued call) and get
+  mistaken for a real conflict dialog by anything watching
+  `QApplication::activeModalWidget()`, a real, if narrow, source of test
+  flakiness in its own right, not just a confusing UX bug for a real
+  user doing a Write Into merge.
   **Conflict resolution** happens in two places, deliberately different
   in scope. Files: `startNext()` calls `checkExists()` on the
   destination right before an item would actually start (no visible

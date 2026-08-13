@@ -290,9 +290,11 @@ private:
     // Actually kicks off FolderEnumerator against the source folder —
     // split out from enqueueFolder() so it can be called either
     // immediately (no destination conflict) or after the person resolves
-    // a "this folder already exists" prompt as Write Into.
+    // a "this folder already exists" prompt as Write Into. rootAlreadyExists
+    // distinguishes those two callers for startFolderFileTransfers() below
+    // — see that method's own comment on why it matters.
     void startFolderEnumeration(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
-                                 const QString &folderName);
+                                 const QString &folderName, bool rootAlreadyExists);
 
     // Second phase of enqueueFolder(), called once FolderEnumerator
     // finishes: creates every directory the walk found (dispatched via
@@ -302,9 +304,19 @@ private:
     // parent-before-child order regardless of how long each individual
     // creation takes; no need to wait for each one's own completion
     // signal before issuing the next), then hands every file to the
-    // ordinary enqueue() above.
+    // ordinary enqueue() above. rootAlreadyExists skips the createDirectory()
+    // call for the folder's own root specifically (the first item
+    // FolderEnumerator always emits) when the caller already knows it's
+    // there (a "Write Into" resolution) — issuing it anyway would always
+    // fail with "already exists", and while TransferManager itself
+    // doesn't listen for that failure, FilePaneWidget's own
+    // fileOperationFailed handling is unconditional and would pop a real,
+    // confusing "Create folder failed" error dialog for something that
+    // isn't actually an error at all. A fresh (non-conflict) folder
+    // transfer still needs this call — nothing else creates the root.
     void startFolderFileTransfers(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
-                                   const QString &folderName, const QList<EnumeratedItem> &items);
+                                   const QString &folderName, const QList<EnumeratedItem> &items,
+                                   bool rootAlreadyExists);
 
     // Second half of startNext()'s old body — actually tells the backend
     // to start uploading/downloading. Split out specifically so the file-
