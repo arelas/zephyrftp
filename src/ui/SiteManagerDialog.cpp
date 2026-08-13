@@ -231,8 +231,10 @@ void SiteManagerDialog::buildUi()
         // itself store anything yet: there's nothing to store until the
         // Connect prompt actually collects a secret.
         if (!checked) {
-            if (SavedSite *site = selectedSite())
+            if (SavedSite *site = selectedSite()) {
                 CredentialStore::remove(site->id);
+                m_hasSecretCache[site->id] = false;
+            }
         }
     });
 
@@ -471,8 +473,21 @@ void SiteManagerDialog::loadSiteIntoForm(const SavedSite &site)
     // Reflects whatever's actually in the OS credential store right
     // now, not a flag persisted in sites.json (there isn't one) — an
     // empty id means "no real site selected, form is a blank scratch
-    // area," which never has a stored secret to reflect.
-    m_savePasswordCheck->setChecked(!site.id.isEmpty() && CredentialStore::hasSecret(site.id));
+    // area," which never has a stored secret to reflect. Cached per site
+    // id for the rest of this dialog's session — see m_hasSecretCache's
+    // own doc comment for why a fresh OS-keychain query on every single
+    // tree click is worth avoiding.
+    bool hasStoredSecret = false;
+    if (!site.id.isEmpty()) {
+        const auto cached = m_hasSecretCache.constFind(site.id);
+        if (cached != m_hasSecretCache.constEnd()) {
+            hasStoredSecret = cached.value();
+        } else {
+            hasStoredSecret = CredentialStore::hasSecret(site.id);
+            m_hasSecretCache.insert(site.id, hasStoredSecret);
+        }
+    }
+    m_savePasswordCheck->setChecked(hasStoredSecret);
 
     // Covers updateAuthFieldsVisibility() too — and unlike calling that
     // alone, it also applies the protocol's own show/hide rules, which
@@ -650,6 +665,7 @@ void SiteManagerDialog::onDeleteSite()
     // unconditionally, same as the "checkbox unchecked" case in
     // onConnectClicked() already does.
     CredentialStore::remove(idToRemove);
+    m_hasSecretCache.remove(idToRemove);   // the id itself is gone; no point keeping a stale entry either way
 
     m_selectedId.clear();
     rebuildTree();
@@ -825,14 +841,17 @@ void SiteManagerDialog::onConnectClicked()
             // the checkbox checked while nothing was actually saved —
             // the user would only discover this on next launch, when
             // hasSecret() correctly (but unexplainedly) unchecks it.
-            if (!CredentialStore::save(site->id, enteredSecret)) {
+            const bool saved = CredentialStore::save(site->id, enteredSecret);
+            if (!saved) {
                 QMessageBox::warning(this, tr("Save Password"),
                     tr("The password could not be saved to your system's "
                        "credential store. You'll be asked for it again "
                        "next time you connect."));
             }
+            m_hasSecretCache[site->id] = saved;
         } else {
             CredentialStore::remove(site->id);
+            m_hasSecretCache[site->id] = false;
         }
     }
 

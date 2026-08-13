@@ -2,6 +2,7 @@
 
 #include <QDialog>
 #include <QList>
+#include <QHash>
 #include "../backends/SavedSite.h"
 
 class QTreeWidget;
@@ -73,6 +74,18 @@ private:
 
     QList<SavedSite> m_sites;
     QString m_selectedId;   // empty if nothing/a folder is selected
+
+    // Per-dialog-session cache for CredentialStore::hasSecret(), keyed by
+    // site id — populated lazily the first time each site is selected,
+    // kept in sync (not just invalidated) at every point this dialog
+    // itself changes a site's stored secret. Without this, every single
+    // tree-item click paid for a synchronous OS-keychain round trip
+    // (libsecret D-Bus call, SecItemCopyMatching, CredReadW) even when
+    // clicking back to a site already visited this session — a real,
+    // avoidable cost found by code review: if the keyring is locked,
+    // each of those can itself pop an OS unlock prompt or simply take a
+    // noticeable amount of time, directly on the UI thread.
+    QHash<QString, bool> m_hasSecretCache;
 
     QTreeWidget *m_tree;
     QPushButton *m_duplicateButton;

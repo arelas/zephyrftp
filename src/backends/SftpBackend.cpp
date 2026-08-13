@@ -10,6 +10,7 @@
 #include <QDir>
 #include <QMetaObject>
 #include <QLockFile>
+#include <functional>
 
 namespace {
 // Shared by listDirectory() and listDirectoryForEnumeration() — factored
@@ -730,6 +731,14 @@ void SftpBackend::downloadFile(const QString &remotePath, const QString &localPa
     // blocking, already-verified code paths, untouched.
     ssize_t n = 0;
     BandwidthThrottle throttle(m_credentials.bandwidthLimitKBps);
+    // Constructed once, here, not fresh on every chunk inside the loop
+    // below — pace() itself is a true no-op when unlimited (the common
+    // case), but building a NEW std::function<bool()> from this lambda
+    // on every single chunk paid a real, avoidable cost regardless, in
+    // the hottest loop in the codebase.
+    const std::function<bool()> shouldStop = [this]() {
+        return m_cancelRequested.loadRelaxed() || m_pauseRequested.loadRelaxed();
+    };
     {
         ScopedNonBlocking nonBlocking(m_session);
         const libssh2_socket_t sock = static_cast<libssh2_socket_t>(m_socket->socketDescriptor());
@@ -788,9 +797,7 @@ void SftpBackend::downloadFile(const QString &remotePath, const QString &localPa
             // pause check above, which is what actually honors a stop
             // requested during the sleep — pace() itself only cuts the
             // sleep short, it doesn't act on shouldStop() itself.
-            throttle.pace(done - effectiveOffset, [this]() {
-                return m_cancelRequested.loadRelaxed() || m_pauseRequested.loadRelaxed();
-            });
+            throttle.pace(done - effectiveOffset, shouldStop);
         }
     }   // ScopedNonBlocking's destructor restores blocking mode here, before sftp_close below
 
@@ -864,6 +871,11 @@ void SftpBackend::uploadFile(const QString &localPath, const QString &remotePath
     // read, unrelated to network readiness. Scoped tightly to just this
     // loop; everything around it stays blocking, already-verified code.
     BandwidthThrottle throttle(m_credentials.bandwidthLimitKBps);
+    // Constructed once, here, not fresh on every chunk inside the loop
+    // below — see downloadFile()'s own identical comment on why.
+    const std::function<bool()> shouldStop = [this]() {
+        return m_cancelRequested.loadRelaxed() || m_pauseRequested.loadRelaxed();
+    };
     {
         ScopedNonBlocking nonBlocking(m_session);
         const libssh2_socket_t sock = static_cast<libssh2_socket_t>(m_socket->socketDescriptor());
@@ -910,9 +922,7 @@ void SftpBackend::uploadFile(const QString &localPath, const QString &remotePath
 
             // Same reasoning as downloadFile()'s identical call — see
             // that comment.
-            throttle.pace(done - effectiveOffset, [this]() {
-                return m_cancelRequested.loadRelaxed() || m_pauseRequested.loadRelaxed();
-            });
+            throttle.pace(done - effectiveOffset, shouldStop);
         }
     }   // ScopedNonBlocking's destructor restores blocking mode here, before sftp_close below
 

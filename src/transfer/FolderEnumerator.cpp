@@ -1,14 +1,8 @@
 #include "FolderEnumerator.h"
 #include "../backends/RemoteBackend.h"
+#include "../PathUtils.h"
 
 #include <QMetaObject>
-
-namespace {
-QString joinPath(const QString &dir, const QString &name)
-{
-    return dir.endsWith('/') ? dir + name : dir + '/' + name;
-}
-}
 
 // See the header's own comment on s_nextRequestId for why this is a
 // static, class-wide counter rather than a per-instance one.

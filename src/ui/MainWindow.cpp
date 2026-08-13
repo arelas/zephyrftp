@@ -18,6 +18,7 @@
 #include "../backends/SftpCredentials.h"
 #include "../backends/QuickConnectParser.h"
 #include "../transfer/TransferManager.h"
+#include "../PathUtils.h"
 
 // Set via target_compile_definitions() in CMakeLists.txt, from this
 // project's project(VERSION ...) declaration — but defended here rather
@@ -669,14 +670,10 @@ void MainWindow::onPaneDirectoryChanged(const QString &path)
     // Handles the anchor itself being filesystem root ("/", already ends
     // in '/', so anchorPrefix == anchor) without double-stripping, and
     // navigating back to the anchor's own path exactly (relative stays
-    // empty) without tacking on a spurious trailing slash.
+    // empty) without tacking on a spurious trailing slash — joinPath()
+    // alone would always add one, even onto an empty name.
     const QString relative = (path == anchor) ? QString() : path.mid(anchorPrefix.length());
-    QString target = otherAnchor;
-    if (!relative.isEmpty()) {
-        if (!target.endsWith('/'))
-            target += '/';
-        target += relative;
-    }
+    const QString target = relative.isEmpty() ? otherAnchor : joinPath(otherAnchor, relative);
 
     m_pendingSyncDrivenPath[other] = target;
     other->navigateTo(target);

@@ -8,6 +8,24 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Changed (developer-facing only, no shipped behavior)
+
+- **Four cleanup-grade findings from the code review behind v0.7.6,
+  fixed with no user-visible behavior change:** `TransferManager`'s
+  dispatch-time backend selection is now derived from
+  `requiredBackendsForDispatch()` itself instead of independently
+  re-picking a backend per direction in a second `switch` that had to
+  be kept in sync with it by hand; the five independent, byte-for-byte
+  identical copies of a `joinPath()` helper scattered across
+  `FolderEnumerator.cpp`/`EditSessionManager.cpp`/`TransferManager.cpp`/
+  `FilePaneWidget.cpp`/`MainWindow.cpp` are now one shared
+  `src/PathUtils.h`; Site Manager caches each site's
+  "has a stored password" check for the rest of a dialog session instead
+  of querying the OS credential store fresh on every single tree click;
+  and `SftpBackend`/`FtpBackend`'s upload/download loops build their
+  pause/cancel check closure once per transfer instead of once per
+  chunk.
+
 ## [0.7.6] — Concurrency and synchronized-browsing bug fixes
 
 ### Fixed

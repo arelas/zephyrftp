@@ -16,6 +16,7 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <functional>
 
 namespace {
 // Persists accepted certificate fingerprints across runs — the FTPS
@@ -1185,6 +1186,14 @@ void FtpBackend::downloadFile(const QString &remotePath, const QString &localPat
     bool paused = false;
     char buf[256 * 1024];
     BandwidthThrottle throttle(m_credentials.bandwidthLimitKBps);
+    // Constructed once, here, not fresh on every chunk inside the loop
+    // below — pace() is a true no-op when unlimited (the common case),
+    // but building a NEW std::function<bool()> from this lambda on every
+    // single chunk paid a real, avoidable cost regardless, in one of the
+    // hottest loops in the codebase.
+    const std::function<bool()> shouldStop = [this]() {
+        return m_cancelRequested.loadRelaxed() || m_pauseRequested.loadRelaxed();
+    };
 
     for (;;) {
         if (m_cancelRequested.loadRelaxed()) { cancelled = true; break; }
@@ -1252,9 +1261,7 @@ void FtpBackend::downloadFile(const QString &remotePath, const QString &localPat
 
         // Same reasoning as SftpBackend::downloadFile()'s identical
         // call — see that comment.
-        throttle.pace(done - effectiveOffset, [this]() {
-            return m_cancelRequested.loadRelaxed() || m_pauseRequested.loadRelaxed();
-        });
+        throttle.pace(done - effectiveOffset, shouldStop);
     }
 
     out.close();
@@ -1340,6 +1347,11 @@ void FtpBackend::uploadFile(const QString &localPath, const QString &remotePath,
     bool paused = false;
     char buf[256 * 1024];
     BandwidthThrottle throttle(m_credentials.bandwidthLimitKBps);
+    // Constructed once, here, not fresh on every chunk inside the loop
+    // below — see downloadFile()'s own identical comment on why.
+    const std::function<bool()> shouldStop = [this]() {
+        return m_cancelRequested.loadRelaxed() || m_pauseRequested.loadRelaxed();
+    };
 
     while (!in.atEnd()) {
         if (m_cancelRequested.loadRelaxed()) { cancelled = true; break; }
@@ -1369,9 +1381,7 @@ void FtpBackend::uploadFile(const QString &localPath, const QString &remotePath,
 
         // Same reasoning as SftpBackend::downloadFile()'s identical
         // call — see that comment.
-        throttle.pace(done - effectiveOffset, [this]() {
-            return m_cancelRequested.loadRelaxed() || m_pauseRequested.loadRelaxed();
-        });
+        throttle.pace(done - effectiveOffset, shouldStop);
     }
 
     // disconnectFromHost() (graceful — flushes and sends a proper TLS

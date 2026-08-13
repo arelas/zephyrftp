@@ -1,6 +1,7 @@
 #include "TransferManager.h"
 #include "../ui/FilePaneWidget.h"
 #include "../backends/RemoteBackend.h"
+#include "../PathUtils.h"
 
 #include <QMetaObject>
 #include <QMessageBox>
@@ -13,11 +14,6 @@
 #include <QFile>
 
 namespace {
-QString joinPath(const QString &dir, const QString &name)
-{
-    return dir.endsWith('/') ? dir + name : dir + '/' + name;
-}
-
 // Shared by the constructor's startup sweep and allocateTempFilePath()
 // below — previously duplicated verbatim in both places, a real risk if
 // this ever needs to change (easy to update one call site and miss the
@@ -575,29 +571,48 @@ void TransferManager::dispatchActiveItem(int itemIndex)
     active.smoothedSpeedBytesPerSec = 0.0;
     active.hasSpeedSample = false;
 
-    // A plain deref for every direction except EditDownload/EditUpload
-    // (see TransferDirection's own doc comment) — those two are the
-    // first where only one of sourcePane/destPane is ever set, so both
-    // lookups below have to tolerate a null pane rather than assume one
-    // like every earlier direction could.
-    RemoteBackend *srcBackend = item.sourcePane ? item.sourcePane->backend() : nullptr;
+    // Only dstBackend is still needed locally below (capturedDestBackend's
+    // own first-dispatch capture) — srcBackend has no remaining use here
+    // now that the switch no longer assigns an executor directly;
+    // requiredBackendsForDispatch() below does its own equivalent
+    // sourcePane->backend() lookup where that's actually needed.
     RemoteBackend *dstBackend = item.destPane ? item.destPane->backend() : nullptr;
 
-    RemoteBackend *executor = nullptr;
+    if (item.direction == TransferDirection::RemoteToRemote && item.tempFilePath.isEmpty()) {
+        item.tempFilePath = allocateTempFilePath(item);
+        // Captured once, here, at phase 1's own first dispatch — NOT
+        // re-fetched from item.destPane->backend() at phase 2's dispatch.
+        // See TransferItem::capturedDestBackend's own doc comment for
+        // why: a live re-fetch would silently redirect an already-
+        // running upload if the destination pane's backend is swapped
+        // while phase 1 is still downloading.
+        item.capturedDestBackend = dstBackend;
+    }
+
+    // The executor is always requiredBackendsForDispatch()'s own first
+    // result, for every direction and phase — re-derived fresh here
+    // (not reused from startNext()'s earlier claim-time call, for the
+    // same staleness reason active.claimedBackends is refreshed below)
+    // rather than independently re-picking a backend per direction in a
+    // SECOND switch that has to be kept in sync with that helper's own
+    // by hand. A code review flagged the original two-switch duplication
+    // as a real risk: a mismatch between them would silently reopen the
+    // double-dispatch race this whole rewrite exists to close.
+    const QVarLengthArray<RemoteBackend *, 2> required = requiredBackendsForDispatch(item);
+    RemoteBackend *executor = required.isEmpty() ? nullptr : required.first();
+
     const char *methodName = nullptr;
     QString argA, argB;
 
     switch (item.direction) {
     case TransferDirection::LocalToRemote:
         // uploadFile(localPath, remotePath) — runs on the remote side's backend
-        executor = dstBackend;
         methodName = "uploadFile";
         argA = item.sourcePath;
         argB = item.destPath;
         break;
     case TransferDirection::RemoteToLocal:
         // downloadFile(remotePath, localPath) — runs on the remote side's backend
-        executor = srcBackend;
         methodName = "downloadFile";
         argA = item.sourcePath;
         argB = item.destPath;
@@ -606,35 +621,21 @@ void TransferManager::dispatchActiveItem(int itemIndex)
         // Either backend is a plain LocalBackend here; uploadFile's
         // (localPath, remotePath) signature just becomes (src, dst)
         // for LocalBackend's QFile::copy-based implementation.
-        executor = dstBackend;
         methodName = "uploadFile";
         argA = item.sourcePath;
         argB = item.destPath;
         break;
     case TransferDirection::RemoteToRemote:
         // Staged through a local temp file — allocated once, on first
-        // dispatch (empty check below), reused unchanged across the
-        // phase transition. Downloading: source -> temp. Uploading:
-        // temp -> destination (dispatched again from onBackendFinished()
-        // once phase 1 completes, not from here a second time).
-        if (item.tempFilePath.isEmpty()) {
-            item.tempFilePath = allocateTempFilePath(item);
-            // Captured once, here, at phase 1's own first dispatch — NOT
-            // re-fetched from item.destPane->backend() at phase 2's
-            // dispatch below. See TransferItem::capturedDestBackend's own
-            // doc comment for why: a live re-fetch would silently
-            // redirect an already-running upload if the destination
-            // pane's backend is swapped while phase 1 is still
-            // downloading.
-            item.capturedDestBackend = dstBackend;
-        }
+        // dispatch (above), reused unchanged across the phase
+        // transition. Downloading: source -> temp. Uploading: temp ->
+        // destination (dispatched again from onBackendFinished() once
+        // phase 1 completes, not from here a second time).
         if (item.phase == TransferPhase::Downloading) {
-            executor = srcBackend;
             methodName = "downloadFile";
             argA = item.sourcePath;
             argB = item.tempFilePath;
         } else {   // Uploading
-            executor = item.capturedDestBackend;
             methodName = "uploadFile";
             argA = item.tempFilePath;
             argB = item.destPath;
@@ -643,7 +644,6 @@ void TransferManager::dispatchActiveItem(int itemIndex)
     case TransferDirection::EditDownload:
         // remote source -> local temp file. No destPane involved — this
         // is opening a file for editing, not a pane-to-pane copy.
-        executor = srcBackend;
         methodName = "downloadFile";
         argA = item.sourcePath;
         argB = item.destPath;
@@ -653,7 +653,6 @@ void TransferManager::dispatchActiveItem(int itemIndex)
         // involved — this is the save-triggered re-upload half of
         // edit-in-place, dispatched by EditSessionManager, not a
         // pane-to-pane copy either.
-        executor = dstBackend;
         methodName = "uploadFile";
         argA = item.sourcePath;
         argB = item.destPath;
@@ -687,29 +686,26 @@ void TransferManager::dispatchActiveItem(int itemIndex)
     }
 
     active.currentExecutor = executor;
-    // Refreshed here, not left as whatever startNext() captured into
-    // claimedBackends back at claim time — srcBackend/dstBackend above
-    // are re-fetched fresh from the panes on every call, and if either
+    // Refreshed here from `required` itself — not left as whatever
+    // startNext() captured into claimedBackends back at claim time, and
+    // not hand-reconstructed with its own second copy of the "does this
+    // direction/phase need one backend or two" logic either. If either
     // pane's backend was swapped (Disconnect/Connect) during the async
     // checkExists() gap between this item being claimed and this actual
     // dispatch, the claim-time snapshot is stale: isBackendClaimed()
     // would keep reporting the OLD (possibly already-destroyed) backend
     // busy while this item actually runs against a different one,
     // letting some other item wrongly dispatch to that new backend too.
-    // A RemoteToRemote item at phase == Downloading still holds BOTH
-    // (matching requiredBackendsForDispatch()'s own reasoning — the
+    // `required` already holds exactly the right set either way — both
+    // backends for a RemoteToRemote item at phase == Downloading
+    // (matching requiredBackendsForDispatch()'s own reasoning: the
     // destination needs to stay claimed through the upcoming phase
-    // transition); every other case, including a RemoteToRemote item
-    // already at phase == Uploading, only needs the resolved executor
-    // itself from this point on — the source backend's part in this
-    // item is already done.
+    // transition), or just the resolved executor for every other case,
+    // including a RemoteToRemote item already at phase == Uploading,
+    // where the source backend's part in this item is already done.
     active.claimedBackends.clear();
-    active.claimedBackends.append(executor);
-    if (item.direction == TransferDirection::RemoteToRemote
-        && item.phase == TransferPhase::Downloading
-        && dstBackend && dstBackend != executor) {
-        active.claimedBackends.append(dstBackend);
-    }
+    for (RemoteBackend *backend : required)
+        active.claimedBackends.append(backend);
     ensureTransferSignalsConnected(executor);
     // item.bytesDone doubles as the resume offset — 0 for a fresh
     // item, nonzero when re-starting a previously Paused one (see

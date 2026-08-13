@@ -3,6 +3,7 @@
 #include "IconTheme.h"
 #include "PermissionsDialog.h"
 #include "../AppSettings.h"
+#include "../PathUtils.h"
 
 #include <QLineEdit>
 #include <QLabel>
@@ -84,14 +85,6 @@ public:
                    other.data(SortDataRole).toString()) < 0;
     }
 };
-
-// Same logic as TransferManager.cpp's identical (file-local, not shared)
-// helper — small enough that duplicating it here beats introducing a
-// shared-utility header for one three-line function.
-QString joinPath(const QString &dir, const QString &name)
-{
-    return dir.endsWith('/') ? dir + name : dir + '/' + name;
-}
 }
 
 FilePaneWidget::FilePaneWidget(RemoteBackend *backend, QWidget *parent, AppSettings *settings)

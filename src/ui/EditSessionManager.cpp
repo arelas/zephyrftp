@@ -4,6 +4,7 @@
 #include "../transfer/TransferItem.h"
 #include "FilePaneWidget.h"
 #include "../backends/RemoteBackend.h"
+#include "../PathUtils.h"
 
 #include <QFileSystemWatcher>
 #include <QTimer>
@@ -15,14 +16,6 @@
 #include <QFile>
 
 namespace {
-// Duplicated in FolderEnumerator.cpp/TransferManager.cpp/FilePaneWidget.cpp
-// too — this codebase has no shared path-utility header, and a
-// one-line helper isn't worth introducing one for.
-QString joinPath(const QString &dir, const QString &name)
-{
-    return dir.endsWith('/') ? dir + name : dir + '/' + name;
-}
-
 // Long enough to coalesce the handful of duplicate fileChanged events
 // some editors/OSes fire per save, short enough that a re-upload still
 // feels immediate.

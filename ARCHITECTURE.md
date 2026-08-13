@@ -1665,16 +1665,42 @@ to drive FileZilla itself for a same-desktop comparison.
      Not a runtime bug on its own, but a real maintenance trap: a future
      fix to `load()` (error handling, encoding) wouldn't automatically
      have applied here too. Fixed to delegate, matching Linux.
-  **Not covered by an automated test**: none of the five fixes above
-  have regression coverage — `CredentialStore` writes to the real OS
-  credential store with no test-friendly override the way `SiteStore`
-  has `QStandardPaths::setTestModeEnabled()`, so an automated test would
-  leave real test secrets in whoever's keyring runs it, the same
+  6. **`onTreeSelectionChanged()`/`loadSiteIntoForm()` called
+     `CredentialStore::hasSecret()` fresh on every single tree-item
+     click, directly on the UI thread** — an efficiency finding from a
+     later code review, not a correctness bug: a locked/slow OS keyring
+     can turn every click while browsing the site tree into a real,
+     synchronous stall (an OS unlock prompt, or just a slow libsecret
+     D-Bus round trip / `SecItemCopyMatching` / `CredReadW` call), worse
+     than a one-time cost since nothing was cached across visits to the
+     same site within one dialog session. Fixed with `m_hasSecretCache`
+     (`QHash<QString, bool>`, keyed by site id) — populated lazily the
+     first time each site is selected, and kept in sync (not just
+     invalidated) at every one of the three points this dialog itself
+     changes a site's stored secret (the checkbox's own `toggled`
+     handler, `onConnectClicked()`'s save/remove, `onDeleteSite()`'s
+     cleanup), so a later revisit never reads a stale value. Verified
+     with a disposable, non-committed harness (same "build a throwaway
+     target, run it, then fully revert" technique used elsewhere in this
+     project for something needing a real environment dependency) — a
+     real site with a real stored secret (via the real local Secret
+     Service, confirmed available and used, then cleaned up) correctly
+     stayed checked across repeated re-selection, and correctly flipped
+     to unchecked — not stale-cached true — immediately after the
+     checkbox was unchecked and the site re-visited.
+  **Not covered by a PERMANENT automated test**: none of the six fixes
+  above have regression coverage that ships with this codebase —
+  `CredentialStore` writes to the real OS credential store with no
+  test-friendly override the way `SiteStore` has
+  `QStandardPaths::setTestModeEnabled()`, so a permanent automated test
+  would leave real test secrets in whoever's keyring runs it, the same
   category of risk this project avoids elsewhere (e.g. `site-store-test`'s own config
-  isolation). Verified by direct code reading and reasoning through each
-  call path instead, consistent with this project's "say so explicitly
-  rather than letting it read as verified" standard where a real test
-  isn't a safe option.
+  isolation). Fixes 1-5 were verified by direct code reading and
+  reasoning through each call path instead, consistent with this
+  project's "say so explicitly rather than letting it read as verified"
+  standard where a real test isn't a safe option; fix 6 above was the
+  first of the six to actually get a real (if disposable, not committed)
+  run against the genuine local Secret Service.
   Gained **Export.../Import...** buttons later, below Duplicate/Delete
   (`arrow-up.svg`/`arrow-down.svg`, reused from `TransferQueueWidget`'s
   own upload/download-direction icons — same "data leaving/entering the
