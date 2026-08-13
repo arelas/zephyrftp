@@ -116,6 +116,12 @@ int main(int argc, char *argv[])
     // rather than depending on which side happens to win a timing race.
     waitUntil([&] { return leftPane->currentDirectory() == QDir::homePath()
                          && rightPane->currentDirectory() == QDir::homePath(); });
+    // TEMPORARY diagnostic: did the initial-settle wait above actually
+    // succeed, or did it time out (still not fixed as hoped)?
+    fprintf(stderr, "DIAG after initial-settle wait: left=[%s] right=[%s] homePath=[%s]\n",
+            qPrintable(leftPane->currentDirectory()), qPrintable(rightPane->currentDirectory()),
+            qPrintable(QDir::homePath()));
+    fflush(stderr);
 
     // ---------- Setup: get both panes to their respective roots before
     // enabling sync, so turning it on anchors at exactly these paths. ----------
@@ -123,6 +129,10 @@ int main(int argc, char *argv[])
     waitUntil([&] { return leftPane->currentDirectory() == leftRoot; });
     rightPane->navigateTo(rightRoot);
     waitUntil([&] { return rightPane->currentDirectory() == rightRoot; });
+    fprintf(stderr, "DIAG after explicit navigate: left=[%s] expected=[%s] right=[%s] expected=[%s]\n",
+            qPrintable(leftPane->currentDirectory()), qPrintable(leftRoot),
+            qPrintable(rightPane->currentDirectory()), qPrintable(rightRoot));
+    fflush(stderr);
     check("setup: both panes reached their own root", leftPane->currentDirectory() == leftRoot
           && rightPane->currentDirectory() == rightRoot);
 
