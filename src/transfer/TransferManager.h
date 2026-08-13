@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QList>
 #include <QHash>
+#include <QSet>
 #include <QElapsedTimer>
 #include <QPointer>
 #include <QVarLengthArray>
@@ -285,6 +286,17 @@ private:
     // Index into m_active for the entry tracking itemIndex, or -1.
     int activeIndexForItem(int itemIndex) const;
 
+    // The single point every "this ActiveTransfer entry is no longer
+    // running" path goes through — releases m_reservedDestinationKeys'
+    // entry (if any) this ActiveTransfer held, THEN removes it from
+    // m_active, so a reservation can never outlive the entry that
+    // acquired it regardless of which of the several exit paths
+    // (finished/failed/cancelled/paused/no-backend-to-dispatch-to) got
+    // it there. A no-op (does nothing, including no bounds-check crash)
+    // for an already-out-of-range index, matching m_active.removeAt()'s
+    // own callers' existing "activeIdx >= 0" guard style.
+    void releaseActiveTransfer(int activeIdx);
+
     int indexById(int id) const;
 
     // Actually kicks off FolderEnumerator against the source folder —
@@ -456,8 +468,39 @@ private:
         qint64 speedSampleBytesAtLastSample = 0;
         double smoothedSpeedBytesPerSec = 0.0;
         bool hasSpeedSample = false;
+
+        // The key this entry holds in m_reservedDestinationKeys, if any
+        // (empty for an item with no destPane, i.e. EditDownload) —
+        // stored per-entry so releaseActiveTransfer() can release
+        // exactly what THIS entry reserved, from any of its several exit
+        // paths, without re-deriving it (the item's own destPane/destPath
+        // are still readable at release time too, but keeping this here
+        // means release doesn't depend on the item still existing in a
+        // particular state). See m_reservedDestinationKeys' own doc
+        // comment for what this actually protects against.
+        QString reservedDestinationKey;
     };
     QList<ActiveTransfer> m_active;
+
+    // (connectionIdentity, destPath) pairs — joined into one string key,
+    // see destinationReservationKey() in the .cpp — currently claimed by
+    // some ActiveTransfer entry, for that entry's WHOLE lifetime (from
+    // the moment it's claimed in startNext(), through completion/
+    // failure/cancellation/pause). Closes a real race isBackendClaimed()
+    // alone can't: that only serializes per-backend-*instance*, but two
+    // DIFFERENT backend instances connected to the SAME remote server
+    // (routine — both panes are often connected to the same host) could
+    // otherwise both see a destination checkExists()==false and silently
+    // clobber each other. A code review found this real, if narrow, gap
+    // — see ARCHITECTURE.md's TransferManager entry for the full story.
+    // Deliberately scoped to the ordinary per-file enqueue()/startNext()
+    // pipeline only — Move (moveEntry()/moveFolder()) and a folder
+    // transfer's own root-level conflict check both already bypass
+    // m_active/isBackendClaimed() entirely by design (see moveEntry()'s
+    // own doc comment), so neither participates here either; a folder
+    // transfer's individual FILES still do, since those ride through
+    // this exact same enqueue()/startNext() pipeline like any other file.
+    QSet<QString> m_reservedDestinationKeys;
 
     // Conflict resolution — "remembered" choices reset back to Ask
     // whenever the queue fully drains (see startNext()'s "nothing left

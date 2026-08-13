@@ -8,6 +8,16 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A rare double-dispatch/silent-clobber risk when both panes connect
+  to the same server.** Two transfers to the identical destination
+  path, dispatched via two different connections to that server (or
+  two different local-filesystem transfers to the same local path),
+  could both pass the destination-conflict check and silently overwrite
+  each other, since nothing coordinated between separate connection/
+  backend instances even when they were the same actual destination.
+
 ## [0.7.7] — Internal cleanup, no user-visible changes
 
 ### Changed (developer-facing only, no shipped behavior)

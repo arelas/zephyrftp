@@ -235,6 +235,93 @@ int main(int argc, char *argv[])
         if (item.id == otherItemId) { otherItemStatus = item.status; otherItemBytesDone = item.bytesDone; }
     });
 
+    // Scenario 4 setup — a real code-review-found gap: isBackendClaimed()
+    // only serializes per-backend-INSTANCE, not per remote server. Two
+    // independent backend instances connected to the SAME remote server
+    // (routine — both panes are often connected to the same host) could
+    // both pass checkExists()==false for the identical destination path
+    // and silently clobber each other, since neither instance's own busy
+    // check has any way to know about the other. sameServerFake1/2 below
+    // are two SEPARATE FakeAsyncBackend instances that happen to report
+    // the identical connectionIdentity() ("fake") AND currentPath()
+    // ("/fake") — exactly what two real panes connected to the same real
+    // server would look like from TransferManager's perspective.
+    auto *sameServerFake1 = new FakeAsyncBackend();
+    auto *sameServerFake2 = new FakeAsyncBackend();
+    auto *sameServerPane1 = new FilePaneWidget(sameServerFake1);
+    auto *sameServerPane2 = new FilePaneWidget(sameServerFake2);
+    auto *localG = new FilePaneWidget(new LocalBackend());
+    auto *localH = new FilePaneWidget(new LocalBackend());
+    QDir().mkpath("/tmp/transfer_concurrency_test/g");
+    QDir().mkpath("/tmp/transfer_concurrency_test/h");
+    localG->navigateTo("/tmp/transfer_concurrency_test/g");
+    localH->navigateTo("/tmp/transfer_concurrency_test/h");
+    auto *manager4 = new TransferManager(&app);
+
+    int sharedItem1Id = -1, sharedItem2Id = -1;
+    TransferStatus sharedItem1Status = TransferStatus::Queued;
+    TransferStatus sharedItem2Status = TransferStatus::Queued;
+    qint64 sharedItem1BytesDone = 0;
+
+    // Both items below deliberately share the SAME fileName ("shared.bin")
+    // — that's the whole point, it's what makes them resolve to the
+    // identical destPath — so they can't be told apart by name the way
+    // every earlier scenario's tracking does. Distinguished by ORDER
+    // instead: enqueue() appends and emits itemAdded synchronously, so
+    // the first call below is always seen here before the second.
+    QObject::connect(manager4, &TransferManager::itemAdded, &app, [&](const TransferItem &item) {
+        if (sharedItem1Id < 0)
+            sharedItem1Id = item.id;
+        else if (sharedItem2Id < 0)
+            sharedItem2Id = item.id;
+    });
+    QObject::connect(manager4, &TransferManager::itemUpdated, &app, [&](const TransferItem &item) {
+        if (item.id == sharedItem1Id) { sharedItem1Status = item.status; sharedItem1BytesDone = item.bytesDone; }
+        if (item.id == sharedItem2Id) sharedItem2Status = item.status;
+    });
+
+    // ---------- Scenario 4: two DIFFERENT backend instances of the SAME
+    // simulated server, both targeting the identical destination path,
+    // must not run concurrently ----------
+    auto runScenario4 = [&]() {
+        // Deliberately the SAME filename via joinPath(currentDirectory(),
+        // fileName) against two panes whose currentPath() both return the
+        // fixed "/fake" — both items resolve to the identical destPath,
+        // matching two real panes connected to the same real server and
+        // uploading to the same remote directory.
+        manager4->enqueue(localG, sameServerPane1, "shared.bin");
+        manager4->enqueue(localH, sameServerPane2, "shared.bin");
+
+        waitUntil([&]() {
+            return sharedItem1Status == TransferStatus::InProgress && sharedItem1BytesDone > 0;
+        });
+        check("scenario 4: the first item claiming the shared destination reached InProgress",
+              sharedItem1Status == TransferStatus::InProgress);
+        // Deterministic, not a timing guess: startNext() claims item 1
+        // (reserving the shared destination key) and evaluates item 2 in
+        // the very SAME synchronous scan — pre-fix, item 2's own
+        // checkExists() would already be in flight (or further) by now,
+        // since isBackendClaimed() alone can't see these two DIFFERENT
+        // backend instances as conflicting at all.
+        check("scenario 4: the second item — same destination path, a DIFFERENT backend "
+              "instance of the same simulated server — stayed Queued instead of racing it",
+              sharedItem2Status == TransferStatus::Queued);
+
+        waitUntil([&]() { return sharedItem1Status == TransferStatus::Done; }, 3000);
+        check("scenario 4: the first item completed normally", sharedItem1Status == TransferStatus::Done);
+        waitUntil([&]() {
+            return sharedItem2Status == TransferStatus::InProgress || sharedItem2Status == TransferStatus::Done;
+        }, 3000);
+        check("scenario 4: the second item started only once the first released the shared "
+              "destination — not permanently stuck",
+              sharedItem2Status == TransferStatus::InProgress || sharedItem2Status == TransferStatus::Done);
+        waitUntil([&]() { return sharedItem2Status == TransferStatus::Done; }, 3000);
+        check("scenario 4: the second item also completed normally", sharedItem2Status == TransferStatus::Done);
+
+        qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
+        app.exit(allPass ? 0 : 1);
+    };
+
     // Scenario 3 setup — a real code-review-found bug: ActiveTransfer::
     // claimedBackends (captured at claim time in startNext(), from
     // item.sourcePane->backend()/item.destPane->backend()) could desync
@@ -314,8 +401,7 @@ int main(int argc, char *argv[])
               "— not permanently stuck",
               otherSwapItemStatus == TransferStatus::InProgress || otherSwapItemStatus == TransferStatus::Done);
 
-        qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
-        app.exit(allPass ? 0 : 1);
+        runScenario4();
     };
 
     // ---------- Scenario 2: cancelling one of two concurrently-active

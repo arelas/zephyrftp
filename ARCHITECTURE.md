@@ -2476,6 +2476,72 @@ to drive FileZilla itself for a same-desktop comparison.
   identical backend instance AT THE SAME TIME (a genuine double-dispatch,
   confirmed via the same before/after `git stash` control); post-fix, the
   second correctly stays `Queued` until the first is done with it.
+  **A third, structurally different gap in the same neighborhood, found
+  by the same review round but left open at the time (a real design
+  decision, not a small patch like the two above) and closed here:**
+  `isBackendClaimed()` only ever serializes per-backend-*instance* — it
+  has no way to know that two DIFFERENT instances (e.g. both panes
+  connected to the same real server, routine) are talking to the SAME
+  underlying server, so two items targeting the identical destination
+  path via two different instances could both see a destination
+  `checkExists()==false` and dispatch concurrently, silently clobbering
+  each other — structurally impossible before this rewrite (the old
+  design was globally serial), a real gap the per-instance concurrency
+  model opened. Fixed with a second, independent reservation table,
+  `m_reservedDestinationKeys` (`QSet<QString>`), keyed by
+  `connectionIdentity() + '\n' + destPath` — deliberately a SEPARATE
+  mechanism from `claimedBackends`/`isBackendClaimed()`, not a merge
+  into it, since the two answer genuinely different questions ("is this
+  backend object busy" vs. "is this exact remote path on this exact
+  server already being written to by something else") and conflating
+  them would make either harder to reason about on its own. Checked
+  alongside the existing per-backend busy check in `startNext()`'s
+  claim gate, and released (like `claimedBackends`) for an
+  `ActiveTransfer` entry's WHOLE lifetime by a new
+  `releaseActiveTransfer()` helper — replacing all six of the file's
+  own `m_active.removeAt()` call sites (finished/failed/cancelled/
+  paused/no-backend-to-dispatch-to/skipped), the single point every
+  "this entry is no longer running" path already funneled through, so a
+  reservation can never accidentally outlive the entry that acquired
+  it. `LocalBackend::connectionIdentity()` returning a fixed constant
+  ("local") means this protection extends to `LocalToLocal` transfers
+  too, for free — two different `LocalBackend` instances writing to the
+  same local destination path is the exact same race, just without a
+  remote server involved.
+  **Deliberately scoped to the ordinary per-file `enqueue()`/`startNext()`
+  pipeline only** — `moveEntry()`/`moveFolder()` and a folder transfer's
+  own root-level conflict check both already bypass `m_active`/
+  `isBackendClaimed()` entirely by design (see `moveEntry()`'s own doc
+  comment), so neither participates here either, a deliberate boundary
+  matching that existing carve-out rather than a new asymmetry; a
+  folder transfer's individual FILES still get full protection, since
+  those ride through this exact same `enqueue()`/`startNext()` pipeline
+  like any other file (see `startFolderFileTransfers()`'s own doc
+  comment on why folder transfer needed no separate mechanism from
+  ordinary files in the first place).
+  Confirmed via a new scenario 4 in `transfer-concurrency-test`: two
+  `FakeAsyncBackend` instances that report the identical
+  `connectionIdentity()`/`currentPath()` (matching what two real panes
+  connected to the same real server look like from this class's own
+  perspective), both targeting the same destination filename — the
+  second item is asserted to stay EXACTLY `Queued` (not just "never
+  simultaneously `InProgress`", a stronger, fully deterministic check
+  possible here since the reservation is inserted and checked
+  synchronously within the very same `startNext()` scan, no timing
+  window to poll for at all) for as long as the first is running, then
+  starts and completes normally once the first releases the shared
+  destination. Confirmed as a genuine, not just theoretical, race via
+  the same before/after `git stash` control this whole neighborhood's
+  other fixes used: the pre-fix code fails this exact assertion.
+  **Not verified against a real live server** — unlike the original
+  concurrency rewrite's own `verify-concurrent-transfers-live`, this fix
+  is pure scheduling/bookkeeping logic (whether `startNext()` dispatches
+  a `checkExists()` call at all), touching none of the actual
+  read/write I/O loops a live-server harness would exercise
+  differently than the fake-backend test already does — the fake-backend
+  test's deterministic, synchronous-within-one-scan proof was judged
+  sufficient on its own, consistent with how bug #2 above (also pure
+  scheduling/bookkeeping) was verified the same way.
   **Known, accepted gap, not attempted here:** the destination conflict
   check (`checkExists()`) only ever runs once, before phase 1 begins —
   phase 2's upload is never re-checked. A file created at the destination

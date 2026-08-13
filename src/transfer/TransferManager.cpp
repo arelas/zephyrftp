@@ -28,6 +28,19 @@ QString stagingDirPath()
 {
     return QStandardPaths::writableLocation(QStandardPaths::TempLocation) + QStringLiteral("/zephyrftp-staging");
 }
+
+// Builds a reservation key identifying "this exact destination path on
+// this exact server" — connectionIdentity() alone can't distinguish
+// paths, and destPath alone can't distinguish servers (two different
+// SFTP hosts could easily share the same directory layout, e.g.
+// "/home/deploy/incoming"). '\n' is a safe separator: connectionIdentity()
+// is always a single-line string (host/port/username plus a protocol
+// scheme prefix — see RemoteBackend::connectionIdentity()'s own doc
+// comment), and no real filesystem path contains a literal newline.
+QString destinationReservationKey(const QString &connectionIdentity, const QString &destPath)
+{
+    return connectionIdentity + QLatin1Char('\n') + destPath;
+}
 }
 
 TransferManager::TransferManager(QObject *parent)
@@ -505,13 +518,35 @@ void TransferManager::startNext()
                 break;
             }
         }
+
+        // Beyond "is the backend INSTANCE free" above: is this exact
+        // destination path on this exact SERVER already claimed by a
+        // DIFFERENT active item, possibly via a totally different
+        // backend instance (both panes connected to the same host is
+        // routine)? See m_reservedDestinationKeys' own doc comment for
+        // the double-dispatch/silent-clobber race this closes. No key
+        // at all for an item with no destPane (EditDownload) — nothing
+        // to protect there.
+        QString reservationKey;
+        if (!anyBusy && item.destPane) {
+            if (RemoteBackend *destBackend = item.destPane->backend()) {
+                reservationKey = destinationReservationKey(destBackend->connectionIdentity(), item.destPath);
+                if (m_reservedDestinationKeys.contains(reservationKey))
+                    anyBusy = true;
+            }
+        }
+
         if (anyBusy)
-            continue;   // try the next Queued item — a different backend might be free
+            continue;   // try the next Queued item — a different backend (and destination) might be free
 
         ActiveTransfer active;
         active.itemIndex = i;
         for (RemoteBackend *backend : required)
             active.claimedBackends.append(backend);
+        if (!reservationKey.isEmpty()) {
+            active.reservedDestinationKey = reservationKey;
+            m_reservedDestinationKeys.insert(reservationKey);
+        }
         m_active.append(active);
 
         // A resumed item's destination conflict check already happened
@@ -680,7 +715,7 @@ void TransferManager::dispatchActiveItem(int itemIndex)
             : tr("Internal error: no backend to execute this transfer");
         cleanupTempFile(item);   // no-op unless phase 1 already downloaded to a temp file (the RemoteToRemote case above)
         emit itemUpdated(item);
-        m_active.removeAt(activeIdx);
+        releaseActiveTransfer(activeIdx);
         startNext();   // try the next queued item instead of getting stuck
         return;
     }
@@ -795,7 +830,7 @@ void TransferManager::cancelItem(int id)
             item.speedBytesPerSec = 0;
             cleanupTempFile(item);
             emit itemUpdated(item);
-            m_active.removeAt(activeIdx);
+            releaseActiveTransfer(activeIdx);
             startNext();
         }
         return;
@@ -1023,6 +1058,16 @@ int TransferManager::activeIndexForItem(int itemIndex) const
     return -1;
 }
 
+void TransferManager::releaseActiveTransfer(int activeIdx)
+{
+    if (activeIdx < 0 || activeIdx >= m_active.size())
+        return;
+    const QString &key = m_active[activeIdx].reservedDestinationKey;
+    if (!key.isEmpty())
+        m_reservedDestinationKeys.remove(key);
+    m_active.removeAt(activeIdx);
+}
+
 void TransferManager::ensureExistsCheckConnected(RemoteBackend *backend)
 {
     connect(backend, &RemoteBackend::existsChecked, this, &TransferManager::onDestinationExistsChecked,
@@ -1236,7 +1281,7 @@ void TransferManager::onDestinationExistsChecked(const QString &path, bool exist
             emit itemUpdated(item);
             const int activeIdx = activeIndexForItem(itemIndex);
             if (activeIdx >= 0)
-                m_active.removeAt(activeIdx);
+                releaseActiveTransfer(activeIdx);
             startNext();
         }
         return;
@@ -1345,7 +1390,7 @@ void TransferManager::onBackendFinished(const QString &fileName)
     emit itemUpdated(item);
     emit transferSucceeded();
 
-    m_active.removeAt(activeIdx);
+    releaseActiveTransfer(activeIdx);
     startNext();
 }
 
@@ -1369,7 +1414,7 @@ void TransferManager::onBackendFailed(const QString &fileName, const QString &re
     cleanupTempFile(item);
     emit itemUpdated(item);
 
-    m_active.removeAt(activeIdx);
+    releaseActiveTransfer(activeIdx);
     startNext();
 }
 
@@ -1398,7 +1443,7 @@ void TransferManager::onBackendPaused(const QString &fileName, qint64 bytesDone)
     // to leak from one item into the next.
     emit itemUpdated(item);
 
-    m_active.removeAt(activeIdx);
+    releaseActiveTransfer(activeIdx);
     startNext();
 }
 
