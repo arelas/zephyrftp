@@ -2534,6 +2534,40 @@ to drive FileZilla itself for a same-desktop comparison.
   responses on its own, so there's no double-delivery risk to avoid, and
   tearing the connection down here would risk losing a response if two
   different backends both have checks in flight at once.
+  **A real, AddressSanitizer-confirmed heap-use-after-free found by a
+  later code review, made reachable by the per-backend-instance
+  concurrency rewrite above**: `onDestinationExistsChecked()`'s
+  file-conflict branch used to take `TransferItem &item = m_items[itemIndex]`
+  BEFORE calling `askConflict()`, then use that same reference after it
+  returned. The paragraph above already establishes that `askConflict()`'s
+  nested event loop lets other, unrelated `checkExists()` responses run
+  reentrantly while a dialog is up — and with real transfer concurrency,
+  more than one item can have its own conflict check in flight at once,
+  so one of those reentrant responses can legitimately append a brand-new
+  item to `m_items` (the Move-into-a-non-empty-folder branch above does
+  exactly this, with no dialog of its own once its own resolution is
+  already "always overwrite"). `QList<TransferItem>` reallocates its
+  backing store on append, which dangles any reference taken before it —
+  confirmed directly with AddressSanitizer (not just reasoned about): a
+  disposable `podman`+`fedora:44` container build with
+  `-fsanitize=address` reproduced a genuine heap-use-after-free at the
+  exact `item.status = TransferStatus::Skipped;` line, 10/10 clean after
+  the fix, this sandbox itself having no ASAN runtime available to test
+  locally. Fixed by never holding a `TransferItem &` across the
+  `askConflict()` call — only a plain `QString` copy of the filename is
+  read beforehand, and `m_items[itemIndex]` is re-fetched fresh
+  afterward, the same "re-fetch by stable index, don't hold a reference
+  across the call" pattern `activeIndexForItem(itemIndex)` right below it
+  already used for the same reason. Regression-covered by a new phase in
+  `conflict-resolution-test`: floods `m_items` with 500 appends (via
+  `enqueue()` calls that stay harmlessly `Queued`, all sharing the
+  already-busy destination backend so none of them dispatch or open a
+  competing dialog) while the target item's own real conflict dialog is
+  open, then confirms that item's own resolution still lands on the
+  correct id/fileName/destPath — a functional check that passes either
+  way in this environment (undefined behavior doesn't reliably
+  manifest without a sanitizer), so the actual proof lives in the ASAN
+  run above, not in this test's pass/fail alone.
   `moveEntry(sourcePane, destPane, fileName)`/`moveFolder(sourcePane,
   destPane, folderName)` implement server-side Move — relocating a file or
   whole folder between two panes on the SAME connection
@@ -3407,6 +3441,23 @@ to drive FileZilla itself for a same-desktop comparison.
   (`startConnection()`, `disconnectPane()`), since a stale anchor
   pointing at a now-gone connection would otherwise produce nonsense
   joins the next time either pane navigates.
+  **A real bug found by a later code review** (`onPaneDirectoryChanged()`):
+  the anchored-subtree check was `path.startsWith(anchor)`, a raw text
+  prefix test with no path-separator boundary — a sibling directory that
+  merely shares the anchor as a TEXT prefix (anchor `/data` matching
+  `/data2/photos`, say) was wrongly treated as "inside" the anchored
+  subtree, computing a bogus relative path (`"2/photos"`, since the
+  character right after the prefix is `'2'` not `'/'`, so the existing
+  leading-slash strip was a no-op) and driving the other pane to a
+  nonsense target. Fixed by requiring the anchor to be followed by a
+  separator (or matched exactly) to count as genuinely "inside" it.
+  Regression-covered by a new phase in `sync-browsing-test`: a sibling
+  directory sharing the anchor as a text prefix, alongside a real,
+  pre-existing decoy directory at the bogus computed target that only
+  the old buggy prefix match would ever navigate to — confirmed via a
+  before/after `git stash` control that the old code actually lands on
+  the decoy (2 failing checks) while the fix leaves the other pane
+  untouched.
 
 ## Design system
 

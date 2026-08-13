@@ -20,11 +20,30 @@
 #include <QMessageBox>
 #include <QCheckBox>
 #include <QAbstractButton>
+#include <QEventLoop>
+#include <functional>
 #include "ui/FilePaneWidget.h"
 #include "backends/LocalBackend.h"
 #include "transfer/TransferManager.h"
 
 namespace {
+
+// Same polling-with-timeout technique established elsewhere in this
+// project's tests (transfer_pause_test.cpp, sync_browsing_test.cpp) —
+// avoids trusting a fixed wall-clock delay to have been enough. Safe to
+// use for waiting on the dialog's own existence (unlike waiting on a
+// SIGNAL the dialog's dismissal would trigger — see Phase E's own
+// comment on why that's a different, structurally unsafe case).
+void waitUntil(const std::function<bool()> &condition, int timeoutMs = 5000)
+{
+    QEventLoop loop;
+    QTimer timeoutTimer;
+    timeoutTimer.setSingleShot(true);
+    QObject::connect(&timeoutTimer, &QTimer::timeout, &loop, &QEventLoop::quit);
+    timeoutTimer.start(timeoutMs);
+    while (!condition() && timeoutTimer.isActive())
+        loop.processEvents(QEventLoop::AllEvents, 20);
+}
 bool writeFile(const QString &path, const QString &content)
 {
     QFile f(path);
@@ -224,9 +243,119 @@ int main(int argc, char *argv[])
               readFile(base + "/dst/mergedir/f.txt") == "new file via write-into");
         check("Phase D: the pre-existing file in that folder was left alone (merge, not replace)",
               readFile(base + "/dst/mergedir/preexisting.txt") == "already here before the transfer");
+    });
 
-        qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
-        app.exit(allPass ? 0 : 1);
+    // ===================================================================
+    // Phase E: regression test for a real dangling-reference bug.
+    // onDestinationExistsChecked() used to hold a `TransferItem &` taken
+    // from m_items across askConflict()'s QMessageBox::exec() call —
+    // exec() pumps the event loop, and with real concurrent transfers
+    // (TransferManager can now have several checkExists() calls in
+    // flight at once), some OTHER path can legitimately append a new
+    // item to m_items while this dialog is still open: verified directly
+    // in TransferManager.cpp — the Move-into-a-non-empty-folder branch
+    // of this SAME onDestinationExistsChecked() function calls
+    // m_items.append() with zero dialog of its own whenever its
+    // resolution is already "always overwrite", reachable via a second,
+    // concurrently in-flight checkExists() response while a first item's
+    // dialog blocks. QList<TransferItem> reallocating its backing store
+    // on append would dangle any reference taken before it. Reproduced
+    // here more directly (not via a second Move dialog) by firing many
+    // real TransferManager::enqueue() calls — each one a genuine
+    // m_items.append(), the same operation the Move branch performs —
+    // from a timer proven to fire WHILE the target item's own conflict
+    // dialog is still open, then confirming that item's own conflict
+    // resolution still lands on the item it was actually about.
+    // ===================================================================
+    bool sawReentrancyResolvedCorrectly = false;
+    QObject::connect(manager, &TransferManager::itemUpdated, &app, [&](const TransferItem &item) {
+        if (item.status == TransferStatus::Skipped && item.fileName == "reentrancy.txt"
+            && item.destPath == base + "/dst/reentrancy.txt") {
+            sawReentrancyResolvedCorrectly = true;
+        }
+    });
+
+    QTimer::singleShot(5600, &app, [&]() {
+        writeFile(base + "/src/reentrancy.txt", "should survive the flood");
+        writeFile(base + "/dst/reentrancy.txt", "OLD reentrancy");   // real conflict — opens a dialog
+        manager->enqueue(srcPane, dstPane, "reentrancy.txt");
+    });
+
+    QTimer::singleShot(5750, &app, [&]() {
+        // Polled, not assumed after a fixed 150ms gap — reentrancy.txt's
+        // checkExists() round trip (QueuedConnection to LocalBackend,
+        // then the dialog's own construction) is fast but not
+        // instantaneous, and a machine under heavier load (e.g. running
+        // right after several other test binaries in one session) can
+        // make a short fixed gap too tight.
+        waitUntil([&] {
+            return qobject_cast<QMessageBox *>(QApplication::activeModalWidget()) != nullptr;
+        }, 5000);
+
+        const bool dialogOpen = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()) != nullptr;
+        check("Phase E: reentrancy.txt's conflict dialog is open before the flood", dialogOpen);
+
+        // Reuses dstPane itself (NOT a fresh backend) — its backend is
+        // already claimed busy by reentrancy.txt's own still-pending
+        // ActiveTransfer entry for as long as this dialog is up, so
+        // every one of these enqueue() calls appends to m_items and then
+        // finds that backend busy and stays harmlessly Queued: no
+        // dispatch, no filesystem I/O, no dialog of its own, no
+        // cascading async round trips to swamp the test's timeline —
+        // just the bare m_items.append() call itself, genuinely
+        // happening WHILE askConflict() for reentrancy.txt is still on
+        // the call stack. 500 is well past QList's growth increments
+        // from this test's ~9 prior items, so this is guaranteed to
+        // force at least one real reallocation, not just a theoretical
+        // possibility.
+        for (int i = 0; i < 500; ++i)
+            manager->enqueue(srcPane, dstPane, QString("decoy%1.txt").arg(i));
+    });
+
+    QTimer::singleShot(6000, &app, [&]() {
+        // The flood's 500 enqueue() calls each pay for a full O(current
+        // queue length) rescan inside startNext() (`startNext()` walks
+        // the WHOLE queue every call, by design — see TransferManager.cpp's
+        // own comment on why), so the flood's total synchronous cost
+        // grows with its own size; a fixed short gap after it isn't
+        // reliably enough time for the dialog to still be found as the
+        // active modal widget on a loaded machine. Poll for it instead
+        // of assuming — safe here since we're waiting on the dialog's
+        // own EXISTENCE (already open independently since before the
+        // flood even started), not on anything that depends on this
+        // callback itself returning first.
+        waitUntil([&] {
+            return qobject_cast<QMessageBox *>(QApplication::activeModalWidget()) != nullptr;
+        }, 5000);
+
+        const bool clicked = clickConflictDialog(/*checkApplyToAll=*/false, "Skip");
+        check("Phase E: a dialog was still there to click after the flood", clicked);
+        // Deliberately NOT waited-on synchronously here (e.g. via a
+        // nested event-loop poll called from inside this very callback)
+        // — clicking the button only SCHEDULES the dialog's own
+        // QEventLoop to quit; askConflict()'s exec() call, and
+        // everything after it in onDestinationExistsChecked(), can only
+        // actually resume and run once THIS callback returns and control
+        // unwinds back to it. A poll started here would just spin
+        // pointlessly until its own timeout, since the very code it's
+        // waiting on is blocked further down the call stack, underneath
+        // this callback. A separate, later timer gives the stack room to
+        // unwind first — same shape Phases A/B/D already use between
+        // their own click and check timers — scheduled RELATIVE to this
+        // click (not a fixed absolute time), since the poll just above
+        // can itself eat a variable amount of time on a loaded machine,
+        // and an absolute deadline would silently erode the margin the
+        // final check actually gets.
+        QTimer::singleShot(500, &app, [&]() {
+            check("Phase E: reentrancy.txt's own dialog response resolved reentrancy.txt itself — "
+                  "correct id/fileName/destPath, not a value corrupted by the append flood",
+                  sawReentrancyResolvedCorrectly);
+            check("Phase E: destination reentrancy.txt was left untouched (skip really applied, to the right item)",
+                  readFile(base + "/dst/reentrancy.txt") == "OLD reentrancy");
+
+            qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
+            app.exit(allPass ? 0 : 1);
+        });
     });
 
     return app.exec();

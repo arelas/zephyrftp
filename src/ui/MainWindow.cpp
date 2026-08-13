@@ -655,20 +655,22 @@ void MainWindow::onPaneDirectoryChanged(const QString &path)
     const QString &anchor = (pane == m_leftPane) ? m_syncAnchorLeft : m_syncAnchorRight;
     const QString &otherAnchor = (pane == m_leftPane) ? m_syncAnchorRight : m_syncAnchorLeft;
 
-    if (!path.startsWith(anchor))
+    // A path-boundary-aware prefix check, not a raw string prefix — plain
+    // startsWith(anchor) also matches an unrelated sibling that merely
+    // shares the anchor as a TEXT prefix (e.g. anchor "/data" matching
+    // "/data2/photos"), which would drive the other pane to a bogus
+    // target built from the wrong "relative" substring. Requires the
+    // anchor to be followed by a separator (or matched exactly) to count
+    // as genuinely "inside" it.
+    const QString anchorPrefix = anchor.endsWith('/') ? anchor : anchor + '/';
+    if (path != anchor && !path.startsWith(anchorPrefix))
         return;   // navigated out of the anchored subtree (e.g. Up past it) — deliberately doesn't propagate
 
-    // Strips any leading separator before rejoining, and only adds one
-    // back if there's actually something to join — handles the anchor
-    // itself being filesystem root ("/"), where naive concatenation
-    // would otherwise double up (anchor already ends in '/') or,
-    // symmetrically, leave the two halves glued together with no
-    // separator at all when the OTHER anchor ISN'T root. Also handles
-    // navigating back to the anchor's own path exactly (relative is
+    // Handles the anchor itself being filesystem root ("/", already ends
+    // in '/', so anchorPrefix == anchor) without double-stripping, and
+    // navigating back to the anchor's own path exactly (relative stays
     // empty) without tacking on a spurious trailing slash.
-    QString relative = path.mid(anchor.length());
-    if (relative.startsWith('/'))
-        relative.remove(0, 1);
+    const QString relative = (path == anchor) ? QString() : path.mid(anchorPrefix.length());
     QString target = otherAnchor;
     if (!relative.isEmpty()) {
         if (!target.endsWith('/'))

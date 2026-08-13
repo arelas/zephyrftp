@@ -930,7 +930,14 @@ development, not found by inspection: a plain boolean reentrancy guard
 would get stuck forever the first time a driven navigation failed,
 since a failed `navigateTo()` never fires `directoryChanged` to clear
 it — fixed with a path-keyed pending-echo map instead, see
-`MainWindow::onPaneDirectoryChanged()`'s own doc comment); toggling off
+`MainWindow::onPaneDirectoryChanged()`'s own doc comment); a sibling
+directory that merely shares the anchor as a text prefix (another real
+bug found by a later code review, not by this test originally — a raw
+`path.startsWith(anchor)` check with no path-separator boundary wrongly
+treated e.g. `/data2/photos` as "inside" an anchor of `/data`) does NOT
+drive the other pane, confirmed against a real, pre-existing decoy
+directory at the exact bogus target the old buggy prefix match would
+have computed, not just a "nothing visibly happened" check; toggling off
 stops propagation; and reconnecting a pane while synchronized browsing
 is on automatically disables it (a stale anchor would otherwise produce
 nonsense joins). The echo-suppression fix was confirmed the same way

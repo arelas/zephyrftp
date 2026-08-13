@@ -1136,8 +1136,6 @@ void TransferManager::onDestinationExistsChecked(const QString &path, bool exist
         if (activeIndexForItem(itemIndex) < 0)
             return;   // item was cancelled while this check was in flight — its ActiveTransfer is already gone
 
-        TransferItem &item = m_items[itemIndex];
-
         if (!exists) {
             dispatchActiveItem(itemIndex);
             return;
@@ -1156,7 +1154,17 @@ void TransferManager::onDestinationExistsChecked(const QString &path, bool exist
             // shift indices for anything captured beforehand. Nothing
             // here is captured across this call for that reason;
             // activeIndexForItem(itemIndex) below is looked up fresh.
-            proceed = askConflict(QFileInfo(item.destPath).fileName(), /*isDirectory=*/false, applyToAll);
+            // Deliberately no `TransferItem &` held across this call
+            // either — with real concurrency, another item's own
+            // checkExists() response can arrive and run reentrantly
+            // while this dialog is up, and some of those paths
+            // (e.g. a Move-into-a-non-empty-folder failure just below,
+            // or a folder enumeration's own enqueue() continuing) append
+            // a new item to m_items. m_items reallocating on append
+            // would dangle any reference into it taken before this call;
+            // only a plain QString copy is read beforehand instead.
+            const QString destFileName = QFileInfo(m_items[itemIndex].destPath).fileName();
+            proceed = askConflict(destFileName, /*isDirectory=*/false, applyToAll);
             if (applyToAll) {
                 m_fileConflictResolution =
                     proceed ? ConflictResolution::AlwaysOverwrite : ConflictResolution::AlwaysSkip;
@@ -1166,6 +1174,10 @@ void TransferManager::onDestinationExistsChecked(const QString &path, bool exist
         if (proceed) {
             dispatchActiveItem(itemIndex);
         } else {
+            // Re-fetched fresh here, not reused from before askConflict()
+            // — see that call's own comment on why nothing may be held
+            // across it.
+            TransferItem &item = m_items[itemIndex];
             item.status = TransferStatus::Skipped;
             item.speedBytesPerSec = 0;
             emit itemUpdated(item);

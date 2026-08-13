@@ -106,6 +106,13 @@ int main(int argc, char *argv[])
     QDir().mkpath(leftRoot + "/common/subdir");
     QDir().mkpath(leftRoot + "/onlyleft");
     QDir().mkpath(rightRoot + "/common/subdir");
+    // A sibling of leftRoot itself that merely shares it as a TEXT
+    // prefix (leftRoot + "2/foo", i.e. ".../left2/foo" next to
+    // ".../left"), plus the real, pre-existing decoy directory a raw
+    // startsWith(anchor)-with-no-boundary bug would wrongly compute as
+    // the drive target — see phase 4c below.
+    QDir().mkpath(leftRoot + "2/foo");
+    QDir().mkpath(rightRoot + "/2/foo");
 
     MainWindow window;
     window.show();
@@ -200,6 +207,24 @@ int main(int argc, char *argv[])
     navigateWithRetry(leftPane, leftRoot + "/common/subdir");
     waitUntil([&] { return rightPane->currentDirectory() == rightRoot + "/common/subdir"; });
     check("sync still works after an earlier driven navigation failed — not permanently wedged",
+          rightPane->currentDirectory() == rightRoot + "/common/subdir");
+
+    // ---------- 4c: a sibling directory that merely shares the anchor as
+    // a TEXT prefix must NOT be treated as "inside" the anchored subtree
+    // — regression test for a real bug (raw startsWith(anchor) with no
+    // path-separator boundary check) where e.g. anchor ".../left" wrongly
+    // matched ".../left2/foo" as "inside" ".../left", computing a bogus
+    // relative path ("2/foo") and driving the other pane to prove it: a
+    // REAL, pre-existing decoy directory at rightRoot + "/2/foo" that
+    // only the buggy prefix match would ever navigate to. ----------
+    navigateWithRetry(leftPane, leftRoot + "2/foo");
+    check("left's own navigation into the sibling directory completes",
+          leftPane->currentDirectory() == leftRoot + "2/foo");
+    waitUntil([&] { return false; }, 300);   // give a real window for an (incorrect) drive to land
+    check("a sibling dir sharing the anchor as a text prefix must not drive the other pane "
+          "(right pane must NOT land on the bogus decoy path a raw prefix match would compute)",
+          rightPane->currentDirectory() != rightRoot + "/2/foo");
+    check("right pane stayed exactly where it was, unaffected by the out-of-subtree navigation",
           rightPane->currentDirectory() == rightRoot + "/common/subdir");
 
     // ---------- 5: toggling off stops propagation ----------

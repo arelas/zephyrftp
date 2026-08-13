@@ -8,6 +8,24 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Synchronized Browsing could drive the other pane into the wrong
+  directory.** The anchored-subtree check was a raw text-prefix match
+  with no path-separator boundary, so a sibling directory that merely
+  shared the anchor as a text prefix (e.g. anchor `/data` matching
+  `/data2/photos`) was wrongly treated as "inside" the anchored
+  subtree, computing a bogus relative path and navigating the other
+  pane somewhere the user never intended.
+- **A rare crash/data-corruption risk in the destination-conflict
+  dialog under concurrent transfers**, confirmed via AddressSanitizer
+  as a genuine heap-use-after-free. The conflict dialog's handler held
+  a reference into the transfer queue across the dialog's own nested
+  event loop; with real concurrent transfers, another in-flight
+  conflict response could append a new item to the queue while that
+  dialog was still open, reallocating the queue's backing storage out
+  from under the held reference.
+
 ## [0.7.5] — Windows build is back
 
 ### Fixed
