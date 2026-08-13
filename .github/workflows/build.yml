@@ -180,8 +180,11 @@ jobs:
           # accumulation, without dropping any test from the required
           # suite (CLAUDE.md: every required target must actually run).
           run_test() {
+            echo "::group::run_test $1"
             xvfb-run -a wine "./$1.exe"
             local rc=$?
+            echo "$1 exit code: $rc"
+            echo "::endgroup::"
             wineserver -k -w || true
             return $rc
           }
