@@ -28,7 +28,6 @@
 #include <QDir>
 #include <QAction>
 #include <QStandardPaths>
-#include <cstdio>
 #include <functional>
 #include "ui/MainWindow.h"
 #include "ui/FilePaneWidget.h"
@@ -38,12 +37,6 @@ bool allPass = true;
 void check(const QString &label, bool condition)
 {
     qDebug() << (condition ? "[PASS]" : "[FAIL]") << label;
-    // TEMPORARY diagnostic: qDebug() doesn't reliably reach the terminal
-    // under wine; needed again after a second, different-shaped CI-only
-    // failure (a ~45s hang, not the earlier race) to see which specific
-    // check the time is going into. Remove once diagnosed.
-    fprintf(stderr, "%s %s\n", condition ? "[PASS]" : "[FAIL]", qPrintable(label));
-    fflush(stderr);
     if (!condition) allPass = false;
 }
 
