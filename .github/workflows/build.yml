@@ -157,20 +157,49 @@ jobs:
           export WINEDEBUG=-all QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR=/tmp/xdg-runtime WINEPREFIX=/tmp/wineprefix LIBGL_ALWAYS_SOFTWARE=1
           mkdir -p /tmp/xdg-runtime /tmp/wineprefix && chmod 700 /tmp/xdg-runtime
 
-          xvfb-run -a wine ./smoke-test.exe
+          # All 20 `wine` invocations below share this one WINEPREFIX,
+          # so they all talk to the SAME background wineserver daemon
+          # (wine auto-starts one on first use, keeps it running across
+          # subsequent invocations against the same prefix). Confirmed
+          # via a real diagnostic CI run to be the actual cause of a
+          # persistent build-windows failure (Xvfb dying, zero test
+          # output, ~2.5 minutes then exit 1): removing just the LAST
+          # test in this sequence (sync-browsing-test) made the whole
+          # step pass — and counting "X connection to :99 broken"
+          # occurrences (this message is normal xvfb-run teardown
+          # noise, confirmed harmless on every successful invocation
+          # too, not itself a failure signal) in a failed run's log
+          # showed roughly a run's worth of PARTIAL progress through
+          # the sequence, not an immediate death on invocation #1 as
+          # first assumed — consistent with state/resources
+          # accumulating in that one long-lived wineserver process
+          # across many sequential invocations and eventually crossing
+          # some threshold, not a bug in whichever test happens to run
+          # last. `wineserver -k -w` after every invocation forces a
+          # fully fresh wineserver for the next one, breaking that
+          # accumulation, without dropping any test from the required
+          # suite (CLAUDE.md: every required target must actually run).
+          run_test() {
+            xvfb-run -a wine "./$1.exe"
+            local rc=$?
+            wineserver -k -w || true
+            return $rc
+          }
+
+          run_test smoke-test
 
           rm -rf /tmp/transfer_test
           mkdir -p /tmp/transfer_test/src_dir /tmp/transfer_test/dst_dir
           head -c 500000 /dev/urandom > /tmp/transfer_test/src_dir/testfile.bin
-          xvfb-run -a wine ./transfer-queue-test.exe
+          run_test transfer-queue-test
 
-          xvfb-run -a wine ./site-store-test.exe
-          xvfb-run -a wine ./app-settings-test.exe
-          xvfb-run -a wine ./trust-prompt-test.exe
+          run_test site-store-test
+          run_test app-settings-test
+          run_test trust-prompt-test
 
-          xvfb-run -a wine ./navigation-test.exe
-          xvfb-run -a wine ./transfer-pause-test.exe
-          xvfb-run -a wine ./file-operations-test.exe
+          run_test navigation-test
+          run_test transfer-pause-test
+          run_test file-operations-test
 
           rm -rf /tmp/folder_transfer_test
           mkdir -p /tmp/folder_transfer_test/src/myfolder/subdir1 \
@@ -181,20 +210,21 @@ jobs:
           echo "hi from b" > /tmp/folder_transfer_test/src/myfolder/subdir1/b.txt
           echo "hi from c" > /tmp/folder_transfer_test/src/myfolder/subdir1/c.txt
           echo "hi from d" > /tmp/folder_transfer_test/src/myfolder/subdir2/nested/d.txt
-          xvfb-run -a wine ./folder-transfer-test.exe
+          run_test folder-transfer-test
 
-          xvfb-run -a wine ./conflict-resolution-test.exe
-          xvfb-run -a wine ./ftp-parsing-test.exe
+          run_test conflict-resolution-test
+          run_test ftp-parsing-test
 
-          xvfb-run -a wine ./protocol-selection-test.exe
+          run_test protocol-selection-test
 
-          xvfb-run -a wine ./sort-and-commands-test.exe
-          xvfb-run -a wine ./remote-to-remote-test.exe
-          xvfb-run -a wine ./move-entry-test.exe
-          xvfb-run -a wine ./edit-session-test.exe
-          xvfb-run -a wine ./queue-persistence-test.exe
-          xvfb-run -a wine ./transfer-concurrency-test.exe
-          xvfb-run -a wine ./bandwidth-throttle-test.exe
+          run_test sort-and-commands-test
+          run_test remote-to-remote-test
+          run_test move-entry-test
+          run_test edit-session-test
+          run_test queue-persistence-test
+          run_test transfer-concurrency-test
+          run_test bandwidth-throttle-test
+          run_test sync-browsing-test
 
       # Single-config generator (mingw64-cmake defaults to Unix
       # Makefiles) — unlike the old MSVC/Ninja multi-config setup, the
