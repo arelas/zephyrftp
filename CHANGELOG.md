@@ -8,6 +8,17 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.11] — Light theme
+
+### Added
+
+- **Light theme.** A new "Theme: Dark/Light" choice in Preferences,
+  switching immediately with no restart required — the app-wide
+  stylesheet, every toolbar/pane icon, and the transfer queue's status
+  colors all re-render in place. Dark stays the default; accent colors
+  (blue/green/red/amber) are unchanged between the two, only the
+  backgrounds/borders/neutral text actually differ.
+
 ## [0.7.10] — Scripting/automation (CLI mode)
 
 ### Added
@@ -1728,7 +1739,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.10...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.11...HEAD
+[0.7.11]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.11
 [0.7.10]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.10
 [0.7.9]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.9
 [0.7.8]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.8

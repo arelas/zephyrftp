@@ -112,6 +112,12 @@ FilePaneWidget::FilePaneWidget(RemoteBackend *backend, QWidget *parent, AppSetti
         connect(m_settings, &AppSettings::showHiddenFilesChanged, this, [this](bool) {
             rebuildModel();
         });
+        // Same "connect once here, not in setBackend()" reasoning as
+        // above — live Dark/Light switching, see retintIcons()'s own
+        // doc comment.
+        connect(m_settings, &AppSettings::themeChanged, this, [this](Theme) {
+            retintIcons();
+        });
     }
 }
 
@@ -216,24 +222,24 @@ void FilePaneWidget::buildUi()
     // not upload/download/connect-style actions, so they deliberately sit
     // outside the four-color system the rest of the icon set follows.
     m_backButton = new QToolButton(this);
-    m_backButton->setIcon(IconTheme::tintedIcon(":/icons/arrow-left.svg", IconTheme::Gray));
+    m_backButton->setIcon(IconTheme::tintedIcon(":/icons/arrow-left.svg", IconTheme::Gray()));
     m_backButton->setToolTip(tr("Back"));
     m_backButton->setEnabled(false);
     connect(m_backButton, &QToolButton::clicked, this, &FilePaneWidget::goBack);
 
     m_forwardButton = new QToolButton(this);
-    m_forwardButton->setIcon(IconTheme::tintedIcon(":/icons/arrow-right.svg", IconTheme::Gray));
+    m_forwardButton->setIcon(IconTheme::tintedIcon(":/icons/arrow-right.svg", IconTheme::Gray()));
     m_forwardButton->setToolTip(tr("Forward"));
     m_forwardButton->setEnabled(false);
     connect(m_forwardButton, &QToolButton::clicked, this, &FilePaneWidget::goForward);
 
     m_upButton = new QToolButton(this);
-    m_upButton->setIcon(IconTheme::tintedIcon(":/icons/corner-left-up.svg", IconTheme::Gray));
+    m_upButton->setIcon(IconTheme::tintedIcon(":/icons/corner-left-up.svg", IconTheme::Gray()));
     m_upButton->setToolTip(tr("Up one level"));
     connect(m_upButton, &QToolButton::clicked, this, &FilePaneWidget::goUp);
 
     m_homeButton = new QToolButton(this);
-    m_homeButton->setIcon(IconTheme::tintedIcon(":/icons/home.svg", IconTheme::Gray));
+    m_homeButton->setIcon(IconTheme::tintedIcon(":/icons/home.svg", IconTheme::Gray()));
     m_homeButton->setToolTip(tr("Home"));
     connect(m_homeButton, &QToolButton::clicked, this, &FilePaneWidget::goHome);
 
@@ -370,7 +376,7 @@ QIcon FilePaneWidget::iconForEntry(const RemoteEntry &e)
         // well enough for a re-skin pass.
         if (e.name.startsWith(QLatin1Char('.')))
             return IconTheme::tintedIcon(":/icons/lock.svg", IconTheme::Amber);
-        return IconTheme::tintedIcon(":/icons/folder.svg", IconTheme::Gray);
+        return IconTheme::tintedIcon(":/icons/folder.svg", IconTheme::Gray());
     }
 
     const QString lower = e.name.toLower();
@@ -387,7 +393,7 @@ QIcon FilePaneWidget::iconForEntry(const RemoteEntry &e)
     if (lower.endsWith(QLatin1String(".exe")) || lower.endsWith(QLatin1String(".app")))
         return IconTheme::tintedIcon(":/icons/app-window.svg", IconTheme::Green);
 
-    return IconTheme::tintedIcon(":/icons/file.svg", IconTheme::Gray);
+    return IconTheme::tintedIcon(":/icons/file.svg", IconTheme::Gray());
 }
 
 void FilePaneWidget::navigateTo(const QString &path)
@@ -421,6 +427,15 @@ void FilePaneWidget::onPathBarReturnPressed()
         return;
     }
     navigateTo(m_pathBar->text());
+}
+
+void FilePaneWidget::retintIcons()
+{
+    m_backButton->setIcon(IconTheme::tintedIcon(":/icons/arrow-left.svg", IconTheme::Gray()));
+    m_forwardButton->setIcon(IconTheme::tintedIcon(":/icons/arrow-right.svg", IconTheme::Gray()));
+    m_upButton->setIcon(IconTheme::tintedIcon(":/icons/corner-left-up.svg", IconTheme::Gray()));
+    m_homeButton->setIcon(IconTheme::tintedIcon(":/icons/home.svg", IconTheme::Gray()));
+    rebuildModel();
 }
 
 void FilePaneWidget::rebuildModel()
@@ -704,7 +719,7 @@ void FilePaneWidget::showContextMenu(const QPoint &pos)
     // (multiple simultaneous edit sessions from one click isn't a
     // real use case worth the added complexity).
     QAction *editAction = menu.addAction(
-        IconTheme::tintedIcon(":/icons/app-window.svg", IconTheme::Gray), tr("Edit"));
+        IconTheme::tintedIcon(":/icons/app-window.svg", IconTheme::Gray()), tr("Edit"));
     editAction->setEnabled(selected.size() == 1 && !selected.first().isDir
                             && !m_backend->isLocalFilesystem());
 

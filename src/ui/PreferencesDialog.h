@@ -25,6 +25,7 @@ private:
     AppSettings *m_settings;
     QCheckBox *m_showHiddenFilesCheck;
     QComboBox *m_defaultProtocolCombo;
+    QComboBox *m_themeCombo;
     QLineEdit *m_externalEditorCommandEdit;
 
     // A single global proxy applied to every SFTP/FTP/FTPS connection —

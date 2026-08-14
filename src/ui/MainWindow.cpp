@@ -43,6 +43,9 @@
 #include <QCloseEvent>
 #include <QLineEdit>
 #include <QInputDialog>
+#include <QFile>
+#include <QTextStream>
+#include <QApplication>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -73,6 +76,12 @@ MainWindow::MainWindow(QWidget *parent)
     // either build*() method — this is the one place both already exist.
     connect(m_leftPane, &FilePaneWidget::commandLogged, m_commandsPane, &CommandsPaneWidget::appendLine);
     connect(m_rightPane, &FilePaneWidget::commandLogged, m_commandsPane, &CommandsPaneWidget::appendLine);
+
+    // Live Dark/Light switching — see onThemeChanged()'s own doc comment.
+    // Wired here for the same reason as the two connections just above:
+    // the slot touches m_leftPane/m_rightPane/m_transferQueueWidget, so
+    // everything it needs already has to exist.
+    connect(m_settings, &AppSettings::themeChanged, this, &MainWindow::onThemeChanged);
 
     // Right after buildLayout() creates both panes — a restored
     // LocalToLocal item dispatches against m_leftPane immediately
@@ -320,11 +329,11 @@ void MainWindow::buildToolbar()
     // connect/disconnect/refresh do. QToolButton:checked in theme.qss is
     // what actually makes "currently shown" visible here.
     QAction *transfersToggle = m_transfersDock->toggleViewAction();
-    transfersToggle->setIcon(IconTheme::tintedIcon(":/icons/arrows-left-right.svg", IconTheme::Gray));
+    transfersToggle->setIcon(IconTheme::tintedIcon(":/icons/arrows-left-right.svg", IconTheme::Gray()));
     toolbar->addAction(transfersToggle);
 
     QAction *commandsToggle = m_commandsDock->toggleViewAction();
-    commandsToggle->setIcon(IconTheme::tintedIcon(":/icons/terminal-2.svg", IconTheme::Gray));
+    commandsToggle->setIcon(IconTheme::tintedIcon(":/icons/terminal-2.svg", IconTheme::Gray()));
     toolbar->addAction(commandsToggle);
 
     toolbar->addSeparator();
@@ -334,9 +343,9 @@ void MainWindow::buildToolbar()
     // keep in sync for a plain one-shot dialog trigger — connecting two
     // actions to the same slot is simpler than threading one shared
     // QAction between the two build*() methods for no behavioral gain).
-    auto *preferencesAction = toolbar->addAction(
-        IconTheme::tintedIcon(":/icons/adjustments.svg", IconTheme::Gray), tr("Preferences..."));
-    connect(preferencesAction, &QAction::triggered, this, &MainWindow::onPreferencesTriggered);
+    m_preferencesAction = toolbar->addAction(
+        IconTheme::tintedIcon(":/icons/adjustments.svg", IconTheme::Gray()), tr("Preferences..."));
+    connect(m_preferencesAction, &QAction::triggered, this, &MainWindow::onPreferencesTriggered);
 
     // Blue — "primary / navigation / download / info" per IconTheme's own
     // palette comment; About is the one place "info" applies.
@@ -416,7 +425,8 @@ void MainWindow::buildTransferQueue()
     // menu either way.
     m_transfersDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable
                                  | QDockWidget::DockWidgetClosable);
-    m_transfersDock->setWidget(new TransferQueueWidget(m_transferManager, m_transfersDock));
+    m_transferQueueWidget = new TransferQueueWidget(m_transferManager, m_transfersDock);
+    m_transfersDock->setWidget(m_transferQueueWidget);
     addDockWidget(Qt::BottomDockWidgetArea, m_transfersDock);
 
     // Without this, the table's own sizeHint claims more first-run height
@@ -561,6 +571,43 @@ void MainWindow::onPreferencesTriggered()
 {
     PreferencesDialog dialog(m_settings, this);
     dialog.exec();
+}
+
+void MainWindow::onThemeChanged(Theme theme)
+{
+    IconTheme::setTheme(theme);
+
+    // Qt re-polishes every existing widget automatically on a
+    // QApplication-level setStyleSheet() call — a well-established, safe
+    // operation, not something needing per-widget intervention.
+    const QString themeResourcePath = theme == Theme::Light
+        ? QStringLiteral(":/theme/theme-light.qss")
+        : QStringLiteral(":/theme/theme.qss");
+    QFile themeFile(themeResourcePath);
+    if (themeFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        qApp->setStyleSheet(QTextStream(&themeFile).readAll());
+    }
+
+    // Re-tint the few icons this class set once at construction using a
+    // theme-dependent color — see m_preferencesAction's own doc comment
+    // for why it's the only toolbar action needing this (everything else
+    // either uses a fixed accent color or is reachable via
+    // m_transfersDock/m_commandsDock's own toggleViewAction()).
+    m_transfersDock->toggleViewAction()->setIcon(
+        IconTheme::tintedIcon(":/icons/arrows-left-right.svg", IconTheme::Gray()));
+    m_commandsDock->toggleViewAction()->setIcon(
+        IconTheme::tintedIcon(":/icons/terminal-2.svg", IconTheme::Gray()));
+    m_preferencesAction->setIcon(
+        IconTheme::tintedIcon(":/icons/adjustments.svg", IconTheme::Gray()));
+
+    // m_leftPane/m_rightPane are NOT called here — each already
+    // self-connects its own retintIcons() to m_settings->themeChanged in
+    // its constructor (see FilePaneWidget's own doc comment on that
+    // connection), so calling it again here would just redo the same
+    // work a second time. TransferQueueWidget doesn't take an
+    // AppSettings* today, so it can't self-subscribe the same way —
+    // triggered explicitly here instead.
+    m_transferQueueWidget->retintIcons();
 }
 
 void MainWindow::onCompareDirectoriesTriggered()

@@ -1,0 +1,205 @@
+/* ============================================================
+   ZephyrFTP QSS theme — light variant. Same structure and same
+   9-token set as theme.qss (the dark variant this app shipped with
+   first), just remapped for a light background — see that file's own
+   header comment for why there's no shared-variable mechanism between
+   the two (Qt Style Sheets have no CSS-custom-property equivalent).
+   Accent colors (--zf-blue, --zf-green) are UNCHANGED from the dark
+   variant — saturated enough to read against either background — only
+   the neutrals (background/surface/border/text) actually differ.
+   ============================================================ */
+
+QMainWindow, QDialog, QWidget#zfRoot {
+    background-color: #ffffff;   /* --zf-bg (light) */
+    color: #1a1d23;               /* --zf-text-primary (light) */
+}
+
+QToolBar {
+    background-color: #eef0f3;   /* --zf-surface (light) */
+    border-bottom: 1px solid #d8dce2;   /* --zf-border (light) */
+    spacing: 6px;
+    padding: 4px 6px;
+}
+
+/* --zf-border (light), darkened — see theme.qss's own comment on why
+   the toolbar's group dividers need more contrast against its surface
+   color than the plain border value used everywhere else. */
+QToolBar::separator {
+    background-color: #c5cad2;
+    width: 1px;
+    margin: 4px 6px;
+}
+
+QToolButton {
+    background: transparent;
+    border: none;
+    border-radius: 6px;          /* --zf-radius */
+    padding: 6px;
+    color: #5c6472;               /* --zf-text-secondary (light) */
+}
+QToolButton:hover {
+    background-color: rgba(0, 0, 0, 12);   /* --zf-surface-hover — darkens a light surface, mirrors the dark variant's whitening overlay */
+}
+/* Same blue tint QTreeView/QTableWidget selection and QMenu::item:selected
+   already use for "this is the active one" — unchanged from the dark
+   variant, see theme.qss's own comment. */
+QToolButton:checked {
+    background-color: rgba(91, 141, 239, 26);   /* --zf-blue-tint */
+}
+
+QTreeView, QTableWidget {
+    background-color: #ffffff;   /* --zf-bg (light) */
+    color: #1a1d23;               /* --zf-text-primary (light) */
+    border: none;
+    alternate-background-color: rgba(0, 0, 0, 4);
+    selection-background-color: rgba(91, 141, 239, 26);   /* --zf-blue-tint */
+    selection-color: #1a1d23;
+    font-size: 12px;
+}
+QTreeView::item:hover, QTableWidget::item:hover {
+    background-color: rgba(0, 0, 0, 8);   /* --zf-surface-hover (light) */
+}
+
+/* Commands pane's live log — same palette as QTreeView/QTableWidget
+   above, see theme.qss's own comment on why this needs an explicit
+   rule at all. */
+QPlainTextEdit {
+    background-color: #ffffff;   /* --zf-bg (light) */
+    color: #1a1d23;               /* --zf-text-primary (light) */
+    border: none;
+    selection-background-color: rgba(91, 141, 239, 26);   /* --zf-blue-tint */
+    selection-color: #1a1d23;
+    font-size: 12px;
+}
+
+QHeaderView::section {
+    background-color: #eef0f3;   /* --zf-surface (light) */
+    color: #1a1d23;               /* --zf-text-primary (light) */
+    border: none;
+    border-bottom: 1px solid #d8dce2;   /* --zf-border (light) */
+    border-right: 1px solid #d8dce2;    /* --zf-border (light) — faint divider between header columns */
+    padding: 3px 8px;
+    font-size: 11px;
+}
+
+QLineEdit, QSpinBox, QComboBox {
+    background-color: #eef0f3;   /* --zf-surface (light) */
+    border: 1px solid #d8dce2;   /* --zf-border (light) */
+    color: #1a1d23;               /* --zf-text-primary (light) */
+    padding: 6px 8px;
+    border-radius: 6px;          /* --zf-radius */
+    font-size: 12px;
+}
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
+    border-color: #5b8def;       /* --zf-blue */
+}
+
+/* Same reasoning as theme.qss's own identical rule. */
+QComboBox::drop-down {
+    border: none;
+    width: 24px;
+}
+QComboBox::down-arrow {
+    image: url(:/icons/chevron-down-muted.svg);
+    width: 12px;
+    height: 12px;
+}
+
+QLabel {
+    color: #5c6472;               /* --zf-text-secondary (light) */
+    font-size: 11px;
+}
+
+/* CommandsPaneWidget's bottom-of-pane divider — same token every other
+   divider line here already uses, see theme.qss's own comment. */
+QFrame#commandsDivider {
+    background-color: #d8dce2;   /* --zf-border (light) */
+    border: none;
+}
+
+QPushButton {
+    background: transparent;
+    border: 1px solid #d8dce2;   /* --zf-border (light) */
+    color: #1a1d23;               /* --zf-text-primary (light) */
+    padding: 6px 14px;
+    border-radius: 6px;          /* --zf-radius */
+    font-size: 12px;
+}
+QPushButton:hover {
+    background-color: rgba(0, 0, 0, 8);
+}
+
+/* Set dynamic property primary="true" on a QPushButton — same
+   green-tinted treatment as the dark variant, unchanged. */
+QPushButton[primary="true"] {
+    background-color: rgba(52, 199, 142, 30);   /* --zf-green-tint */
+    border-color: #34c78e;       /* --zf-green */
+    color: #1b8f63;               /* darkened green — the dark variant's plain --zf-green (#34c78e) reads as too pale for BODY TEXT on a white background, even though it's fine as a border/tint accent at the same value */
+}
+QPushButton[primary="true"]:hover {
+    background-color: rgba(52, 199, 142, 45);
+}
+
+QStatusBar {
+    background-color: #ffffff;   /* --zf-bg (light) */
+    color: #5c6472;               /* --zf-text-secondary (light) */
+    border-top: 1px solid #d8dce2;   /* --zf-border (light) */
+    font-size: 11px;
+}
+
+QDockWidget {
+    color: #1a1d23;
+    titlebar-close-icon: none;
+}
+QDockWidget::title {
+    background-color: #eef0f3;   /* --zf-surface (light) */
+    border-bottom: 1px solid #d8dce2;   /* --zf-border (light) */
+    padding: 6px 10px;
+    font-size: 11px;
+}
+
+QMenu {
+    background-color: #eef0f3;   /* --zf-surface (light) */
+    border: 1px solid #d8dce2;   /* --zf-border (light) */
+    color: #1a1d23;
+    padding: 4px;
+}
+QMenu::item {
+    padding: 5px 20px;
+    border-radius: 4px;
+}
+QMenu::item:selected {
+    background-color: rgba(91, 141, 239, 26);   /* --zf-blue-tint */
+}
+QMenu::item:disabled {
+    color: #9098a8;               /* --zf-text-muted (light) */
+}
+
+QProgressBar {
+    background-color: #d8dce2;   /* --zf-border (light), used as track color per .zf-progress-track */
+    border: none;
+    border-radius: 4px;
+    text-align: center;
+    color: transparent;           /* hide the built-in percentage text — TransferQueueWidget shows it in its own column */
+    max-height: 6px;
+}
+/* Chunk color is set per-item at runtime via setStyleSheet() on the
+   individual QProgressBar — see theme.qss's own identical comment and
+   TransferQueueWidget::onItemUpdated()/retintIcons(). */
+
+QSplitter::handle {
+    background-color: #d8dce2;   /* --zf-border (light) */
+}
+
+QScrollBar:vertical, QScrollBar:horizontal {
+    background: #ffffff;         /* --zf-bg (light) */
+    border: none;
+}
+QScrollBar::handle {
+    background: #d8dce2;         /* --zf-border (light) */
+    border-radius: 4px;
+}
+QScrollBar::add-line, QScrollBar::sub-line {
+    height: 0;
+    width: 0;
+}

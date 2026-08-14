@@ -4,6 +4,7 @@
 #include <QByteArray>
 #include "backends/Protocol.h"
 #include "backends/ProxyConfig.h"
+#include "Theme.h"
 
 // App-wide preferences, persisted the same way SiteStore persists
 // SavedSite — a hand-written JSON file under
@@ -128,8 +129,19 @@ public:
     bool synchronizedBrowsingEnabled() const { return m_synchronizedBrowsingEnabled; }
     void setSynchronizedBrowsingEnabled(bool enabled);
 
+    // Dark (default) or Light. Unlike defaultProtocol/proxy*/bandwidth
+    // above, this DOES need a change signal — live switching (not
+    // restart-required) applies immediately: IconTheme's tinted-icon
+    // colors, the app-wide QSS, and every already-visible icon all need
+    // to react the instant this changes, the same "propagate live to
+    // everything already on screen" reasoning showHiddenFiles already
+    // established as this class's one existing precedent for it.
+    Theme theme() const { return m_theme; }
+    void setTheme(Theme value);
+
 signals:
     void showHiddenFilesChanged(bool value);
+    void themeChanged(Theme value);
 
 private:
     static QString filePath();
@@ -149,4 +161,5 @@ private:
     bool m_filenameFilterVisible = true;
     int m_bandwidthLimitKBps = 0;
     bool m_synchronizedBrowsingEnabled = false;
+    Theme m_theme = Theme::Dark;
 };

@@ -80,7 +80,7 @@ void CompareDialog::buildUi()
            "re-run Compare Directories to continue."),
         this);
     m_staleWarningLabel->setWordWrap(true);
-    m_staleWarningLabel->setStyleSheet(QStringLiteral("color: #e0574f;"));   // IconTheme::Red, matches its hex
+    m_staleWarningLabel->setStyleSheet(QStringLiteral("color: %1;").arg(IconTheme::Red.name()));
     m_staleWarningLabel->setVisible(false);
     layout->addWidget(m_staleWarningLabel);
 
@@ -195,7 +195,7 @@ void CompareDialog::populateTree()
         item->setText(0, name);
         item->setIcon(0, IconTheme::tintedIcon(entry.isDir ? QStringLiteral(":/icons/folder.svg")
                                                              : QStringLiteral(":/icons/file.svg"),
-                                                IconTheme::Gray, 16));
+                                                IconTheme::Gray(), 16));
         item->setText(1, statusText(entry.status));
         item->setText(2, sideText(entry.status != CompareStatus::OnlyRight, entry.isDir,
                                    entry.leftSize, entry.leftModified));

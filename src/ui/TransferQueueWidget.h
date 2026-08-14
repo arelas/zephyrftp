@@ -26,6 +26,16 @@ public:
     // FilePaneWidget::parentOfPath() is public.
     static QString directionText(TransferDirection direction);
 
+    // Live Dark/Light switching — this widget doesn't take an
+    // AppSettings* (unlike FilePaneWidget), so it can't self-subscribe
+    // to themeChanged the same way; MainWindow::onThemeChanged() calls
+    // this explicitly instead. Re-runs onItemUpdated() for every
+    // currently-queued item (which already re-sets its own status/
+    // direction icons and progress-bar chunk color from IconTheme) —
+    // no separate re-tint logic needed, this just re-triggers the
+    // existing per-row rendering path.
+    void retintIcons();
+
 private slots:
     void onItemAdded(const TransferItem &item);
     void onItemUpdated(const TransferItem &item);

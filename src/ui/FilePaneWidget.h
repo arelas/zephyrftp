@@ -253,6 +253,15 @@ private:
     // listDirectory() returned, filtered or not.
     void rebuildModel();
 
+    // Live Dark/Light switching — re-sets the 4 nav buttons' icons
+    // (set once in buildUi(), never touched again otherwise) via fresh
+    // IconTheme::tintedIcon() calls, then calls rebuildModel() so every
+    // currently-displayed row's per-file icon (computed fresh inside it)
+    // also picks up the new color immediately. Connected to
+    // m_settings->themeChanged in the constructor — this pane doesn't
+    // need MainWindow to know to call it.
+    void retintIcons();
+
     // Sets/replaces the path bar's leading icon (device-laptop blue for
     // local, server green for remote) — called from setBackend() since
     // that's the only thing that can change which of the two applies.

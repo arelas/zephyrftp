@@ -1,5 +1,6 @@
 <RCC>
     <qresource prefix="/theme">
         <file>theme.qss</file>
+        <file>theme-light.qss</file>
     </qresource>
 </RCC>

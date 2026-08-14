@@ -4,6 +4,7 @@
 #include <QHash>
 #include <QPointer>
 #include "../backends/RemoteEntry.h"
+#include "../Theme.h"
 
 class FilePaneWidget;
 class TransferManager;
@@ -16,6 +17,7 @@ class AppSettings;
 class CommandsPaneWidget;
 class EditSessionManager;
 class CompareDialog;
+class TransferQueueWidget;
 struct ConnectionRequest;
 
 // Top-level window: two FilePaneWidgets side by side (commander style),
@@ -87,6 +89,15 @@ private slots:
     void onTransferSucceeded();
     void onAboutTriggered();
     void onPreferencesTriggered();
+
+    // Fired by AppSettings::themeChanged — live Dark/Light switching, no
+    // restart. Re-applies the app-wide QSS, re-tints every icon this
+    // class itself set once at construction (most icons don't need this:
+    // see IconTheme.h's own comment on why only Gray()/GrayMuted() are
+    // theme-dependent, and everywhere else already recomputes its icon
+    // on every call), and asks both panes' + the transfer queue's own
+    // retintIcons() to do the same for theirs.
+    void onThemeChanged(Theme theme);
 
     // "Compare Directories..." (View menu) — opens (or raises, if one is
     // already open) a CompareDialog against the two panes' current
@@ -204,6 +215,10 @@ private:
     // WM-drawn close button on its own top-level window, which the app had
     // no way to undo) always has a way back.
     QDockWidget *m_transfersDock = nullptr;
+    // The dock's own widget() — stored directly (rather than
+    // qobject_cast<TransferQueueWidget*>(m_transfersDock->widget()) every
+    // time) specifically so onThemeChanged() can call its retintIcons().
+    TransferQueueWidget *m_transferQueueWidget = nullptr;
     // Built in buildCommandsPane(), same reasoning/ordering as
     // m_transfersDock above (needs to exist before buildMenuBar() builds
     // the View menu's "Commands" entry from its toggleViewAction()).
@@ -232,6 +247,16 @@ private:
     // in buildToolbar() reparents it into the toolbar; QLineEdit doesn't
     // care that its initial parent (this) differs from where it ends up.
     QLineEdit *m_quickConnectEdit = nullptr;
+
+    // Built in buildToolbar() — stored (unlike sitesAction/connectAction/
+    // disconnectAction/refreshAction/aboutAction, still plain locals
+    // there) specifically because its icon is Gray()-tinted, one of the
+    // only two theme-dependent colors (see IconTheme.h), so
+    // onThemeChanged() needs to reach it again to re-tint it. Every other
+    // toolbar/menu action either uses a fixed accent color (unaffected by
+    // a theme switch) or is already reachable via m_transfersDock/
+    // m_commandsDock's own toggleViewAction().
+    QAction *m_preferencesAction = nullptr;
 
     // Synchronized browsing — see AppSettings::synchronizedBrowsingEnabled()
     // and onPaneDirectoryChanged()'s own doc comments for the full design.

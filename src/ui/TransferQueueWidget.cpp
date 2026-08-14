@@ -186,13 +186,13 @@ QIcon TransferQueueWidget::statusIcon(const TransferItem &item)
     if (item.status == TransferStatus::Failed)
         return IconTheme::tintedIcon(":/icons/alert-triangle.svg", IconTheme::Red);
     if (item.status == TransferStatus::Cancelled)
-        return IconTheme::tintedIcon(":/icons/x.svg", IconTheme::GrayMuted);
+        return IconTheme::tintedIcon(":/icons/x.svg", IconTheme::GrayMuted());
     if (item.status == TransferStatus::Skipped)
         // Same icon/color as Cancelled — both mean "didn't happen, not an
         // error" — distinguished by the status text next to it, not a
         // separate accent color the design's four-color system doesn't
         // really have room for a fifth meaning in anyway.
-        return IconTheme::tintedIcon(":/icons/x.svg", IconTheme::GrayMuted);
+        return IconTheme::tintedIcon(":/icons/x.svg", IconTheme::GrayMuted());
     if (item.status == TransferStatus::Paused)
         return IconTheme::tintedIcon(":/icons/player-pause.svg", IconTheme::Amber);
     if (item.status == TransferStatus::PendingReconnect)
@@ -201,7 +201,7 @@ QIcon TransferQueueWidget::statusIcon(const TransferItem &item)
         // now, PendingReconnect means no connection exists at all yet.
         // plug.svg (not the direction-shaped icons below) since there's
         // no data flowing in either direction to depict.
-        return IconTheme::tintedIcon(":/icons/plug.svg", IconTheme::Gray);
+        return IconTheme::tintedIcon(":/icons/plug.svg", IconTheme::Gray());
 
     // Queued or InProgress: a direction-shaped icon (the mockup doesn't
     // cover local-to-local, remote-to-remote, move, or unsupported
@@ -230,7 +230,7 @@ QIcon TransferQueueWidget::statusIcon(const TransferItem &item)
     case TransferDirection::Unsupported:    path = ":/icons/alert-triangle.svg"; break;
     }
 
-    QColor color = IconTheme::Gray;   // Queued default
+    QColor color = IconTheme::Gray();   // Queued default
     if (item.status == TransferStatus::InProgress) {
         switch (item.direction) {
         case TransferDirection::LocalToRemote: color = IconTheme::Green; break;   // active upload
@@ -259,7 +259,7 @@ QIcon TransferQueueWidget::statusIcon(const TransferItem &item)
         // that hadn't started. Green matches the same "active copy"
         // reading LocalToRemote's upload already uses.
         case TransferDirection::LocalToLocal: color = IconTheme::Green; break;
-        default: color = IconTheme::Gray; break;
+        default: color = IconTheme::Gray(); break;
         }
     }
     return IconTheme::tintedIcon(path, color);
@@ -268,15 +268,15 @@ QIcon TransferQueueWidget::statusIcon(const TransferItem &item)
 QColor TransferQueueWidget::statusTextColor(TransferStatus status)
 {
     switch (status) {
-    case TransferStatus::Queued:      return IconTheme::Gray;
+    case TransferStatus::Queued:      return IconTheme::Gray();
     case TransferStatus::InProgress:  return IconTheme::Blue;
     case TransferStatus::Paused:      return IconTheme::Amber;
     case TransferStatus::Done:        return IconTheme::Green;
     case TransferStatus::Failed:      return IconTheme::Red;
-    case TransferStatus::Cancelled:   return IconTheme::GrayMuted;
-    case TransferStatus::Skipped:     return IconTheme::GrayMuted;
+    case TransferStatus::Cancelled:   return IconTheme::GrayMuted();
+    case TransferStatus::Skipped:     return IconTheme::GrayMuted();
     }
-    return IconTheme::Gray;
+    return IconTheme::Gray();
 }
 
 int TransferQueueWidget::percentFor(const TransferItem &item)
@@ -302,6 +302,12 @@ QString TransferQueueWidget::speedText(const TransferItem &item)
     if (bps >= 1024.0)
         return QStringLiteral("%1 KB/s").arg(bps / 1024.0, 0, 'f', 1);
     return QStringLiteral("%1 B/s").arg(item.speedBytesPerSec);
+}
+
+void TransferQueueWidget::retintIcons()
+{
+    for (const TransferItem &item : m_manager->items())
+        onItemUpdated(item);
 }
 
 void TransferQueueWidget::onItemAdded(const TransferItem &item)
@@ -422,11 +428,11 @@ void TransferQueueWidget::onItemUpdated(const TransferItem &item)
     // Chunk color depends on this specific item's data (status + direction),
     // so it has to be set per-widget here rather than as a single QSS rule
     // in theme.qss — see that file's comment on QProgressBar for why.
-    QColor chunkColor = IconTheme::Gray;
+    QColor chunkColor = IconTheme::Gray();
     switch (item.status) {
     case TransferStatus::Done:      chunkColor = IconTheme::Green; break;
     case TransferStatus::Failed:    chunkColor = IconTheme::Red; break;
-    case TransferStatus::Cancelled: chunkColor = IconTheme::GrayMuted; break;
+    case TransferStatus::Cancelled: chunkColor = IconTheme::GrayMuted(); break;
     case TransferStatus::Paused:    chunkColor = IconTheme::Amber; break;
     case TransferStatus::InProgress:
         // RemoteToRemote is phase-aware here too, matching statusIcon()'s
@@ -451,10 +457,10 @@ void TransferQueueWidget::onItemUpdated(const TransferItem &item)
         }
         break;
     case TransferStatus::Queued:
-        chunkColor = IconTheme::Gray;
+        chunkColor = IconTheme::Gray();
         break;
     case TransferStatus::Skipped:
-        chunkColor = IconTheme::GrayMuted;
+        chunkColor = IconTheme::GrayMuted();
         break;
     }
     progressBar->setStyleSheet(

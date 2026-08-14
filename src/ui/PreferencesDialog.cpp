@@ -3,6 +3,7 @@
 #include "../backends/Protocol.h"
 #include "../backends/ProxyConfig.h"
 #include "ProtocolCombo.h"
+#include "ThemeCombo.h"
 
 #include <QFormLayout>
 #include <QVBoxLayout>
@@ -18,6 +19,7 @@ PreferencesDialog::PreferencesDialog(AppSettings *settings, QWidget *parent)
     , m_settings(settings)
     , m_showHiddenFilesCheck(new QCheckBox(tr("Show hidden files (dotfiles)"), this))
     , m_defaultProtocolCombo(new QComboBox(this))
+    , m_themeCombo(new QComboBox(this))
     , m_externalEditorCommandEdit(new QLineEdit(this))
     , m_proxyTypeCombo(new QComboBox(this))
     , m_proxyHostEdit(new QLineEdit(this))
@@ -40,6 +42,15 @@ PreferencesDialog::PreferencesDialog(AppSettings *settings, QWidget *parent)
     connect(m_defaultProtocolCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
         const Protocol protocol = static_cast<Protocol>(m_defaultProtocolCombo->itemData(index).toInt());
         m_settings->setDefaultProtocol(protocol);
+    });
+
+    ThemeCombo::populate(m_themeCombo);
+    const int themeIndex = m_themeCombo->findData(QVariant::fromValue(int(m_settings->theme())));
+    if (themeIndex >= 0)
+        m_themeCombo->setCurrentIndex(themeIndex);
+    connect(m_themeCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
+        const Theme theme = static_cast<Theme>(m_themeCombo->itemData(index).toInt());
+        m_settings->setTheme(theme);
     });
 
     // No {file}-style template substitution — a single command string,
@@ -124,6 +135,7 @@ PreferencesDialog::PreferencesDialog(AppSettings *settings, QWidget *parent)
     auto *form = new QFormLayout;
     form->addRow(tr("Local && remote panes:"), m_showHiddenFilesCheck);
     form->addRow(tr("Default protocol for new connections:"), m_defaultProtocolCombo);
+    form->addRow(tr("Theme:"), m_themeCombo);
     form->addRow(tr("External editor command:"), m_externalEditorCommandEdit);
 
     auto *proxyLabel = new QLabel(tr("<b>Proxy</b>"), this);

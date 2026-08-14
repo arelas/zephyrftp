@@ -72,7 +72,7 @@ void SiteManagerDialog::buildUi()
     connect(newSiteButton, &QPushButton::clicked, this, &SiteManagerDialog::onNewSite);
 
     m_duplicateButton = new QPushButton(tr("Duplicate"), this);
-    m_duplicateButton->setIcon(IconTheme::tintedIcon(":/icons/copy.svg", IconTheme::Gray));
+    m_duplicateButton->setIcon(IconTheme::tintedIcon(":/icons/copy.svg", IconTheme::Gray()));
     connect(m_duplicateButton, &QPushButton::clicked, this, &SiteManagerDialog::onDuplicateSite);
 
     m_deleteButton = new QPushButton(tr("Delete"), this);
@@ -344,7 +344,7 @@ void SiteManagerDialog::rebuildTree()
             auto it = groupItems.find(site.group);
             if (it == groupItems.end()) {
                 auto *folderItem = new QTreeWidgetItem(m_tree, {site.group});
-                folderItem->setIcon(0, IconTheme::tintedIcon(":/icons/folder.svg", IconTheme::Gray));
+                folderItem->setIcon(0, IconTheme::tintedIcon(":/icons/folder.svg", IconTheme::Gray()));
                 groupItems.insert(site.group, folderItem);
                 parent = folderItem;
             } else {
@@ -355,7 +355,7 @@ void SiteManagerDialog::rebuildTree()
         auto *siteItem = parent
             ? new QTreeWidgetItem(parent, {site.name})
             : new QTreeWidgetItem(m_tree, {site.name});
-        siteItem->setIcon(0, IconTheme::tintedIcon(":/icons/server.svg", IconTheme::Gray));
+        siteItem->setIcon(0, IconTheme::tintedIcon(":/icons/server.svg", IconTheme::Gray()));
         siteItem->setData(0, IdRole, site.id);
     }
 

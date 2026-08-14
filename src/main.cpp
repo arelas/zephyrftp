@@ -7,8 +7,10 @@
 #include <QCommandLineOption>
 #include <QTimer>
 #include "ui/MainWindow.h"
+#include "ui/IconTheme.h"
 #include "cli/ScriptParser.h"
 #include "cli/ScriptRunner.h"
+#include "AppSettings.h"
 
 int main(int argc, char *argv[])
 {
@@ -80,15 +82,32 @@ int main(int argc, char *argv[])
     }
     QApplication::setWindowIcon(appIcon);
 
-    // Dark theme ported from the design package's assets/zephyr-theme.css
-    // (see resources/theme.qss for the token-by-token mapping notes).
+    // Theme (Dark by default, ported from the design package's
+    // assets/zephyr-theme.css — see resources/theme.qss for the
+    // token-by-token mapping notes; resources/theme-light.qss is the
+    // light variant). Read via a short-lived, throwaway AppSettings
+    // instance — MainWindow constructs its own real, persistent one a
+    // few lines down; this early read only exists because the initial
+    // stylesheet has to be applied before any window (and therefore
+    // MainWindow's own AppSettings) exists yet. Deliberately not
+    // restructuring AppSettings ownership into main() to avoid one
+    // instead of the other — that would change MainWindow's constructor
+    // signature, which smoke-test/sync-browsing-test/transfer-queue-test
+    // all also construct directly.
+    AppSettings earlySettings;
+    IconTheme::setTheme(earlySettings.theme());
+    const QString themeResourcePath = earlySettings.theme() == Theme::Light
+        ? QStringLiteral(":/theme/theme-light.qss")
+        : QStringLiteral(":/theme/theme.qss");
+
     // Failure here is non-fatal — the app just falls back to Qt's default
     // platform style — so this doesn't need to be more than a warning.
-    QFile themeFile(":/theme/theme.qss");
+    QFile themeFile(themeResourcePath);
     if (themeFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
         app.setStyleSheet(QTextStream(&themeFile).readAll());
     } else {
-        qWarning("Could not load theme.qss from resources — falling back to default style");
+        qWarning("Could not load %s from resources — falling back to default style",
+                 qPrintable(themeResourcePath));
     }
 
     MainWindow window;

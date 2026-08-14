@@ -5,7 +5,7 @@ local files and a remote server side by side, then drag, drop, or
 double-click to move things between them. Think FileZilla or WinSCP,
 built fresh in Qt6.
 
-**Current version: 0.7.10 — alpha.** Real functionality, but real gaps
+**Current version: 0.7.11 — alpha.** Real functionality, but real gaps
 too — see [Known limitations](#known-limitations) before relying on
 this for anything you can't afford to get wrong. [Releases](https://github.com/arelas/zephyrftp/releases)
 has downloadable Windows, macOS, and Linux builds; [CHANGELOG.md](CHANGELOG.md)
@@ -148,10 +148,12 @@ tracks what's changed between them.
   Status, Progress, or Speed on the transfer queue. File panes default to
   folders first, then name descending; the transfer queue defaults to the
   order things were added.
-- **Dark theme**, built around a small set of colors that mean the same
-  thing everywhere in the app (green = connect/upload/success, red =
-  disconnect/delete/error, blue = navigation/download, amber = caution)
-  so you can read the state of things at a glance.
+- **Dark or Light theme** (Preferences), switching immediately with no
+  restart — built around a small set of colors that mean the same thing
+  everywhere in the app regardless of which one you pick (green =
+  connect/upload/success, red = disconnect/delete/error, blue =
+  navigation/download, amber = caution) so you can read the state of
+  things at a glance.
 - **Preferences** (Edit menu) — a "Show hidden files" toggle for both
   panes, a default protocol for new connections, and the command used to
   open a file for editing (see Edit-in-place below; leave it blank to

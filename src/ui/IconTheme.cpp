@@ -8,6 +8,36 @@
 namespace IconTheme {
 
 namespace {
+Theme s_currentTheme = Theme::Dark;
+}
+
+void setTheme(Theme theme)
+{
+    s_currentTheme = theme;
+}
+
+Theme currentTheme()
+{
+    return s_currentTheme;
+}
+
+QColor Gray()
+{
+    // --zf-text-secondary — matches resources/theme.qss's own token of
+    // the same name for whichever theme is active. Light value chosen to
+    // read reasonably against the light QSS's near-white background;
+    // see ARCHITECTURE.md's "Light theme" entry for the full color
+    // rationale.
+    return s_currentTheme == Theme::Light ? QColor(0x5c, 0x64, 0x72) : QColor(0x87, 0x90, 0xa0);
+}
+
+QColor GrayMuted()
+{
+    // --zf-text-muted, same reasoning as Gray() above.
+    return s_currentTheme == Theme::Light ? QColor(0x90, 0x98, 0xa8) : QColor(0x5c, 0x64, 0x72);
+}
+
+namespace {
 // Takes an already-constructed renderer rather than a resourcePath, and
 // is called twice per cache miss below (base + @2x) — a real inefficiency
 // found by code review: parsing the same SVG resource twice (via two

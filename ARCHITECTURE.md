@@ -3867,6 +3867,86 @@ to drive FileZilla itself for a same-desktop comparison.
   globbing/pipes in the script format, no genuinely Widgets-free CLI
   binary.
 
+  **Light theme** — the last remaining smaller v2 item, picked over
+  protocol breadth (WebDAV/S3, which still carries an open "is this
+  still an FTP client?" scope question) specifically because it had no
+  open scope question of its own and touched a well-understood set of
+  files. User decision: live switching, not restart-required — a real
+  step up in complexity, since every icon and stylesheet rule already
+  applied to existing widgets has to be re-applied in place.
+
+  New `src/Theme.h` (`enum class Theme { Dark, Light }`) — deliberately
+  NOT in `IconTheme.h` (Widgets-adjacent) or defined inline in
+  `AppSettings.h`: `app-settings-test` links `Qt6::Core` only, so the
+  enum needs an equally Core-safe home, mirroring `Protocol.h`'s own
+  layering. `AppSettings::theme()`/`setTheme()`/`themeChanged` copy
+  `showHiddenFiles`'s exact shape (the one existing precedent for "a
+  setting multiple live widgets react to").
+
+  `IconTheme::Gray()`/`GrayMuted()` are now functions, not plain
+  constants — confirmed by reading the file that these two are the ONLY
+  colors that actually need different values per theme (`Blue`/`Green`/
+  `Red`/`Amber` stay fixed constants, saturated enough to read against
+  either background, so their call sites needed no changes at all).
+  `tintedIcon()`'s existing cache already keys on `resourcePath + color
+  + size` (`IconTheme.cpp`), so once `Gray()`/`GrayMuted()` return a
+  different value, any FUTURE tint call naturally misses the cache and
+  renders fresh — no explicit cache-invalidation mechanism was needed,
+  simplifying live-switching meaningfully. The real remaining work was
+  narrower than it first looked: of six files calling `IconTheme::`,
+  only `FilePaneWidget`'s 4 nav buttons and one `MainWindow` toolbar
+  action (`m_preferencesAction`, newly promoted from a local variable to
+  a member for exactly this reason) are "set once, never touched again"
+  — every other icon (per-row file/status icons, every right-click
+  `QMenu`, `TransferQueueWidget`'s progress-bar chunk colors,
+  `SiteManagerDialog`'s tree icons) already recomputes on every call, so
+  it picks up a new color automatically the next time it renders.
+  `SiteManagerDialog`/`CompareDialog` are both freshly-constructed-per-
+  open dialogs — a live theme change while either happens to be open
+  leaving their already-set button icons stale until next open is an
+  accepted, disclosed scope boundary, not something wired up.
+  `FilePaneWidget` self-subscribes its own `retintIcons()` to
+  `m_settings->themeChanged` (it already takes an `AppSettings*`, same
+  as the `showHiddenFilesChanged` precedent); `TransferQueueWidget`
+  doesn't take one, so `MainWindow::onThemeChanged()` calls its public
+  `retintIcons()` explicitly instead — it just re-runs `onItemUpdated()`
+  for every currently-queued item, reusing the existing per-row render
+  path rather than duplicating it.
+
+  `resources/theme-light.qss` is a full parallel file, not a smaller
+  diff against `theme.qss` — Qt Style Sheets have no shared-variable
+  mechanism (confirmed by that file's own header comment), so every one
+  of its 9 base tokens needed its own light-appropriate remap. Accent
+  colors unchanged; the `rgba(255,255,255,N)` hover/alternate-row
+  overlays (which lighten a dark base) become `rgba(0,0,0,N)` (which
+  darken a light one).
+
+  **Verified via a disposable, non-committed target** (built, run, then
+  fully reverted, per the v0.6.18-era "headless widget construction +
+  `QWidget::grab()` screenshot review" technique) rather than a new
+  permanent required-suite target — this is a visual/config-value
+  feature, not new business logic. **Two real bugs found in the
+  verification harness itself, not the feature**, both worth remembering
+  for any future headless-widget verification work: (1) the first draft
+  never replicated `main.cpp`'s own initial dark-theme load before
+  constructing a real `MainWindow`, so its "before" screenshot showed
+  Qt's own default (light-ish) style rather than the app's real dark
+  theme — a coincidentally-similar-looking false negative, not a true
+  baseline; (2) the first draft drove a live theme switch through a
+  freshly-constructed, SEPARATE `AppSettings` instance rather than
+  `MainWindow`'s own — both write the same `settings.json` (shared test-
+  mode path), but `themeChanged` is a signal on one specific QObject
+  instance, and `MainWindow` was connected to its OWN `m_settings`, not
+  the harness's; file-level persistence sharing a path is not the same
+  thing as signal/slot object identity. Fixed by reading `main.cpp`'s
+  init sequence into the harness and by using
+  `window->findChild<AppSettings*>()` (works because `m_settings` is a
+  real QObject child of `MainWindow`, constructed as `new
+  AppSettings(this)`) instead of a second instance. Once both were
+  fixed, real before/after screenshots confirmed a genuine, correctly-
+  colored dark-to-light switch — see the session history for the actual
+  captured images.
+
 ## Design system
 
 The dark theme and icon set come from a design package (not included in

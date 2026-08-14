@@ -40,6 +40,15 @@ void AppSettings::setDefaultProtocol(Protocol value)
     save();
 }
 
+void AppSettings::setTheme(Theme value)
+{
+    if (m_theme == value)
+        return;
+    m_theme = value;
+    save();
+    emit themeChanged(value);
+}
+
 void AppSettings::setWindowGeometry(const QByteArray &geometry)
 {
     m_windowGeometry = geometry;
@@ -182,6 +191,7 @@ void AppSettings::load()
     m_filenameFilterVisible = obj.value(QStringLiteral("filenameFilterVisible")).toBool(true);
     m_bandwidthLimitKBps = obj.value(QStringLiteral("bandwidthLimitKBps")).toInt(0);
     m_synchronizedBrowsingEnabled = obj.value(QStringLiteral("synchronizedBrowsingEnabled")).toBool(false);
+    m_theme = themeFromKey(obj.value(QStringLiteral("theme")).toString());
 }
 
 void AppSettings::save() const
@@ -206,6 +216,7 @@ void AppSettings::save() const
     obj[QStringLiteral("filenameFilterVisible")] = m_filenameFilterVisible;
     obj[QStringLiteral("bandwidthLimitKBps")] = m_bandwidthLimitKBps;
     obj[QStringLiteral("synchronizedBrowsingEnabled")] = m_synchronizedBrowsingEnabled;
+    obj[QStringLiteral("theme")] = themeToKey(m_theme);
 
     // QSaveFile (not QFile + Truncate) — writes the new content to a
     // temporary file first and only atomically replaces settings.json on
