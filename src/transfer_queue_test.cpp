@@ -458,9 +458,24 @@ int main(int argc, char *argv[])
     // many items) and (b) the end state is still fully correct — every
     // item present, correctly sorted, nothing dropped by the coalescing
     // itself. A fresh TransferManager/TransferQueueWidget pair, isolated
-    // from every earlier phase. ----
+    // from every earlier phase.
+    //
+    // Scheduled with a LARGE gap after phase5 (4200ms + its own ~400ms
+    // nested drain), not just enough for the nominal case — a real bug
+    // found on real CI (a slower/more loaded macOS runner, not local):
+    // phase5's own wait is a NESTED QEventLoop::exec(), and a nested
+    // loop pumps the WHOLE app's pending timer queue, not just events
+    // scoped to itself — so if phase5's nested drain is still running
+    // when this timer becomes due, phase6 (and this test's OWN
+    // aggregation, chained to phase6's completion below) can fire
+    // REENTRANTLY from inside phase5's still-in-progress lambda,
+    // printing a result before phase5 ever finishes setting phase5Pass.
+    // A wide margin here is cheap insurance against that same class of
+    // collision recurring under different CI timing, matching the
+    // generous-margin philosophy this whole file already uses for
+    // phases 1-5. ----
     bool phase6Pass = false;
-    QTimer::singleShot(5000, &app, [&]() {
+    QTimer::singleShot(7000, &app, [&]() {
         auto *bulkManager = new TransferManager(&app);
         auto *bulkWidget = new TransferQueueWidget(bulkManager);
         auto *table = bulkWidget->findChild<QTableWidget *>();
