@@ -440,7 +440,7 @@ representative of any real desktop:
 
 ## Running the test suites
 
-Twenty-one `EXCLUDE_FROM_ALL` CMake targets make up the required suite as
+Twenty-two `EXCLUDE_FROM_ALL` CMake targets make up the required suite as
 of this writing — not part of a normal `make`, built and run
 explicitly, and all of them (not just a "core" subset) need to actually
 pass before a change is done. The count keeps growing as the project
@@ -1066,6 +1066,33 @@ cmake --build build --target compare-sync-test
 QT_QPA_PLATFORM=offscreen ./build/compare-sync-test
 ```
 
+### `script-runner-test`
+
+Self-contained, `EXCLUDE_FROM_ALL`, added to all five `build.yml` jobs —
+Scripting/automation's own coverage. `ScriptParser` correctness (comments/
+blank lines/quoted arguments/unknown commands/wrong argument counts — an
+invalid script always rejects the WHOLE thing, nothing partially runs)
+needs no event loop at all; `ScriptRunner` execution runs against a real
+`LocalBackend`-backed remote pane via `attachRemotePaneForTesting()`,
+which skips the `open` command's `SiteStore`/`CredentialStore`/network
+path entirely — the same reason `verify-credential-store` is a live-only
+target rather than part of this required suite: a real OS keyring session
+isn't something a CI container can reliably guarantee. Covers
+`lcd`/`cd`/`put`/`get`/`ls`/`lls`/`rm`/`mkdir`/`mv` against two real local
+directories, and `mirror --delete` end-to-end — specifically proving the
+completion barrier actually works: every assertion after a script
+finishes runs from `ScriptRunner::finished`'s own handler, so a barrier
+that let the process race ahead of its own queued transfers/deletes
+would show up as a real, failing assertion here, not a flake to
+rationalize away. A separate, NOT-required `verify-script-runner-live`
+(see the live-server section below) covers the real `open` path against
+a real local `sshd`.
+
+```
+cmake --build build --target script-runner-test
+QT_QPA_PLATFORM=offscreen ./build/script-runner-test
+```
+
 ## Live-server verification (SFTP public-key auth, FTP/FTPS, cancel/pause/resume)
 
 The targets above are all deliberately self-contained — no external
@@ -1287,6 +1314,26 @@ entries, so it's safe to run against a real, in-use keyring:
 ```
 cmake --build build --target verify-credential-store
 QT_QPA_PLATFORM=offscreen ./build/verify-credential-store
+```
+
+`verify-script-runner-live` covers the one thing `script-runner-test`
+deliberately can't: the real `open <site-name>` path (a real `SavedSite`,
+a real host-key trust decision, a real `SftpBackend` connection) against
+`start-sftp-pubkey.sh`'s server. Public-key auth with no passphrase, so
+it needs no real OS keyring dependency either — establishes trust for
+real first (a real `HostKeyVerifier`, auto-accepted, same technique
+`verify-sftp-pubkey` already uses), then runs a real `ScriptRunner`
+script through `open` against that now-trusted host and confirms it
+connects silently, with no prompt — the real-server proof behind
+ARCHITECTURE.md's "Scripting/automation" entry that a null
+`HostKeyVerifier*`/`CertificateVerifier*` is safe specifically because an
+already-trusted host never calls into the verifier at all:
+
+```
+tools/local-test-servers/start-sftp-pubkey.sh
+cmake --build build --target verify-script-runner-live
+QT_QPA_PLATFORM=offscreen ./build/verify-script-runner-live
+tools/local-test-servers/stop-all.sh
 ```
 
 See `tools/local-test-servers/README.md` for the full picture (including

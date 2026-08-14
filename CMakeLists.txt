@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ZephyrFTP VERSION 0.7.9 LANGUAGES CXX)
+project(ZephyrFTP VERSION 0.7.10 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -92,6 +92,8 @@ set(SOURCES
     src/compare/CompareSyncExecutor.cpp
     src/ui/CompareDeleteConfirmDialog.cpp
     src/ui/CompareDialog.cpp
+    src/cli/ScriptParser.cpp
+    src/cli/ScriptRunner.cpp
     resources/icons.qrc
     resources/theme.qrc
 )
@@ -604,6 +606,43 @@ qt_add_executable(compare-sync-test EXCLUDE_FROM_ALL
 )
 target_include_directories(compare-sync-test PRIVATE src)
 target_link_libraries(compare-sync-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
+
+# --- Scripting/automation test (ScriptParser + ScriptRunner, real LocalBackend, no server or open() needed) ---
+# Needs SftpBackend/FtpBackend/SavedSite compiled in even though this
+# test never exercises the `open` command (attachRemotePaneForTesting()
+# bypasses it) — ScriptRunner.cpp's runOpen() references those symbols
+# unconditionally, same reason smoke-test's own source list already
+# carries them despite not connecting to a real server either.
+qt_add_executable(script-runner-test EXCLUDE_FROM_ALL
+    src/script_runner_test.cpp
+    src/AppSettings.cpp
+    src/backends/CredentialStore.cpp
+    src/ui/FilePaneWidget.cpp
+    src/ui/PermissionsDialog.cpp
+    src/ui/FileTreeView.cpp
+    src/ui/IconTheme.cpp
+    src/backends/LocalBackend.cpp
+    src/backends/SftpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
+    src/backends/ProxyConnect.cpp
+    src/backends/FtpBackend.cpp
+    src/backends/FtpTlsSocket.cpp
+    src/backends/SavedSite.cpp
+    src/backends/RemoteBackend.h
+    src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
+    src/transfer/FolderEnumerator.cpp
+    src/compare/DirectoryComparer.cpp
+    src/compare/CompareSyncExecutor.cpp
+    src/cli/ScriptParser.cpp
+    src/cli/ScriptRunner.cpp
+    resources/icons.qrc
+    resources/theme.qrc
+)
+target_include_directories(script-runner-test PRIVATE src)
+target_link_libraries(script-runner-test PRIVATE
+    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${OPENSSL_TARGET} ${CREDENTIAL_STORE_TARGET}
+)
 
 # --- Destination conflict resolution test (Overwrite/Skip, Write Into/Skip, real dialog interaction) ---
 qt_add_executable(conflict-resolution-test EXCLUDE_FROM_ALL
@@ -1150,3 +1189,40 @@ qt_add_executable(verify-credential-store EXCLUDE_FROM_ALL
 )
 target_include_directories(verify-credential-store PRIVATE src)
 target_link_libraries(verify-credential-store PRIVATE Qt6::Core ${CREDENTIAL_STORE_TARGET})
+
+# Covers the real `open <site-name>` path script-runner-test deliberately
+# can't (no OS keyring/live-server dependency there) — see this file's
+# own header comment. Needs the same full ScriptRunner dependency set as
+# script-runner-test, plus ui/HostKeyVerifier.cpp for its one-time real
+# trust-setup phase.
+qt_add_executable(verify-script-runner-live EXCLUDE_FROM_ALL
+    src/verify_script_runner_live.cpp
+    src/AppSettings.cpp
+    src/backends/CredentialStore.cpp
+    src/ui/FilePaneWidget.cpp
+    src/ui/PermissionsDialog.cpp
+    src/ui/FileTreeView.cpp
+    src/ui/IconTheme.cpp
+    src/ui/HostKeyVerifier.cpp
+    src/backends/LocalBackend.cpp
+    src/backends/SftpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
+    src/backends/ProxyConnect.cpp
+    src/backends/FtpBackend.cpp
+    src/backends/FtpTlsSocket.cpp
+    src/backends/SavedSite.cpp
+    src/backends/RemoteBackend.h
+    src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
+    src/transfer/FolderEnumerator.cpp
+    src/compare/DirectoryComparer.cpp
+    src/compare/CompareSyncExecutor.cpp
+    src/cli/ScriptParser.cpp
+    src/cli/ScriptRunner.cpp
+    resources/icons.qrc
+    resources/theme.qrc
+)
+target_include_directories(verify-script-runner-live PRIVATE src)
+target_link_libraries(verify-script-runner-live PRIVATE
+    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${OPENSSL_TARGET} ${CREDENTIAL_STORE_TARGET}
+)

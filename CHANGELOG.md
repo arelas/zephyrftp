@@ -8,6 +8,21 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.10] — Scripting/automation (CLI mode)
+
+### Added
+
+- **`--script=<path>` command-line flag.** Runs a plain-text, line-oriented
+  automation script non-interactively and exits with a status code — no
+  window is ever shown. Commands: `open <site-name>`, `cd`/`lcd`,
+  `get`/`put`, `ls`/`lls`, `rm`, `mkdir`, `mv`, `mirror <local> <remote>
+  [--delete]` (one-directional sync built on Compare-and-Sync's diff
+  engine), `echo`, `exit`/`bye`. `open` only ever connects to a site
+  that's already trusted (connected once via the GUI) and has a stored
+  credential — scripts never prompt, and fail immediately with a clear
+  message rather than hanging if either isn't true. See the README's new
+  "Scripting" section for the full command reference.
+
 ## [0.7.9] — Directory Compare-and-Sync
 
 ### Added
@@ -1713,7 +1728,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.9...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.10...HEAD
+[0.7.10]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.10
 [0.7.9]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.9
 [0.7.8]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.8
 [0.7.7]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.7

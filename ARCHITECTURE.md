@@ -3735,6 +3735,138 @@ to drive FileZilla itself for a same-desktop comparison.
   handling beyond whatever the existing `RemoteEntry` pipeline already
   reports.
 
+  **Scripting/automation (CLI mode)** — WinSCP's own flagship
+  differentiator, picked as the next v2 target once sync/mirror browsing
+  was fully shipped (both halves). `--script=<path>` (new
+  `QCommandLineParser` option in `src/main.cpp`) runs a plain-text,
+  line-oriented script non-interactively (`open`/`cd`/`lcd`/`get`/`put`/
+  `ls`/`lls`/`rm`/`mkdir`/`mv`/`mirror`/`echo`/`exit`) and exits with a
+  status code — no window is ever shown. `ScriptParser`
+  (`src/cli/ScriptParser.h/.cpp`) is a pure, GUI-free free function
+  (`parseScript()`); `ScriptRunner` (`src/cli/ScriptRunner.h/.cpp`)
+  executes sequentially, each command waiting for its own async
+  completion signal(s) before the next one starts — the same "chain to
+  the next step only once the previous callback actually fires"
+  discipline `transfer-concurrency-test`'s own header comment already
+  documents as correct, generalized into a real dispatcher instead of a
+  fixed test sequence.
+
+  **A key architectural finding that simplified the design, confirmed by
+  reading the code rather than assumed**: `SftpBackend::verifyHostKey()`/
+  `askUserToTrustHostKey()` and the identical `FtpBackend::
+  askUserToTrustCertificate()` already fail safe when constructed with a
+  null `HostKeyVerifier*`/`CertificateVerifier*` — and, critically, a
+  host/cert that's *already trusted* (present and matching in the same
+  `known_hosts`/`known_certs.json` the GUI populates) never calls into
+  the verifier at all (`LIBSSH2_KNOWNHOST_CHECK_MATCH` branches straight
+  to `trusted = true`). Only an unknown or changed host/cert reaches the
+  verifier, which returns `false` when null, producing a clean
+  `connectionFailed("Host key for X was not trusted — connection
+  refused")`. **No new "non-interactive trust policy" class was needed**
+  — `open` simply constructs `SftpBackend(creds, nullptr)`/
+  `FtpBackend(creds, nullptr)`, exercising an existing, already-tested
+  contract rather than adding a new one. A script can connect to any
+  host already trusted via the GUI at least once; a brand-new host fails
+  cleanly and immediately rather than hanging or silently trusting —
+  documented as the intended, secure-by-default behavior, not a
+  limitation.
+
+  `TransferManager::enqueue()`/`enqueueFolder()`/`moveEntry()` all
+  require real `FilePaneWidget*` — not incidentally, they read
+  `pane->backend()`/`pane->currentDirectory()` throughout — so
+  `ScriptRunner` owns two `FilePaneWidget`s internally exactly the way
+  `MainWindow` does: both start on a fresh `LocalBackend` (matching
+  `MainWindow`'s own "both panes start local" precedent), `m_localPane`
+  stays local, and `m_remotePane`'s backend gets swapped in by `open`
+  (mirroring `MainWindow::startConnection()`'s own switch/`moveToThread`/
+  `setBackend` sequence, minus the interactive verifiers and status-bar
+  messages) or by `attachRemotePaneForTesting()` in tests. Reusing this
+  already-tested, already-proven-headless-drivable machinery (the entire
+  existing test suite already constructs bare `FilePaneWidget`s under
+  `QT_QPA_PLATFORM=offscreen` with zero `MainWindow`) was a deliberate
+  choice over adding new `(RemoteBackend*, path)` overloads to
+  `TransferManager` — smaller and safer, at the cost of script mode
+  still needing Qt Widgets linked (a genuinely GUI-free CLI binary is an
+  explicit v1 non-goal).
+
+  `TransferManager::enqueue()` gained one new optional parameter,
+  `assumeOverwrite` (already added for Compare-and-Sync's own `Differs`-
+  row bulk-copy case — reused here unchanged, not duplicated).
+  `get`/`put` deliberately transfer under the SAME filename on both
+  sides — `enqueue()`'s `fileName` parameter is used identically for
+  source and destination (confirmed by reading its own doc comment),
+  so no rename-during-transfer exists anywhere in this codebase; a
+  rename needs `mv` afterward.
+
+  `mirror <local> <remote> [--delete]` reuses `DirectoryComparer`/
+  `CompareSyncExecutor` from Feature B unchanged: every `OnlyLeft`/
+  `Differs` entry is auto-selected and copied (no manual per-row
+  checkbox pass, unlike the GUI — the natural default for a scripted
+  one-directional backup), and `--delete` additionally removes every
+  `OnlyRight` entry, deliberately named/scoped after `rsync --delete`
+  for a familiar audience. **Two real bugs found and fixed during manual
+  verification, before the automated test was even written**: (1) the
+  first working draft never actually issued the `navigateTo()` calls its
+  own `waitForNavigation()` listeners were registered to wait for — a
+  pure oversight, caught immediately as a hang against a real script;
+  (2) `mirror --delete`'s copy phase already had a completion barrier
+  (wait for every enqueued `TransferItem` to reach a terminal status
+  before advancing — necessary because, unlike the GUI's `CompareDialog`,
+  nothing else is watching the transfer queue asynchronously; the next
+  script line must not run until transfers genuinely finish), but the
+  DELETE phase had none — `CompareSyncExecutor::deleteSelected()`'s
+  underlying `deleteEntry()` calls are queued/fire-and-forget, so the
+  script could reach `exit` (and the process could exit) before its own
+  queued deletes ever actually ran. Confirmed for real: a manual mirror
+  `--delete` run left the stale destination-only file in place until a
+  second, dedicated completion barrier (`ScriptRunner::runMirrorDeletes()`
+  — counts down `directoryListed`/`fileOperationFailed` completions,
+  same fire-and-refresh contract `rm`/`mkdir`/`mv` already rely on) was
+  added specifically for the delete phase.
+
+  **A third real bug, also found manually**: `rm`/`mkdir`/`mv`/`cd`/`lcd`
+  initially passed a script's raw argument straight to the backend
+  (`deleteEntry("newdir", ...)`) instead of resolving it against the
+  pane's current directory first — every existing UI caller in
+  `FilePaneWidget.cpp` already does this join (e.g. `joinPath(directory,
+  entry.name)`) before ever reaching a backend call, since the backend
+  API itself has no "current directory" concept of its own; everything
+  it's given must already be absolute. A relative script argument was
+  silently being treated as relative to the *process's* working
+  directory (or, worse, `PathUtils.h`'s `joinPath("", name)` producing a
+  root-level absolute path when the pane's `currentDirectory()` hadn't
+  even settled yet — see the next bug). Fixed with a small
+  `ScriptRunner::resolvePath()` helper (absolute arguments starting with
+  `/` pass through unchanged; everything else joins against the target
+  pane's `currentDirectory()`).
+
+  **A fourth real bug, the actual root cause of the confusing symptom
+  above**: `run()` only waited for `m_localPane`'s own initial
+  auto-navigate-to-home to settle before dispatching the first script
+  command — not `m_remotePane`'s, even though it starts on a placeholder
+  `LocalBackend` too and does the identical async connect-then-navigate
+  dance in its own constructor. A script command touching the remote
+  pane before `open` (or one that never calls `open` at all) could race
+  that still-in-flight initial navigation, reading an empty
+  `currentDirectory()` — exactly what surfaced as `resolvePath()`
+  producing a bogus root-level path. Fixed by having `run()` wait for
+  BOTH panes' initial navigation, chained, before `executeNext()` ever
+  fires.
+
+  New 22nd required test target, `script-runner-test` — see
+  CONTRIBUTING.md's own subsection. `open`'s real `SiteStore`/
+  `CredentialStore`/network path is deliberately NOT covered by the
+  required suite (no OS keyring dependency there, same reasoning
+  `verify-credential-store` is a live-only target) — a separate,
+  `EXCLUDE_FROM_ALL` `verify-script-runner-live` covers it against a
+  real local `sshd`. Explicit non-goals for this pass: no ad-hoc
+  `open host:port` without a saved site (no secret source for one), no
+  environment-variable password injection (a real, common CI pattern,
+  but a new secret-supply surface deserving its own dedicated review,
+  not bundled in here), no `--continue-on-error`, no variable expansion/
+  globbing/pipes in the script format, no genuinely Widgets-free CLI
+  binary.
+
 ## Design system
 
 The dark theme and icon set come from a design package (not included in

@@ -5,7 +5,7 @@ local files and a remote server side by side, then drag, drop, or
 double-click to move things between them. Think FileZilla or WinSCP,
 built fresh in Qt6.
 
-**Current version: 0.7.9 — alpha.** Real functionality, but real gaps
+**Current version: 0.7.10 — alpha.** Real functionality, but real gaps
 too — see [Known limitations](#known-limitations) before relying on
 this for anything you can't afford to get wrong. [Releases](https://github.com/arelas/zephyrftp/releases)
 has downloadable Windows, macOS, and Linux builds; [CHANGELOG.md](CHANGELOG.md)
@@ -136,6 +136,10 @@ tracks what's changed between them.
   bulk copy in either direction. Deleting files not present at the
   source is a separate, opt-in, off-by-default action, itemized in its
   own confirmation step before anything is removed.
+- **Scripting** — run `zephyrftp --script=path/to/file` to drive the app
+  non-interactively from a plain-text script (open/get/put/ls/rm/mkdir/
+  mv/mirror/exit — see [Scripting](#scripting) below) instead of the GUI,
+  for backups, CI pipelines, or anything else you'd rather automate.
 - **A live Commands pane** — a real-time, read-only log of protocol
   traffic for both panes, modeled on FileZilla's own message log, docked
   between the toolbar and the file panes by default.
@@ -243,6 +247,49 @@ Linux builds (CI)" section for exactly what that verifies.
    Right-click any transfer to cancel it, pause it (server transfers
    only — see Known limitations), resume a paused one, or retry
    something that failed or that you skipped.
+
+## Scripting
+
+Run `zephyrftp --script=path/to/file` to drive the app non-interactively
+— no window is ever shown, output goes to stdout/stderr, and the process
+exits with a status code (`0` = ran to completion, `1` = couldn't read or
+parse the script, `2` = a command failed at runtime — the script aborts
+at the first failure). On a machine with no display at all (a headless
+server, a cron job, CI), also pass Qt's own `-platform offscreen`.
+
+Scripts are plain text, one command per line; `#` starts a comment,
+blank lines are ignored, and an argument with spaces needs
+`"double quotes"`:
+
+```
+# back up today's exports, mirroring deletions too
+open my-backup-server
+lcd /home/me/exports
+cd /backups/exports
+mirror /home/me/exports /backups/exports --delete
+echo backup complete
+exit
+```
+
+| Command | Effect |
+|---|---|
+| `open <site-name>` | Connect using a saved site (Site Manager) |
+| `cd <path>` / `lcd <path>` | Change the remote / local directory |
+| `get <file>` / `put <file>` | Download / upload, same filename both sides |
+| `ls` / `lls` | List the remote / local current directory |
+| `rm <path>` | Delete a file or empty directory |
+| `mkdir <path>` | Create a directory |
+| `mv <old> <new>` | Rename, within the current connection |
+| `mirror <local> <remote> [--delete]` | One-directional sync (size + modified time, no content hashing); `--delete` also removes files present at the destination but not the source |
+| `echo <text>` | Print a line |
+| `exit` / `bye` | End the script |
+
+`open <site-name>` only works against a site that's already trusted (you've
+connected to it at least once through the GUI, so its host key/certificate
+is already in the trust store) **and** has a stored credential — check
+"Save password" in Site Manager first. Scripts never prompt: a site
+that isn't already trusted, or has no stored password/passphrase, fails
+immediately with a clear message rather than hanging.
 
 ## Known limitations
 

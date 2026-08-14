@@ -88,6 +88,7 @@ jobs:
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
           move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test sync-browsing-test
           compare-sync-test
+          script-runner-test
           -- -j$(nproc)
 
       # windeployqt isn't packaged for this cross toolchain at all (and
@@ -230,6 +231,7 @@ jobs:
           run_test bandwidth-throttle-test
           run_test sync-browsing-test
           run_test compare-sync-test
+          run_test script-runner-test
 
       # Single-config generator (mingw64-cmake defaults to Unix
       # Makefiles) — unlike the old MSVC/Ninja multi-config setup, the
@@ -292,6 +294,7 @@ jobs:
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
           move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test sync-browsing-test
           compare-sync-test
+          script-runner-test
           -- -j$(nproc)
 
       # Runs directly, no wine/xvfb — these are native Linux binaries, and
@@ -347,6 +350,7 @@ jobs:
           ./bandwidth-throttle-test
           ./sync-browsing-test
           ./compare-sync-test
+          ./script-runner-test
 
       # Just the binary — this is the "plain tarball" approach, not a
       # bundled/portable build: it dynamically links against system
@@ -429,6 +433,7 @@ jobs:
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
           move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test sync-browsing-test
           compare-sync-test
+          script-runner-test
           -- -j$(nproc)
 
       # Same reasoning as build-linux's own test-suite step: a genuinely
@@ -485,6 +490,7 @@ jobs:
           ./bandwidth-throttle-test
           ./sync-browsing-test
           ./compare-sync-test
+          ./script-runner-test
 
       - name: Build .rpm package
         run: |
@@ -546,6 +552,7 @@ jobs:
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
           move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test sync-browsing-test
           compare-sync-test
+          script-runner-test
           -- -j$(nproc)
 
       # Same reasoning as build-linux-rpm's own test-suite step: a
@@ -598,6 +605,7 @@ jobs:
           ./bandwidth-throttle-test
           ./sync-browsing-test
           ./compare-sync-test
+          ./script-runner-test
 
       - name: Build AppImage
         run: |
@@ -689,6 +697,7 @@ jobs:
           conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
           move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test sync-browsing-test verify-credential-store
           compare-sync-test
+          script-runner-test
           -- -j$(sysctl -n hw.ncpu)
 
       # Native binaries on native hardware, same reasoning as
@@ -744,6 +753,7 @@ jobs:
           ./bandwidth-throttle-test
           ./sync-browsing-test
           ./compare-sync-test
+          ./script-runner-test
 
           ./verify-credential-store
 
