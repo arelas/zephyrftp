@@ -4,6 +4,8 @@
 #include <QFileInfo>
 #include <QFile>
 #include <QStandardPaths>
+#include <QFutureWatcher>
+#include <QtConcurrentRun>
 
 namespace {
 // Renders the full owner/group/other rwx string, same layout and
@@ -61,6 +63,30 @@ bool prepareOverwrite(const QString &destPath, QString *backupPath)
         return false;
     *backupPath = candidate;
     return true;
+}
+
+struct CopyOutcome {
+    bool ok = false;
+    QString errorString;
+};
+
+// Runs OFF the GUI thread via QtConcurrent::run() — see downloadFile()/
+// uploadFile()'s own doc comment for why. The actual blocking
+// QFile::copy() call plus the same prepareOverwrite()-based rollback
+// both callers already relied on; backupPath is resolved by the caller
+// beforehand (prepareOverwrite() is a cheap same-filesystem rename, not
+// worth backgrounding on its own).
+CopyOutcome performCopy(const QString &srcPath, const QString &destPath, const QString &backupPath)
+{
+    QFile src(srcPath);
+    if (!src.copy(destPath)) {
+        if (!backupPath.isEmpty())
+            QFile::rename(backupPath, destPath);   // roll back — restore the original exactly as it was
+        return {false, src.errorString()};
+    }
+    if (!backupPath.isEmpty())
+        QFile::remove(backupPath);   // copy succeeded — the backup is no longer needed
+    return {true, QString()};
 }
 }
 
@@ -175,24 +201,44 @@ void LocalBackend::downloadFile(const QString &remotePath, const QString &localP
     // aside rather than deleting it outright — see its own comment for
     // the real data-loss bug this fixes — matching SftpBackend's
     // overwrite behavior (LIBSSH2_FXF_TRUNC on upload; QFile::open(WriteOnly)
-    // truncates on download) once the copy has actually succeeded.
+    // truncates on download) once the copy has actually succeeded. Kept
+    // synchronous/inline (unlike the copy itself below) — a same-
+    // filesystem rename is cheap, not worth backgrounding on its own.
     QString backupPath;
     if (!prepareOverwrite(localPath, &backupPath)) {
         emit transferFailed(remotePath, QStringLiteral("Could not overwrite existing file: %1").arg(localPath));
         return;
     }
 
-    QFile src(remotePath);
-    if (!src.copy(localPath)) {
-        if (!backupPath.isEmpty())
-            QFile::rename(backupPath, localPath);   // roll back — restore the original exactly as it was
-        emit transferFailed(remotePath, src.errorString());
-        return;
-    }
-    if (!backupPath.isEmpty())
-        QFile::remove(backupPath);   // copy succeeded — the backup is no longer needed
-    emit transferProgress(remotePath, size, size);
-    emit transferFinished(remotePath);
+    // The actual copy runs on a background thread-pool task, not inline
+    // here — a real, live-reported bug: this class's own header doc
+    // comment assumed "local copies are fast enough in practice that
+    // this hasn't mattered," which a large file (or a large batch
+    // dispatched back-to-back) proved wrong — QFile::copy() is one
+    // uninterruptible OS call with no chunking/yield points of its own,
+    // so it blocked the GUI thread for the copy's ENTIRE duration; the
+    // window couldn't even be moved until it returned. QFutureWatcher,
+    // not a bare QtConcurrent::run() callback capturing `this` directly,
+    // specifically because its finished signal is an ordinary, context-
+    // connected QObject signal — if this LocalBackend is destroyed (pane
+    // disconnected/swapped mid-transfer) before the copy finishes, Qt
+    // automatically drops the connection instead of calling back into a
+    // dangling backend. Every OTHER LocalBackend operation (listing,
+    // delete, rename, ...) stays exactly as fast and synchronous as
+    // before — only the actual data copy, the one operation now proven
+    // slow enough to matter, moves off the GUI thread.
+    auto *watcher = new QFutureWatcher<CopyOutcome>(this);
+    connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, remotePath, size]() {
+        const CopyOutcome outcome = watcher->result();
+        watcher->deleteLater();
+        if (!outcome.ok) {
+            emit transferFailed(remotePath, outcome.errorString);
+            return;
+        }
+        emit transferProgress(remotePath, size, size);
+        emit transferFinished(remotePath);
+    });
+    watcher->setFuture(QtConcurrent::run(performCopy, remotePath, localPath, backupPath));
 }
 
 void LocalBackend::uploadFile(const QString &localPath, const QString &remotePath, qint64 resumeOffset)
@@ -209,17 +255,20 @@ void LocalBackend::uploadFile(const QString &localPath, const QString &remotePat
         return;
     }
 
-    QFile src(localPath);
-    if (!src.copy(remotePath)) {
-        if (!backupPath.isEmpty())
-            QFile::rename(backupPath, remotePath);   // roll back — restore the original exactly as it was
-        emit transferFailed(localPath, src.errorString());
-        return;
-    }
-    if (!backupPath.isEmpty())
-        QFile::remove(backupPath);   // copy succeeded — the backup is no longer needed
-    emit transferProgress(localPath, size, size);
-    emit transferFinished(localPath);
+    // Backgrounded the same way and for the same reason as downloadFile()
+    // above.
+    auto *watcher = new QFutureWatcher<CopyOutcome>(this);
+    connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, localPath, size]() {
+        const CopyOutcome outcome = watcher->result();
+        watcher->deleteLater();
+        if (!outcome.ok) {
+            emit transferFailed(localPath, outcome.errorString);
+            return;
+        }
+        emit transferProgress(localPath, size, size);
+        emit transferFinished(localPath);
+    });
+    watcher->setFuture(QtConcurrent::run(performCopy, localPath, remotePath, backupPath));
 }
 
 QString LocalBackend::currentPath() const

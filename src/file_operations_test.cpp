@@ -394,6 +394,67 @@ int main(int argc, char *argv[])
         check("setPermissions: mode 0640 actually applied (owner rw, group r, other none)",
               matchesExpected());
 #endif
+    });
+
+    // --- Phase 15: a real, live-reported bug — a large local-to-local
+    // copy blocked the GUI thread for QFile::copy()'s own entire,
+    // uninterruptible duration (the window couldn't even be moved mid-
+    // transfer), because LocalBackend::downloadFile()/uploadFile() ran
+    // it inline. Fixed by backgrounding the actual copy via
+    // QtConcurrent::run() + QFutureWatcher. Verified two ways: (a) a
+    // DIRECT, same-thread call to downloadFile() must return WITHOUT
+    // having already fired transferFinished — proof the copy is
+    // dispatched elsewhere, not done inline (this alone would have
+    // failed under the old synchronous implementation, regardless of
+    // file size); (b) while that background copy is still running, a
+    // plain repeating QTimer kept firing — proof the event loop stayed
+    // responsive for the copy's own duration, not just "usually fast
+    // enough not to matter" (the file is deliberately large — ~50MB —
+    // so this has real work to stay responsive DURING). ---
+    QTimer::singleShot(3100, &app, [&]() {
+        const QString asyncSrc = base + "/async_copy_src.bin";
+        const QString asyncDst = base + "/async_copy_dst.bin";
+        {
+            QFile f(asyncSrc);
+            f.open(QIODevice::WriteOnly);
+            const QByteArray chunk(1024 * 1024, 'y');   // 1 MB
+            for (int i = 0; i < 50; ++i)                 // ~50 MB total
+                f.write(chunk);
+        }
+
+        bool asyncFinished = false, asyncFailed = false;
+        QObject::connect(backend, &RemoteBackend::transferFinished, &app,
+                          [&](const QString &) { asyncFinished = true; });
+        QObject::connect(backend, &RemoteBackend::transferFailed, &app,
+                          [&](const QString &, const QString &reason) {
+            asyncFailed = true;
+            qDebug() << "[phase15] transferFailed:" << reason;
+        });
+
+        // Direct, same-thread call — deliberately NOT routed through
+        // QMetaObject::invokeMethod(..., Qt::QueuedConnection, ...) like
+        // every other phase here, since THIS check is specifically about
+        // whether downloadFile() itself returns before finishing, not
+        // about the (already-async-by-construction) dispatch layer
+        // TransferManager normally adds on top.
+        backend->downloadFile(asyncSrc, asyncDst);
+        check("[phase15] downloadFile() returned WITHOUT synchronously finishing the transfer "
+              "(the actual copy is backgrounded, not inline)", !asyncFinished && !asyncFailed);
+
+        int tickCount = 0;
+        QTimer ticker;
+        ticker.setInterval(5);
+        QObject::connect(&ticker, &QTimer::timeout, &app, [&]() { ++tickCount; });
+        ticker.start();
+
+        waitUntil([&]() { return asyncFinished || asyncFailed; });
+
+        check("[phase15] transfer actually completed (Finished, not Failed)", asyncFinished && !asyncFailed);
+        qDebug() << "[phase15] event loop ticked" << tickCount << "times while the ~50MB copy was in flight";
+        check("[phase15] event loop kept ticking WHILE the copy was in flight "
+              "(proves the calling thread wasn't blocked for the copy's own duration)", tickCount >= 2);
+        check("[phase15] destination file exists with the right size",
+              QFile(asyncDst).size() == 50 * 1024 * 1024);
 
         qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
         app.exit(allPass ? 0 : 1);

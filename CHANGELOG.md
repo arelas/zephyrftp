@@ -8,6 +8,24 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.20] — Fix GUI freeze during local file transfers
+
+### Fixed
+
+- **The app still froze during a large transfer (window couldn't be
+  moved or interacted with) even after v0.7.19's dispatch-overhead
+  fixes.** Root cause: `LocalBackend::downloadFile()`/`uploadFile()`
+  called `QFile::copy()` directly, inline, on the GUI thread —
+  `QFile::copy()` is a single, uninterruptible OS call with no
+  chunking or yield points, so it blocked the entire GUI thread (the
+  same thread that handles window moves, repaints, and input) for its
+  full duration. The actual copy now runs on a background thread-pool
+  task instead; every other `LocalBackend` operation (listing, delete,
+  rename, etc.) is unchanged, since those were never the problem.
+  Verified concretely: a direct call to `downloadFile()` now returns
+  before the transfer completes, and the event loop keeps responding
+  while a 50MB copy is still in flight.
+
 ## [0.7.19] — Fix remaining large-transfer hang + scroll bars
 
 ### Fixed

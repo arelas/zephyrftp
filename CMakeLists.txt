@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ZephyrFTP VERSION 0.7.19 LANGUAGES CXX)
+project(ZephyrFTP VERSION 0.7.20 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -563,7 +563,11 @@ target_include_directories(file-operations-test PRIVATE src)
 # genuinely one of the "file operations" this test's own name promises
 # to cover, and these two functions are real, pure, no-QApplication-
 # needed logic worth verifying without pulling in a live PermissionsDialog.
-target_link_libraries(file-operations-test PRIVATE Qt6::Core Qt6::Widgets)
+# Qt6::Concurrent also needed now — LocalBackend.cpp's downloadFile()/
+# uploadFile() background their actual copy via QtConcurrent::run() (a
+# real fix for a live-reported GUI-freeze bug; see LocalBackend.h's own
+# doc comment), and this target links LocalBackend.cpp.
+target_link_libraries(file-operations-test PRIVATE Qt6::Core Qt6::Widgets Qt6::Concurrent)
 
 # --- Whole-folder transfer test (recursive enumeration + mirrored dirs, real LocalBackend) ---
 qt_add_executable(folder-transfer-test EXCLUDE_FROM_ALL

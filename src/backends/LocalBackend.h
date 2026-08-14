@@ -3,9 +3,15 @@
 #include "RemoteBackend.h"
 
 // Wraps the local filesystem behind the same RemoteBackend interface as
-// SftpBackend. Runs on the GUI thread today since QDir/QFile listing is
-// fast enough not to matter — flagged below if that assumption changes
-// (e.g. slow network-mounted drives).
+// SftpBackend. The object itself still lives on the GUI thread — listing,
+// delete, rename, and every other operation here stay synchronous, since
+// they're genuinely fast enough not to matter. downloadFile()/uploadFile()
+// are the one exception: a real, live-reported bug proved a large file
+// (or a large batch dispatched back-to-back) blocking the GUI thread for
+// QFile::copy()'s own uninterruptible duration was NOT fast enough to
+// ignore — the window couldn't even be moved mid-transfer. Those two
+// methods now background the actual copy via QtConcurrent::run(), while
+// everything else here is unchanged.
 class LocalBackend : public RemoteBackend {
     Q_OBJECT
 public:
