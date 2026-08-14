@@ -837,16 +837,24 @@ void FilePaneWidget::confirmAndDelete(const QList<RemoteEntry> &entries, const Q
     if (reply != QMessageBox::Yes)
         return;
 
+    QList<QPair<QString, bool>> pathsAndIsDir;
+    pathsAndIsDir.reserve(entries.size());
+    for (const RemoteEntry &entry : entries)
+        pathsAndIsDir.append({joinPath(directory, entry.name), entry.isDir});
+    deleteEntriesAt(pathsAndIsDir);
+}
+
+void FilePaneWidget::deleteEntriesAt(const QList<QPair<QString, bool>> &pathsAndIsDir)
+{
     // One invokeMethod() call per entry, queued in order — the backend
     // lives on (at most) one thread of its own, so Qt's queue processes
     // these strictly one at a time; each delete's own internal refresh
     // (see RemoteBackend::deleteEntry()'s doc comment) completes before
     // the next deletion starts. No race between them.
-    for (const RemoteEntry &entry : entries) {
-        const QString path = joinPath(directory, entry.name);
+    for (const auto &pathAndIsDir : pathsAndIsDir) {
         ++m_pendingFileOpRefreshes;   // see its own doc comment — one per entry, each gets its own refresh
         QMetaObject::invokeMethod(m_backend, "deleteEntry", Qt::QueuedConnection,
-                                   Q_ARG(QString, path), Q_ARG(bool, entry.isDir));
+                                   Q_ARG(QString, pathAndIsDir.first), Q_ARG(bool, pathAndIsDir.second));
     }
 }
 

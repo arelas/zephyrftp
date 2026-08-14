@@ -58,6 +58,7 @@ void FolderEnumerator::onDirectoryEnumerated(const QString &path, const QList<Re
         item.relativePath = joinPath(m_activeDir.relativePrefix, entry.name);
         item.isDir = entry.isDir;
         item.size = entry.size;
+        item.modified = entry.modified;
         m_results.append(item);
 
         if (entry.isDir) {

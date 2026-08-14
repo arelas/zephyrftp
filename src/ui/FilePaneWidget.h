@@ -5,6 +5,7 @@
 #include <QPoint>
 #include <QStringList>
 #include <QIcon>
+#include <QPair>
 #include "../backends/RemoteBackend.h"
 #include "../backends/ConnectionDescriptor.h"
 
@@ -81,6 +82,25 @@ public:
     // menu, where directories are meaningful targets even though they
     // never are for a transfer.
     QList<RemoteEntry> selectedEntries() const;
+
+    // Deletes an arbitrary set of absolute paths (each paired with whether
+    // it's a directory), doing the exact same m_pendingFileOpRefreshes
+    // bookkeeping + queued deleteEntry() dispatch confirmAndDelete()'s own
+    // per-entry loop already does — extracted so a caller whose paths span
+    // MANY different directories at once (Compare-and-Sync's delete-extras
+    // action, driven by a diff tree rather than one right-clicked
+    // directory's own entries) can still route through this pane's
+    // "fire and refresh" bookkeeping correctly. Routing matters, not just
+    // convenience: a caller invoking deleteEntry() directly on backend()
+    // would have each delete's own resulting re-list misread by
+    // onDirectoryListed() as a genuine navigation (see
+    // m_pendingFileOpRefreshes's own doc comment), corrupting the path bar/
+    // history and potentially re-driving the other pane if synchronized
+    // browsing happens to be on. No confirmation dialog here — the caller
+    // is expected to have already confirmed with the user; this is the
+    // dispatch mechanism, not the confirmation UX (see confirmAndDelete(),
+    // which now just builds the pairs and calls this after its own dialog).
+    void deleteEntriesAt(const QList<QPair<QString, bool>> &pathsAndIsDir);
 
     void navigateTo(const QString &path);
 

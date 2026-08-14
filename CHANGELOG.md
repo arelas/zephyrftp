@@ -8,6 +8,21 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.9] — Directory Compare-and-Sync
+
+### Added
+
+- **Compare Directories...** (View menu). Recursively diffs the two
+  panes' current directories and shows the full tree with a status per
+  item (Only in Left / Only in Right / Differs / Identical, by size and
+  modified time — no content hashing), with checkboxes for bulk "Copy
+  Selected to Right/Left". Deletion of files not present at the source
+  is a separate, opt-in, off-by-default action — itemized in a dedicated
+  confirmation step before anything is removed, and implemented as many
+  individual, ordinary (non-recursive) deletes rather than any new
+  recursive-delete capability. Independent of Synchronized Browsing;
+  works for two local panes too.
+
 ## [0.7.8] — Fix a cross-connection destination race
 
 ### Fixed
@@ -1698,7 +1713,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.8...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.9...HEAD
+[0.7.9]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.9
 [0.7.8]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.8
 [0.7.7]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.7
 [0.7.6]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.6

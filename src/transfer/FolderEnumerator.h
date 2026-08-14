@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QString>
 #include <QList>
+#include <QDateTime>
 #include "../backends/RemoteEntry.h"
 
 class RemoteBackend;
@@ -16,6 +17,7 @@ struct EnumeratedItem {
     QString relativePath;   // e.g. "photos/subdir/photo.jpg", or "photos/subdir" for a directory itself
     bool isDir = false;
     qint64 size = 0;        // 0 for directories
+    QDateTime modified;     // default-constructed (invalid) for the synthetic root item
 };
 
 // Recursively walks a folder via a backend's listDirectoryForEnumeration()

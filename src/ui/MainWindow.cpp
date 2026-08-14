@@ -9,6 +9,7 @@
 #include "HostKeyVerifier.h"
 #include "CertificateVerifier.h"
 #include "IconTheme.h"
+#include "CompareDialog.h"
 #include "../AppSettings.h"
 #include "../backends/LocalBackend.h"
 #include "../backends/SftpBackend.h"
@@ -251,6 +252,17 @@ void MainWindow::buildMenuBar()
             m_pendingSyncDrivenPath.clear();
         }
     });
+
+    viewMenu->addSeparator();
+    // Not checkable (unlike the toggle above) — a one-shot action that
+    // opens a dialog, not a persistent mode. Deliberately independent of
+    // synchronized browsing: requiring that toggle first would needlessly
+    // couple an unrelated setting to this feature, and block comparing
+    // two directories that don't "correspond" under any anchor (which
+    // sync browsing's own relative-path model doesn't require anyway —
+    // it only mirrors navigation, not directory identity).
+    QAction *compareDirectoriesAction = viewMenu->addAction(tr("&Compare Directories..."));
+    connect(compareDirectoriesAction, &QAction::triggered, this, &MainWindow::onCompareDirectoriesTriggered);
 
     QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
     QAction *aboutAction = helpMenu->addAction(tr("&About ZephyrFTP..."));
@@ -549,6 +561,30 @@ void MainWindow::onPreferencesTriggered()
 {
     PreferencesDialog dialog(m_settings, this);
     dialog.exec();
+}
+
+void MainWindow::onCompareDirectoriesTriggered()
+{
+    // Re-triggering while one is already open raises the existing dialog
+    // instead of stacking a second one — m_compareDialog is a QPointer,
+    // so it reads as null here once the user has closed a previous one
+    // (WA_DeleteOnClose) rather than dangling.
+    if (m_compareDialog) {
+        m_compareDialog->raise();
+        m_compareDialog->activateWindow();
+        return;
+    }
+
+    m_compareDialog = new CompareDialog(m_leftPane, m_rightPane, m_transferManager, this);
+    // CompareDialog doesn't duplicate a transfer-progress UI of its own —
+    // it just ensures the existing transfer queue dock is visible/raised
+    // right after queuing a copy batch, so the user isn't left wondering
+    // where their queued work went.
+    connect(m_compareDialog, &CompareDialog::copyQueued, this, [this]() {
+        m_transfersDock->setVisible(true);
+        m_transfersDock->raise();
+    });
+    m_compareDialog->show();
 }
 
 void MainWindow::onConnectTriggered()

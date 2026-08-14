@@ -151,6 +151,12 @@ struct TransferItem {
     // fake-backend test's checkExists() stub unconditionally reports
     // "doesn't exist", so this was structurally impossible to catch
     // without a real backend actually tracking real destination state.
+    //
+    // Also settable via TransferManager::enqueue()'s own assumeOverwrite
+    // parameter — same flag, same consumption point, for a caller (e.g.
+    // CompareSyncExecutor) that already knows a destination conflict
+    // exists from its own prior work and wants it treated as a settled
+    // Overwrite rather than prompting per file.
     bool skipConflictCheckOnDispatch = false;
 
     FilePaneWidget *sourcePane = nullptr;

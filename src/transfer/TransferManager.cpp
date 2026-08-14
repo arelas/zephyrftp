@@ -67,7 +67,7 @@ TransferManager::TransferManager(QObject *parent)
 }
 
 void TransferManager::enqueue(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
-                               const QString &fileName)
+                               const QString &fileName, bool assumeOverwrite)
 {
     TransferItem item;
     item.id = m_nextId++;
@@ -76,6 +76,7 @@ void TransferManager::enqueue(FilePaneWidget *sourcePane, FilePaneWidget *destPa
     item.destPane = destPane;
     item.sourcePath = joinPath(sourcePane->currentDirectory(), fileName);
     item.destPath = joinPath(destPane->currentDirectory(), fileName);
+    item.skipConflictCheckOnDispatch = assumeOverwrite;
 
     const bool srcLocal = sourcePane->backend()->isLocalFilesystem();
     const bool dstLocal = destPane->backend()->isLocalFilesystem();

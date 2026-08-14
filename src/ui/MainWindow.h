@@ -2,6 +2,7 @@
 
 #include <QMainWindow>
 #include <QHash>
+#include <QPointer>
 #include "../backends/RemoteEntry.h"
 
 class FilePaneWidget;
@@ -14,6 +15,7 @@ class QAction;
 class AppSettings;
 class CommandsPaneWidget;
 class EditSessionManager;
+class CompareDialog;
 struct ConnectionRequest;
 
 // Top-level window: two FilePaneWidgets side by side (commander style),
@@ -85,6 +87,12 @@ private slots:
     void onTransferSucceeded();
     void onAboutTriggered();
     void onPreferencesTriggered();
+
+    // "Compare Directories..." (View menu) — opens (or raises, if one is
+    // already open) a CompareDialog against the two panes' current
+    // directories. Independent of synchronized browsing; works for two
+    // local panes too.
+    void onCompareDirectoriesTriggered();
 
     // Fired by m_quickConnectEdit's returnPressed() — parses its text
     // (QuickConnectParser.h), prompts inline for a password (matching
@@ -254,4 +262,14 @@ private:
     // path being silently swallowed once, a rare, low-stakes edge case
     // not worth solving further).
     QHash<FilePaneWidget *, QString> m_pendingSyncDrivenPath;
+
+    // Compare-and-sync: constructed fresh each "Compare Directories..."
+    // invocation (like ConnectionDialog/PermissionsDialog, not owned
+    // long-term the way m_transfersDock is). A QPointer, not a raw
+    // pointer, since the dialog is WA_DeleteOnClose — closing it deletes
+    // it out from under this member, and QPointer safely goes null rather
+    // than dangling, so re-triggering the menu action after a close
+    // correctly constructs a new one instead of dereferencing a stale
+    // pointer.
+    QPointer<CompareDialog> m_compareDialog;
 };

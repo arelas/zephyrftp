@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ZephyrFTP VERSION 0.7.8 LANGUAGES CXX)
+project(ZephyrFTP VERSION 0.7.9 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -88,6 +88,10 @@ set(SOURCES
     src/transfer/TransferManager.cpp
     src/transfer/TransferQueueStore.cpp
     src/transfer/FolderEnumerator.cpp
+    src/compare/DirectoryComparer.cpp
+    src/compare/CompareSyncExecutor.cpp
+    src/ui/CompareDeleteConfirmDialog.cpp
+    src/ui/CompareDialog.cpp
     resources/icons.qrc
     resources/theme.qrc
 )
@@ -357,6 +361,10 @@ qt_add_executable(smoke-test EXCLUDE_FROM_ALL
     src/transfer/TransferManager.cpp
     src/transfer/TransferQueueStore.cpp
     src/transfer/FolderEnumerator.cpp
+    src/compare/DirectoryComparer.cpp
+    src/compare/CompareSyncExecutor.cpp
+    src/ui/CompareDialog.cpp
+    src/ui/CompareDeleteConfirmDialog.cpp
     resources/icons.qrc
     resources/theme.qrc
     ${HEADERS}
@@ -398,6 +406,10 @@ qt_add_executable(sync-browsing-test EXCLUDE_FROM_ALL
     src/transfer/TransferManager.cpp
     src/transfer/TransferQueueStore.cpp
     src/transfer/FolderEnumerator.cpp
+    src/compare/DirectoryComparer.cpp
+    src/compare/CompareSyncExecutor.cpp
+    src/ui/CompareDialog.cpp
+    src/ui/CompareDeleteConfirmDialog.cpp
     resources/icons.qrc
     resources/theme.qrc
     ${HEADERS}
@@ -437,6 +449,10 @@ qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
     src/transfer/TransferManager.cpp
     src/transfer/TransferQueueStore.cpp
     src/transfer/FolderEnumerator.cpp
+    src/compare/DirectoryComparer.cpp
+    src/compare/CompareSyncExecutor.cpp
+    src/ui/CompareDialog.cpp
+    src/ui/CompareDeleteConfirmDialog.cpp
     resources/icons.qrc
     resources/theme.qrc
     ${HEADERS}
@@ -566,6 +582,28 @@ qt_add_executable(folder-transfer-test EXCLUDE_FROM_ALL
 )
 target_include_directories(folder-transfer-test PRIVATE src)
 target_link_libraries(folder-transfer-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
+
+# --- Directory Compare-and-Sync test (diff classification, bottom-up delete ordering, real end-to-end copy) ---
+qt_add_executable(compare-sync-test EXCLUDE_FROM_ALL
+    src/compare_sync_test.cpp
+    src/AppSettings.cpp
+    src/backends/CredentialStore.cpp
+    src/ui/FilePaneWidget.cpp
+    src/ui/PermissionsDialog.cpp
+    src/ui/FileTreeView.cpp
+    src/ui/IconTheme.cpp
+    src/backends/LocalBackend.cpp
+    src/backends/RemoteBackend.h
+    src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
+    src/transfer/FolderEnumerator.cpp
+    src/compare/DirectoryComparer.cpp
+    src/compare/CompareSyncExecutor.cpp
+    resources/icons.qrc
+    resources/theme.qrc
+)
+target_include_directories(compare-sync-test PRIVATE src)
+target_link_libraries(compare-sync-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
 
 # --- Destination conflict resolution test (Overwrite/Skip, Write Into/Skip, real dialog interaction) ---
 qt_add_executable(conflict-resolution-test EXCLUDE_FROM_ALL

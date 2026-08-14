@@ -3647,6 +3647,94 @@ to drive FileZilla itself for a same-desktop comparison.
   the decoy (2 failing checks) while the fix leaves the other pane
   untouched.
 
+  **Directory Compare-and-Sync** — the second half of the "synchronized/
+  mirrored browsing, directory compare-and-sync" v2 item, deliberately
+  scoped separately from synchronized browsing above because of a real
+  tension with this project's "no recursive delete" precedent
+  (`RemoteBackend::deleteEntry()` only ever removes an empty directory —
+  see its own doc comment). Resolved by NOT adding a recursive-delete
+  primitive to the backend layer at all: a new orchestrator,
+  `CompareSyncExecutor` (`src/compare/CompareSyncExecutor.h/.cpp`),
+  builds deletion entirely out of many individual, existing,
+  non-recursive `deleteEntry()` calls — every selected file first, then
+  every selected directory in a second, separate batch sorted deepest-
+  first by relative-path depth, guaranteeing each directory is already
+  empty (its own children, and any deeper subdirectories, already
+  deleted earlier in the same pass) by the time its own non-recursive
+  call runs. Gated behind an explicit, off-by-default "Also allow
+  deleting files not present at source" checkbox in the new
+  `CompareDialog` (`src/ui/CompareDialog.h/.cpp`, a non-modal `QDialog`
+  reached via the View menu's "Compare Directories...", independent of
+  whether synchronized browsing is on), and a second, separate itemized
+  confirmation dialog (`CompareDeleteConfirmDialog`) right before
+  anything is actually deleted — the tree's own checkboxes are the
+  *selection* step, that dialog is the *commit* step, one more explicit
+  gate than `FilePaneWidget::confirmAndDelete()`'s existing single
+  "Delete N items?" prompt, justified because a compare-driven delete
+  can affect far more items at once via bulk tree selection.
+
+  The diff engine, `DirectoryComparer` (`src/compare/DirectoryComparer.h/.cpp`),
+  reuses `FolderEnumerator` (see its own entry above) rather than
+  building a second recursive-walk mechanism — one instance per side,
+  joined on both `finished()` signals, classified by relative path into
+  Only-in-Left/Only-in-Right/Differs/Identical. Classification is size
+  AND modified time, deliberately not either alone (a same-size-
+  different-content edit and a byte-identical re-upload with only a
+  fresh timestamp are both real false-negative risks a single-field rule
+  would miss) and deliberately not content hashing (matches this
+  project's existing, still-open "transfer integrity checksums" v2 item,
+  flagged there as possibly protocol-limited and not assumed easy).
+  `EnumeratedItem` needed one small additive change first — it never
+  carried `modified` at all (only `relativePath`/`isDir`/`size`), even
+  though the `RemoteEntry` it's built from already had it; a one-line
+  fix in `FolderEnumerator::onDirectoryEnumerated()`.
+  **A real bug caught while writing `DirectoryComparer`, before it ever
+  ran**: passing an empty `rootName` to `FolderEnumerator` (so both
+  sides' paths are comparable as "relative to each side's own root,"
+  unlike folder-transfer's own use of `rootName` to seed the manifest
+  with the folder's own name) means `PathUtils.h`'s `joinPath("", name)`
+  — which only special-cases a *trailing* slash on its `dir` argument,
+  not an *empty* one — silently produces a leading `/` on every result.
+  `DirectoryComparer::classify()` strips it and drops the synthetic
+  root item (`relativePath == ""`) before ever building a `CompareEntry`.
+  **A second real bug, this one caught by `compare-sync-test` actually
+  failing during verification**: the test's own fixture helper called
+  `QFile::setFileTime()` on a still-open handle, right before `close()`
+  — and `close()`'s own buffered-write flush silently reset the
+  timestamp straight back to "now" afterward, since it's itself a
+  further write-affecting syscall. Not a product bug — a test-fixture
+  bug — but a real one that would have made the size+modified
+  classification's own regression coverage falsely pass by accident
+  (both sides landing on nearly the same real "now" timestamp) rather
+  than genuinely exercising the different-modified-time case. Fixed by
+  closing fully first, then reopening fresh (with nothing left to flush)
+  to set the timestamp as a completely separate operation.
+  `CompareSyncExecutor::copySelected()` reuses `TransferManager::enqueue()`
+  exactly as-is (including its existing folder-transfer precedent of a
+  multi-segment relative path already joining correctly) with one small
+  additive `TransferManager` change: a new `assumeOverwrite` parameter on
+  `enqueue()`, which just sets the same `TransferItem::
+  skipConflictCheckOnDispatch` flag `resumeItem()` already uses — reused,
+  not duplicated — so a bulk copy of many already-known-conflicting
+  `Differs` rows doesn't pop one `askConflict()` modal per file.
+  A required `FilePaneWidget` refactor: `confirmAndDelete()`'s per-entry
+  delete loop was extracted into a new public `deleteEntriesAt()` so
+  `CompareSyncExecutor`'s deletes (which can span many different
+  directories in one batch, unlike any existing single-directory delete
+  caller) still route through the pane's own `m_pendingFileOpRefreshes`
+  bookkeeping — calling `deleteEntry()` directly on the backend instead
+  would have each delete's own resulting re-list misread as genuine
+  navigation, corrupting the path bar/history and potentially re-driving
+  the other pane if synchronized browsing happened to be on at the same
+  time. Covered by a new 21st required test target, `compare-sync-test`
+  — see CONTRIBUTING.md's own subsection for its three scenarios. Not
+  verified against a real live server (deterministic `LocalBackend`
+  coverage judged sufficient, same call made for a prior `TransferManager`
+  concurrency fix); explicit non-goals kept out of this pass: content
+  hashing, auto-repeat/scheduled sync, and any new symlink-specific
+  handling beyond whatever the existing `RemoteEntry` pipeline already
+  reports.
+
 ## Design system
 
 The dark theme and icon set come from a design package (not included in

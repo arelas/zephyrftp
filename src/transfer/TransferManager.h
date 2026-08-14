@@ -36,7 +36,19 @@ public:
     // FilePaneWidget::fileActivated), figures out direction from each
     // pane's backend, and appends it to the queue. Starts processing
     // immediately if nothing else is currently running.
-    void enqueue(FilePaneWidget *sourcePane, FilePaneWidget *destPane, const QString &fileName);
+    //
+    // assumeOverwrite, when true, sets the new item's own
+    // skipConflictCheckOnDispatch flag (the same one resumeItem() already
+    // uses for a resumed transfer's own destination) so this item skips
+    // startNext()'s destination-exists check and askConflict() entirely,
+    // dispatching straight through — identical in effect to the user
+    // having answered Overwrite, without a dialog. For a caller (e.g.
+    // CompareSyncExecutor) that already knows from its own prior diff that
+    // the destination exists and a deliberate overwrite is intended, this
+    // avoids popping one askConflict() modal per file in a bulk batch.
+    // Default false preserves every existing caller's behavior unchanged.
+    void enqueue(FilePaneWidget *sourcePane, FilePaneWidget *destPane, const QString &fileName,
+                 bool assumeOverwrite = false);
 
     // Recursively transfers a whole folder: enumerates it via
     // FolderEnumerator (against the SOURCE backend), creates the mirrored

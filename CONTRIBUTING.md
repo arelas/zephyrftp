@@ -440,7 +440,7 @@ representative of any real desktop:
 
 ## Running the test suites
 
-Twenty `EXCLUDE_FROM_ALL` CMake targets make up the required suite as
+Twenty-one `EXCLUDE_FROM_ALL` CMake targets make up the required suite as
 of this writing — not part of a normal `make`, built and run
 explicitly, and all of them (not just a "core" subset) need to actually
 pass before a change is done. The count keeps growing as the project
@@ -1039,6 +1039,31 @@ same way:
 ```
 cmake --build build --target trust-prompt-test
 QT_QPA_PLATFORM=offscreen ./build/trust-prompt-test
+```
+
+### `compare-sync-test`
+
+Self-contained, `EXCLUDE_FROM_ALL`, added to all five `build.yml` jobs —
+Directory Compare-and-Sync's own coverage, against real `LocalBackend`
+instances and a real nested temp directory tree it creates and cleans up
+itself (`/tmp/compare_sync_test`, `QDir::removeRecursively()` at the top
+of `main()`, same self-contained pattern as `folder-transfer-test`, no
+external CI pre-seed step needed). Three scenarios: `DirectoryComparer`'s
+diff classification (deliberately constructs a same-size/different-
+modified file and a different-size/same-modified file, proving the
+comparison rule is genuinely size AND modified, not either alone);
+`CompareSyncExecutor::deleteSelected()`'s bottom-up ordering (a synthetic
+multi-level only-left subtree, asserting the whole tree is actually
+removed from disk and that `RemoteBackend::fileOperationFailed` is never
+emitted — the signal that would fire if a directory were ever attempted
+for deletion before it was actually empty, since `deleteEntry()` stays
+non-recursive at the backend level); and a real end-to-end
+`copySelected()` batch with a deliberately-unselected file left out of
+the batch, to prove the executor only acts on what it's given.
+
+```
+cmake --build build --target compare-sync-test
+QT_QPA_PLATFORM=offscreen ./build/compare-sync-test
 ```
 
 ## Live-server verification (SFTP public-key auth, FTP/FTPS, cancel/pause/resume)
