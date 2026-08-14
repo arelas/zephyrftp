@@ -235,6 +235,9 @@ QStatusBar {
 
 QDockWidget {
     color: #1a1d23;
+    background-color: #eef0f3;   /* --zf-surface (light) — see theme.qss's own comment
+                                     on this same rule for why a dock needs its own
+                                     background beyond just ::title */
     titlebar-close-icon: none;
 }
 QDockWidget::title {
@@ -242,6 +245,35 @@ QDockWidget::title {
     border-bottom: 1px solid #d8dce2;   /* --zf-border (light) */
     padding: 6px 10px;
     font-size: 11px;
+}
+
+/* Transfers dock's Active/Completed/Failed tabs — see theme.qss's own
+   (much longer) comment on this same block for why these rules exist
+   at all. Light-theme values only: same border/surface/text tokens
+   used elsewhere in this file, --zf-surface-hover darkens instead of
+   lightens per this file's own established light-theme convention. */
+QTabWidget::pane {
+    border: none;
+    background-color: #ffffff;   /* --zf-bg (light) */
+}
+QTabWidget QTabBar {
+    background-color: #eef0f3;   /* --zf-surface (light) */
+}
+QTabBar::tab {
+    background-color: transparent;
+    color: #4a5160;               /* --zf-text-secondary (light) */
+    padding: 6px 14px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    font-size: 12px;
+}
+QTabBar::tab:selected {
+    color: #1a1d23;               /* --zf-text-primary (light) */
+    border-bottom: 2px solid #5b8def;   /* --zf-blue */
+}
+QTabBar::tab:hover:!selected {
+    color: #1a1d23;               /* --zf-text-primary (light) */
+    background-color: rgba(0, 0, 0, 12);   /* --zf-surface-hover */
 }
 
 QMenu {

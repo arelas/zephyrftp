@@ -8,6 +8,23 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.22] — Fix doubled border on the new Transfers tabs
+
+### Fixed
+
+- **The Transfers dock's new Active/Completed/Failed tabs (v0.7.21)
+  showed what looked like a doubled border, in both themes.** The app
+  had no styling at all for `QTabWidget`/`QTabBar` (it's the only tab
+  widget in the app), so the tab bar fell back to the platform style's
+  default light appearance sitting directly above the dark table below
+  it. Fixed with theme-matched tab styling in both `theme.qss` and
+  `theme-light.qss`. A second, related gap surfaced while fixing this:
+  `QDockWidget` itself had no background color of its own (only its
+  title bar did), which was invisible before this tab bar existed
+  because the queue table always painted edge-to-edge; the tab bar
+  doesn't extend past its own tabs, briefly exposing that gap as a
+  stray light strip until this was also fixed.
+
 ## [0.7.21] — Split the transfer queue into Active/Completed/Failed tabs
 
 ### Added
@@ -1916,7 +1933,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.21...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.22...HEAD
+[0.7.22]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.22
 [0.7.21]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.21
 [0.7.11]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.11
 [0.7.10]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.10

@@ -267,6 +267,14 @@ QStatusBar {
 
 QDockWidget {
     color: #dfe4ea;
+    background-color: #1a1d23;   /* --zf-surface — a dock's own content-area
+                                     background, exposed only where a child
+                                     widget doesn't paint edge-to-edge (e.g.
+                                     the Transfers dock's QTabWidget: its
+                                     QTabBar sizes to its own tabs, not the
+                                     dock's full width, leaving a gap past
+                                     the last tab that used to show the
+                                     platform style's default light color) */
     titlebar-close-icon: none;
 }
 QDockWidget::title {
@@ -274,6 +282,51 @@ QDockWidget::title {
     border-bottom: 1px solid #2a2e35;   /* --zf-border */
     padding: 6px 10px;
     font-size: 11px;
+}
+
+/* Transfers dock's Active/Completed/Failed tabs — the only QTabWidget
+   in the app, so without these rules it fell back entirely to the
+   platform style's default (light) tab bar, sitting directly above the
+   dark QTableWidget below it: a bright, foreign-looking bar with its
+   own bordered tab boxes, reported as a "double thick border" against
+   the table's own top edge right underneath it. QTabWidget::pane's
+   own default frame is dropped entirely (border: none) since the
+   QDockWidget/table below already establish the dock's outer edge;
+   the tab bar sits on --zf-surface, matching QDockWidget::title's own
+   background, so it reads as part of the dock's chrome rather than a
+   separate boxed control. Selected/hover treatment mirrors
+   QToolButton:checked's existing blue-accent language elsewhere in
+   this file — an underline instead of a filled background here, since
+   a filled tab reads more like a button than a page selector.
+   Confirmed via a live widget-hierarchy dump (not guessed): QTabBar
+   sizes itself to its own tabs, not the full tab-widget width, so a
+   plain `QTabWidget { background-color: ... }` rule left a strip past
+   the last tab genuinely unpainted by anything in this stylesheet —
+   that strip was showing QDockWidget's own previously-unstyled
+   background (only its ::title sub-control had one), which is where
+   this gap's fix actually lives; see QDockWidget's own rule above. */
+QTabWidget::pane {
+    border: none;
+    background-color: #14171c;   /* --zf-bg, matches the table filling the rest of the pane */
+}
+QTabWidget QTabBar {
+    background-color: #1a1d23;   /* --zf-surface */
+}
+QTabBar::tab {
+    background-color: transparent;
+    color: #8790a0;               /* --zf-text-secondary */
+    padding: 6px 14px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    font-size: 12px;
+}
+QTabBar::tab:selected {
+    color: #dfe4ea;               /* --zf-text-primary */
+    border-bottom: 2px solid #5b8def;   /* --zf-blue */
+}
+QTabBar::tab:hover:!selected {
+    color: #dfe4ea;               /* --zf-text-primary */
+    background-color: rgba(255, 255, 255, 10);   /* --zf-surface-hover */
 }
 
 QMenu {

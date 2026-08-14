@@ -3383,6 +3383,38 @@ to drive FileZilla itself for a same-desktop comparison.
   `updateItem()` call, so a freshly-migrated row picks up its item's
   actual current progress/status immediately instead of only the
   blank just-added default.
+  **A real visual bug, reported by David right after v0.7.21 shipped:
+  the new tab bar showed what looked like a doubled border, in both
+  themes.** Root cause, confirmed by dumping the live widget hierarchy
+  (geometry of every child, not guessed from the QSS alone) rather than
+  iterating on the stylesheet blind: `QTabWidget`/`QTabBar` were the
+  only tab widgets ever added to this app, so nothing styled them at
+  all — the tab bar rendered in the platform style's default light
+  appearance, sitting directly above the dark `QTableWidget` below it.
+  Fixed with theme-matched `QTabWidget::pane`/`QTabBar`/`QTabBar::tab`
+  rules in both `theme.qss` and `theme-light.qss` (selected/hover
+  treatment mirrors `QToolButton:checked`'s existing blue-accent
+  language elsewhere in these files, using an underline instead of a
+  filled background since a filled tab reads more like a button than a
+  page selector). A second, related gap only surfaced while fixing the
+  first: a plain `QTabWidget { background-color: ... }` rule had zero
+  visible effect on the strip of the tab-bar row past the last tab
+  (confirmed directly — a debug `red` value there painted nothing) —
+  the widget dump showed why: `QTabBar` sizes itself to its own tabs,
+  not the tab widget's full width, and that unclaimed strip was never
+  covered by `QTabWidget::pane` either (the pane starts below the tab
+  row). It was actually showing through to `QDockWidget`'s own
+  background, which had never been styled at all (only its `::title`
+  sub-control had) — invisible before now only because the queue's old
+  single flat table always painted edge-to-edge, leaving nothing of the
+  dock's own background ever exposed. Fixed by giving `QDockWidget`
+  itself an explicit background color in both theme files, which is
+  the actually-correct place this gap needed covering regardless of
+  what widget structure sits inside a dock. Verified visually before
+  and after in both themes via the same disposable, non-committed
+  `QWidget::grab()`-screenshot technique this project already uses for
+  visual/config-value changes that don't warrant a new permanent test
+  target (see the Light Theme entry above for the precedent).
 - `CommandsPaneWidget` (`src/ui/CommandsPaneWidget.h/.cpp`) — a live,
   read-only log of protocol traffic, modeled on FileZilla's own message
   log, docked between the toolbar and the file panes by default (View >
