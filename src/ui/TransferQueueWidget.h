@@ -1,122 +1,64 @@
 #pragma once
 
 #include <QWidget>
-#include <QPoint>
-#include <QIcon>
-#include <QColor>
 #include <QHash>
 #include "../transfer/TransferItem.h"
+#include "TransferQueueTable.h"
 
-class QTableWidget;
 class TransferManager;
+class QTabWidget;
 
-// Table showing the transfer queue: filename, direction, status, progress.
-// Mostly a view mirroring TransferManager, but also the entry point for
-// per-item actions (right-click Cancel/Retry) — those just call back into
-// the manager, which owns all the actual state.
+// Three tabs — Active, Completed, Failed — splitting what used to be one
+// flat table by each item's own status category (see QueueCategory in
+// TransferQueueTable.h for the exact status->category mapping). A direct
+// user request: watching a batch finish, or finding a failed item to
+// retry, used to mean scrolling or sorting through everything else still
+// queued or already done to find it. Items migrate between tabs live as
+// their status changes — most visibly, retrying a Failed item moves it
+// straight back to the Active tab, the same live-migration mechanism as
+// any other item whose category just changed (e.g. Active -> Completed
+// on Done). The actual per-tab table/sort/context-menu implementation
+// lives in TransferQueueTable — this class owns three instances and is
+// only responsible for routing TransferManager's signals to whichever
+// one currently matches each item.
 class TransferQueueWidget : public QWidget {
     Q_OBJECT
 public:
     explicit TransferQueueWidget(TransferManager *manager, QWidget *parent = nullptr);
 
-    // The exact text shown in the Direction column's tooltip, and (since
-    // a code-review fix) what resortAndRebuild()'s Direction-column sort
-    // now compares — already effectively public information (anyone
-    // hovering a row sees it); public here mainly so transfer-queue-test
-    // can verify that sort's comparator basis directly, the same reason
-    // FilePaneWidget::parentOfPath() is public.
-    static QString directionText(TransferDirection direction);
+    // Forwards to TransferQueueTable::directionText() — kept as a public
+    // static method here too so transfer-queue-test's own existing calls
+    // (TransferQueueWidget::directionText(...)) keep working unchanged.
+    static QString directionText(TransferDirection direction) {
+        return TransferQueueTable::directionText(direction);
+    }
 
     // Live Dark/Light switching — this widget doesn't take an
     // AppSettings* (unlike FilePaneWidget), so it can't self-subscribe
     // to themeChanged the same way; MainWindow::onThemeChanged() calls
-    // this explicitly instead. Re-runs onItemUpdated() for every
-    // currently-queued item (which already re-sets its own status/
-    // direction icons and progress-bar chunk color from IconTheme) —
-    // no separate re-tint logic needed, this just re-triggers the
-    // existing per-row rendering path.
+    // this explicitly instead. Re-runs updateItem() (via whichever tab
+    // currently holds it) for every item TransferManager currently
+    // knows about — no separate re-tint logic needed, this just
+    // re-triggers each item's existing per-row rendering path.
     void retintIcons();
 
 private slots:
     void onItemAdded(const TransferItem &item);
     void onItemUpdated(const TransferItem &item);
-    void showContextMenu(const QPoint &pos);
-
-    // Clicking a header sorts by that column; clicking the same one again
-    // reverses it — QTableWidget's own sortItems() isn't used for this
-    // (see resortAndRebuild()'s doc comment on why), so this has to be
-    // driven manually off QHeaderView::sectionClicked instead of the
-    // usual setSortingEnabled(true).
-    void onHeaderSectionClicked(int column);
 
 private:
-    int rowForId(int id) const;
-    static QString statusText(const TransferItem &item);
+    TransferQueueTable *tableFor(QueueCategory category) const;
+    void updateTabLabel(QueueCategory category);
 
-    // 0-100, from bytesDone/bytesTotal — shared by onItemUpdated() (drives
-    // the real progress bar) and resortAndRebuild()'s Progress-column sort
-    // key, so the two can't drift apart.
-    static int percentFor(const TransferItem &item);
-
-    // The actual row-construction onItemAdded() used to do inline —
-    // factored out so resortAndRebuild()'s rebuild loop can call this
-    // directly instead of onItemAdded() itself, which would otherwise
-    // recurse straight back into resortAndRebuild() for as long as a sort
-    // is active (see onItemAdded()'s own comment on the real bug this
-    // split fixes). Always appends at the CURRENT bottom row — callers
-    // that care about sorted order are responsible for that themselves
-    // (onItemAdded() via resortAndRebuild(); resortAndRebuild() via its
-    // own already-sorted iteration order).
-    void appendRow(const TransferItem &item);
-
-    // Re-sorts m_manager->items() by (m_sortColumn, m_sortOrder) and
-    // rebuilds every row from scratch via appendRow()+onItemUpdated(). A
-    // full rebuild rather than QTableWidget::sortItems() specifically
-    // because ColDirection and ColProgress are QWidget cell widgets
-    // (setCellWidget()), not QTableWidgetItems — sortItems() only
-    // reorders items, so a cell widget stays pinned to its original row
-    // number while the item text around it moves, silently pairing each
-    // widget with the wrong row. Rebuilding from the same TransferManager
-    // data appendRow() already trusts sidesteps that entirely.
-    void resortAndRebuild();
-
-    int m_sortColumn = -1;   // -1: unsorted, insertion order (the pre-sort default)
-    Qt::SortOrder m_sortOrder = Qt::AscendingOrder;
-
-    // Coalesces onItemAdded()'s resortAndRebuild() calls while a sort is
-    // active — see that method's own comment for the real, severe bug
-    // this fixes: enqueueing N files in a tight loop (a folder transfer,
-    // or any multi-select drag-drop) used to trigger N separate full-
-    // table rebuilds, each rebuilding the table's CURRENT size — an O(N²)
-    // storm of QTableWidgetItem/QProgressBar/QLabel/QWidget allocation
-    // that made a large batch transfer hang the GUI thread and consume
-    // runaway memory (a real, reported crash on Windows — WER's
-    // RADAR_PRE_LEAK_64 + "stopped interacting with Windows", both
-    // symptoms this exact pattern produces). Guards a single deferred
-    // rebuild per burst instead of one per item.
-    bool m_rebuildPending = false;
-
-    // Direction arrow (up/down/left-right) recolored per the item's
-    // current status, or check/x for the two terminal states — per
-    // ICON-MAP.md's "Transfer direction & status" table.
-    static QIcon statusIcon(const TransferItem &item);
-    static QColor statusTextColor(TransferStatus status);
-
-    // "1.2 MB/s" style formatting — empty string when not meaningful
-    // (anything other than InProgress; see TransferManager, which zeroes
-    // speedBytesPerSec on every terminal/paused transition).
-    static QString speedText(const TransferItem &item);
-
-    QTableWidget *m_table;
     TransferManager *m_manager;
+    QTabWidget *m_tabs;
+    TransferQueueTable *m_activeTable;
+    TransferQueueTable *m_completedTable;
+    TransferQueueTable *m_failedTable;
 
-    // item id -> current row. rowForId() used to do a linear scan of
-    // every row on EVERY call — called from onItemUpdated(), which fires
-    // once per progress tick for every item — a real O(N) cost per
-    // update found from the same live large-batch-hang report the
-    // O(N²) resortAndRebuild() bug was (see onItemAdded()'s own doc
-    // comment). Kept in sync by appendRow() (every insert) and
-    // resortAndRebuild() (cleared and fully repopulated, since a full
-    // rebuild renumbers every row anyway).
-    QHash<int, int> m_rowById;
+    // item id -> which tab currently holds it — lets onItemUpdated()
+    // detect a category change (migrate: remove from the old tab, add
+    // to the new one) vs. an ordinary in-place update, in O(1), without
+    // asking all three tables "do you have this id".
+    QHash<int, QueueCategory> m_categoryById;
 };

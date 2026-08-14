@@ -78,6 +78,16 @@ int main(int argc, char *argv[])
     app.setQuitOnLastWindowClosed(false);
 
     const QString base = "/tmp/conflict_test";
+    // Wipe any leftover state from a previous run before regenerating —
+    // same convention transfer_queue_test.cpp/folder_transfer_test.cpp
+    // already use for their own /tmp dirs. Without this, a stale
+    // mergedir/f.txt left behind by an earlier run makes Phase D's own
+    // per-file checkExists() genuinely find a real conflict (the file
+    // already exists) that this test's own Phase D flow never accounts
+    // for, opening an extra, un-clicked dialog that Phase E's later
+    // click can then steal instead of reentrancy.txt's own dialog —
+    // a real, reproducible local-only failure this exact bug caused.
+    QDir(base).removeRecursively();
     QDir().mkpath(base + "/src");
     QDir().mkpath(base + "/dst");
 

@@ -39,6 +39,7 @@
 #include <QElapsedTimer>
 #include "ui/FilePaneWidget.h"
 #include "ui/TransferQueueWidget.h"
+#include "ui/TransferQueueTable.h"
 #include "ui/IconTheme.h"
 #include "backends/LocalBackend.h"
 #include "transfer/TransferManager.h"
@@ -239,12 +240,15 @@ int main(int argc, char *argv[])
     // pair, isolated from phases 1-3's items — this only checks how new
     // rows land relative to an active sort, not transfer execution, so
     // the enqueued items never need to actually run (checked synchronously,
-    // before any event-loop turn lets startNext() begin real I/O). ----
+    // before any event-loop turn lets startNext() begin real I/O). All
+    // three items stay Queued throughout, so they all live in the ACTIVE
+    // tab specifically — see TransferQueueTable.h's QueueCategory. ----
     bool phase4Pass = false;
     QTimer::singleShot(3800, &app, [&]() {
         auto *sortManager = new TransferManager(&app);
         auto *queueWidget = new TransferQueueWidget(sortManager);
-        auto *table = queueWidget->findChild<QTableWidget *>();
+        auto *activeContainer = queueWidget->findChild<TransferQueueTable *>(QStringLiteral("activeQueueTable"));
+        auto *table = activeContainer->findChild<QTableWidget *>();
 
         sortManager->enqueue(leftPane, rightPane, "b_item.bin");
         sortManager->enqueue(leftPane, rightPane, "a_item.bin");
@@ -295,7 +299,13 @@ int main(int argc, char *argv[])
     QTimer::singleShot(4200, &app, [&]() {
         auto *visManager = new TransferManager(&app);
         auto *visWidget = new TransferQueueWidget(visManager);
-        auto *table = visWidget->findChild<QTableWidget *>();
+        // Both items captured below are InProgress (hence in the ACTIVE
+        // tab specifically — see TransferQueueTable.h's QueueCategory)
+        // at the moment captureIfInProgress() needs to find them; used
+        // for that AND the sort-indicator check below (any freshly-
+        // constructed tab is equally representative for that one).
+        auto *activeContainer = visWidget->findChild<TransferQueueTable *>(QStringLiteral("activeQueueTable"));
+        auto *table = activeContainer->findChild<QTableWidget *>();
         auto *header = table->horizontalHeader();
 
         // Regression: the sort-indicator arrow used to show (ascending,
@@ -426,12 +436,20 @@ int main(int argc, char *argv[])
         // both items have long since finished by now (regardless of
         // status, `direction` never changes), so this just confirms the
         // real header-click path reaches the fixed comparator correctly:
-        // ascending should put "local copy" before "move".
-        header->sectionClicked(1);   // ColDirection
+        // ascending should put "local copy" before "move". Both items
+        // fail (neither vis_localcopy.bin nor vis_moveme.bin was ever
+        // created as a real file — deliberately, this phase only cares
+        // about direction, not outcome), so by now both have migrated
+        // to the FAILED tab specifically (see TransferQueueTable.h's
+        // QueueCategory) — not the ACTIVE tab `table` still points at.
+        auto *failedContainer = visWidget->findChild<TransferQueueTable *>(QStringLiteral("failedQueueTable"));
+        auto *failedTable = failedContainer->findChild<QTableWidget *>();
+        auto *failedHeader = failedTable->horizontalHeader();
+        failedHeader->sectionClicked(1);   // ColDirection
         const bool directionSortAscendingCorrect =
-            table->rowCount() == 2
-            && table->item(0, 0)->text() == "vis_localcopy.bin"
-            && table->item(1, 0)->text() == "vis_moveme.bin";
+            failedTable->rowCount() == 2
+            && failedTable->item(0, 0)->text() == "vis_localcopy.bin"
+            && failedTable->item(1, 0)->text() == "vis_moveme.bin";
         qDebug() << "[phase5] Direction column sorts ascending by directionText() end to end:"
                   << directionSortAscendingCorrect;
 
@@ -478,7 +496,15 @@ int main(int argc, char *argv[])
     QTimer::singleShot(7000, &app, [&]() {
         auto *bulkManager = new TransferManager(&app);
         auto *bulkWidget = new TransferQueueWidget(bulkManager);
-        auto *table = bulkWidget->findChild<QTableWidget *>();
+        // None of the 1500 items below have a real backing file, so
+        // none of them can actually resolve (even a failure needs at
+        // least a threadpool round trip now — see LocalBackend's own
+        // QtConcurrent-backed copy) within the single processEvents()
+        // call this phase makes — all 1500 stay Queued, hence in the
+        // ACTIVE tab specifically (see TransferQueueTable.h's
+        // QueueCategory) for this whole phase.
+        auto *activeContainer = bulkWidget->findChild<TransferQueueTable *>(QStringLiteral("activeQueueTable"));
+        auto *table = activeContainer->findChild<QTableWidget *>();
         table->horizontalHeader()->sectionClicked(0);   // activate ascending Name sort
 
         constexpr int kFileCount = 1500;

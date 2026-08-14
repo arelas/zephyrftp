@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ZephyrFTP VERSION 0.7.20 LANGUAGES CXX)
+project(ZephyrFTP VERSION 0.7.21 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -70,6 +70,7 @@ set(SOURCES
     src/ui/FileTreeView.cpp
     src/ui/ConnectionDialog.cpp
     src/ui/TransferQueueWidget.cpp
+    src/ui/TransferQueueTable.cpp
     src/ui/CommandsPaneWidget.cpp
     src/ui/HostKeyVerifier.cpp
     src/ui/CertificateVerifier.cpp
@@ -345,6 +346,7 @@ qt_add_executable(smoke-test EXCLUDE_FROM_ALL
     src/ui/FileTreeView.cpp
     src/ui/ConnectionDialog.cpp
     src/ui/TransferQueueWidget.cpp
+    src/ui/TransferQueueTable.cpp
     src/ui/CommandsPaneWidget.cpp
     src/ui/HostKeyVerifier.cpp
     src/ui/CertificateVerifier.cpp
@@ -390,6 +392,7 @@ qt_add_executable(sync-browsing-test EXCLUDE_FROM_ALL
     src/ui/FileTreeView.cpp
     src/ui/ConnectionDialog.cpp
     src/ui/TransferQueueWidget.cpp
+    src/ui/TransferQueueTable.cpp
     src/ui/CommandsPaneWidget.cpp
     src/ui/HostKeyVerifier.cpp
     src/ui/CertificateVerifier.cpp
@@ -433,6 +436,7 @@ qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
     src/ui/FileTreeView.cpp
     src/ui/ConnectionDialog.cpp
     src/ui/TransferQueueWidget.cpp
+    src/ui/TransferQueueTable.cpp
     src/ui/CommandsPaneWidget.cpp
     src/ui/HostKeyVerifier.cpp
     src/ui/CertificateVerifier.cpp

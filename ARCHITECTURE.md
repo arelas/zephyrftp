@@ -431,6 +431,26 @@ that way, it's flagged explicitly rather than left implied.
   This test only ever exercised `LocalBackend`'s side of conflict
   detection; `SftpBackend`'s `checkExists()` is now separately confirmed
   against a real server — see the matching Known gaps entry below.
+  **A third bug, this time in the test's own hygiene, surfaced later
+  (v0.7.21) by repeated local runs rather than CI**: `/tmp/conflict_test`
+  was never wiped before each run, unlike its sibling tests
+  (`transfer_queue_test.cpp`/`folder_transfer_test.cpp`, both of which
+  do wipe their own `/tmp` scratch dirs). After enough repeated local
+  runs left a stale `mergedir/f.txt` behind from an earlier run, Phase
+  D's own per-file `checkExists()` correctly detected a genuine
+  conflict for it (the file really did already exist) that Phase D's
+  own test logic never accounts for (it only clicks the folder-level
+  "Write Into" dialog) — popping a second, never-clicked dialog that
+  Phase E's later flood-and-click logic then found as the "active
+  modal" and clicked instead of `reentrancy.txt`'s own dialog, leaving
+  it blocked until the 20-second safety net. Always passed on CI (a
+  fresh container has no leftover state) but failed consistently
+  locally once state had accumulated — root-caused by adding temporary
+  instrumentation (per-item id/status/timestamp logging, both in the
+  test and directly in `TransferManager::onDestinationExistsChecked()`)
+  rather than guessing from the symptom alone, then reverted once the
+  cause was confirmed. Fixed with the same `QDir(base).removeRecursively()`
+  its siblings already use; confirmed 5/5 clean runs afterward.
 
 - **FTP's directory-listing parsers are verified directly, in isolation
   from any network I/O.** `src/ftp_parsing_test.cpp` (built via the
@@ -3324,6 +3344,45 @@ to drive FileZilla itself for a same-desktop comparison.
      right next to it — a latent null-pointer deref if any future code
      path ever delivered `itemUpdated` for a row before `ColStatus` was
      populated. Guarded to match.
+  **Split into three tabs — Active, Completed, Failed — a direct user
+  request**: watching a batch finish, or finding a failed item to
+  retry, used to mean scrolling or sorting through everything else
+  still queued or already done to find it. The single flat table's own
+  implementation (everything described above — sorting,
+  `resortAndRebuild()`'s coalesced-rebuild fix, the `m_rowById` id->row
+  hash) moved essentially unchanged into a new `TransferQueueTable`
+  (`src/ui/TransferQueueTable.h/.cpp`), one instance per category;
+  `TransferQueueWidget` itself shrank to a thin ~90-line router owning
+  three `TransferQueueTable`s inside a `QTabWidget`, plus a
+  `QHash<int, QueueCategory> m_categoryById` tracking which tab each
+  item currently lives in. A new free function `categoryFor(TransferStatus)`
+  maps `Queued`/`InProgress`/`Paused`/`PendingReconnect` -> Active,
+  `Done` -> Completed, and `Failed`/`Cancelled`/`Skipped` -> Failed —
+  that exact three-status grouping for Failed was chosen to match
+  precisely what `TransferManager::retryItem()` already accepts (its
+  own guard clause checks for exactly those three statuses), so every
+  item visible in the Failed tab is guaranteed retry-eligible. Items
+  migrate between tabs live as their status changes — most visibly,
+  retrying a Failed item moves it straight back to the Active tab the
+  instant `retryItem()` sets it back to `Queued` — via
+  `TransferQueueWidget::onItemUpdated()` comparing an item's previously
+  tracked category against its newly computed one and, on a mismatch,
+  calling `removeItem()` on the old tab's table followed by `addItem()`
+  on the new one. Each table gets its own `setObjectName()`
+  (`activeQueueTable`/`completedQueueTable`/`failedQueueTable`) so
+  `transfer-queue-test` can reliably find a specific tab's table via
+  `findChild<TransferQueueTable*>(name)` now that there are three
+  sibling instances of the same type instead of one.
+  **A real bug caught during design, before it ever shipped**: a
+  migrated item that already landed in a terminal state (e.g. reaches
+  Done and gets moved into the Completed tab) would have shown 0%
+  progress forever, because `addItem()`'s row-construction path
+  (`appendRow()`) always initializes a fresh row's progress bar to 0
+  and nothing would have called `updateItem()` again for it afterward.
+  Fixed by having `addItem()` always follow `appendRow()` with an
+  `updateItem()` call, so a freshly-migrated row picks up its item's
+  actual current progress/status immediately instead of only the
+  blank just-added default.
 - `CommandsPaneWidget` (`src/ui/CommandsPaneWidget.h/.cpp`) — a live,
   read-only log of protocol traffic, modeled on FileZilla's own message
   log, docked between the toolbar and the file panes by default (View >
@@ -3874,6 +3933,15 @@ to drive FileZilla itself for a same-desktop comparison.
   files. User decision: live switching, not restart-required — a real
   step up in complexity, since every icon and stylesheet rule already
   applied to existing widgets has to be re-applied in place.
+
+  **Protocol breadth (WebDAV/S3/cloud storage) deliberately deferred**
+  (David's explicit call, 2026-08-14, after this feature shipped) — not
+  merely unscheduled. It remains the single biggest structural gap
+  against Cyberduck/Transmit/WinSCP, but the underlying product-identity
+  question needs an actual conversation before it can even be scoped as
+  a feature, not an implementation decision like every other item on
+  this list was. See `project_competitive_roadmap.md` for the full
+  re-derived competitive score reflecting this.
 
   New `src/Theme.h` (`enum class Theme { Dark, Light }`) — deliberately
   NOT in `IconTheme.h` (Widgets-adjacent) or defined inline in

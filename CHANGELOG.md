@@ -8,6 +8,32 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.21] — Split the transfer queue into Active/Completed/Failed tabs
+
+### Added
+
+- **The transfer queue is now split into three tabs — Active,
+  Completed, and Failed — instead of one flat table.** Watching a
+  batch finish, or finding a failed item to retry, used to mean
+  scrolling or sorting through everything else still queued or already
+  done to find it. Items move between tabs live as their status
+  changes — most visibly, retrying a Failed item moves it straight
+  back to the Active tab the instant the retry re-queues it. The
+  Failed tab always contains exactly the items `TransferManager`'s own
+  Retry action accepts (Failed, Cancelled, or Skipped), so everything
+  shown there is genuinely retry-eligible.
+
+### Fixed
+
+- **`conflict-resolution-test` failed consistently on repeated local
+  runs (always passed on CI).** It never wiped its own `/tmp/conflict_test`
+  scratch directory before running, unlike its sibling tests. A stale
+  file left behind by an earlier run caused a real (but test-unhandled)
+  second conflict dialog to open, which a later phase's automated click
+  ended up hitting instead of the dialog it was actually meant for.
+  Fixed by wiping that directory at the start of each run, matching the
+  convention its sibling tests already use.
+
 ## [0.7.20] — Fix GUI freeze during local file transfers
 
 ### Fixed
@@ -1890,7 +1916,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.11...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.21...HEAD
+[0.7.21]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.21
 [0.7.11]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.11
 [0.7.10]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.10
 [0.7.9]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.9
