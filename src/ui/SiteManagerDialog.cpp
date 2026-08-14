@@ -409,7 +409,16 @@ void SiteManagerDialog::refreshGroupChoices()
 
     const QSignalBlocker blocker(m_groupCombo);
     m_groupCombo->clear();
-    m_groupCombo->addItem(QString());   // "(none)" via placeholder text, not a literal empty-string row label
+    // A real, visible "(none)" row — an earlier draft added a literal
+    // empty-string item instead, relying solely on the line edit's own
+    // placeholder text (below) to convey meaning when nothing was
+    // selected. That left the DROPDOWN POPUP's first row genuinely
+    // blank (no text to render at all), a real reported bug — worse,
+    // not just harder to read, than any color/contrast issue. Selecting
+    // this row literally sets the line edit's text to "(none)" — see
+    // commitFormToSelectedSite()'s own normalization back to an empty
+    // (ungrouped) value, so this stays cosmetic, not a real group name.
+    m_groupCombo->addItem(tr("(none)"));
     m_groupCombo->addItems(groups);
     m_groupCombo->setCurrentText(currentText);
 }
@@ -521,7 +530,12 @@ void SiteManagerDialog::commitFormToSelectedSite()
     if (!site)
         return;   // nothing selected — form is just a scratch area for a one-off connect
 
-    const QString newGroup = m_groupCombo->currentText().trimmed();
+    // The combo's own "(none)" sentinel row (see refreshGroupChoices())
+    // means "ungrouped" — normalized back to empty here so it's never
+    // literally persisted as a group named "(none)".
+    QString newGroup = m_groupCombo->currentText().trimmed();
+    if (newGroup == tr("(none)"))
+        newGroup.clear();
     const bool groupChanged = (newGroup != site->group);
 
     site->name = m_nameEdit->text().trimmed().isEmpty() ? tr("Untitled Site") : m_nameEdit->text().trimmed();

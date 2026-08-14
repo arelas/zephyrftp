@@ -8,6 +8,19 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.15] — UI cosmetics pass, part 4
+
+### Changed
+
+- **Site Manager's Group dropdown "(none)" option** is now a real,
+  visibly-labeled row instead of a blank string relying solely on
+  placeholder text — the dropdown popup previously showed a genuinely
+  empty first row. Selecting it still persists as ungrouped, not a
+  literal "(none)" group.
+- **Quick connect toolbar field order**: Host now leads before Username
+  (previously Username, Host) — final order is Host, Username, Port,
+  Protocol, Connect.
+
 ## [0.7.14] — UI cosmetics pass, part 3
 
 ### Changed

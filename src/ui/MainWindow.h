@@ -120,8 +120,8 @@ private slots:
     void onCompareDirectoriesTriggered();
 
     // Fired by returnPressed() on any of the quick-connect toolbar's
-    // username/host/port fields, or by clicking its Connect button —
-    // reads the four fields directly (protocol combo, username/host/port
+    // host/username/port fields, or by clicking its Connect button —
+    // reads the four fields directly (protocol combo, host/username/port
     // edits), prompts inline for a password (matching
     // SiteManagerDialog::onConnectClicked()'s own synchronous
     // QInputDialog::getText(Password) pattern, no CredentialStore
@@ -255,7 +255,7 @@ private:
     // directly). Constructed after m_transferManager/m_settings, before
     // either pane (both need to emit editRequested to it).
     EditSessionManager *m_editSessionManager = nullptr;
-    // Quick connect: separate username/host/port/protocol fields plus an
+    // Quick connect: separate host/username/port/protocol fields plus an
     // explicit Connect button, all built in buildToolbar() (the View
     // menu's toggle only needs m_quickConnectToolBar itself to exist,
     // dereferenced lazily at toggle time — same "not needed until later"

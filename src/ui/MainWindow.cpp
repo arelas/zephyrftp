@@ -362,7 +362,7 @@ void MainWindow::buildToolbar()
     addToolBarBreak(Qt::TopToolBarArea);
     m_quickConnectToolBar = addToolBar(tr("Quick Connect"));
 
-    // Separate username/host/port/protocol fields plus an explicit
+    // Separate host/username/port/protocol fields plus an explicit
     // Connect button — replaces an earlier single free-text
     // "[protocol://][user@]host[:port]" field (a real reported
     // usability issue: the syntax wasn't discoverable). Protocol
@@ -371,22 +371,23 @@ void MainWindow::buildToolbar()
     // dialog. Port is a plain QLineEdit, not a QSpinBox — a port is
     // typed, not nudged one integer at a time (same reasoning
     // PreferencesDialog/SiteManagerDialog's own port fields use).
-    // Order (username/host/port, THEN protocol, THEN Connect) matches a
+    // Order (host/username/port, THEN protocol, THEN Connect) matches a
     // real reported preference — protocol sits right before the action
-    // it configures rather than leading the row.
-    m_quickConnectUsernameEdit = new QLineEdit(this);
-    m_quickConnectUsernameEdit->setPlaceholderText(tr("Username"));
-    m_quickConnectUsernameEdit->setFixedWidth(110);
-    connect(m_quickConnectUsernameEdit, &QLineEdit::returnPressed,
-            this, &MainWindow::onQuickConnectReturnPressed);
-    m_quickConnectToolBar->addWidget(m_quickConnectUsernameEdit);
-
+    // it configures rather than leading the row, and host leads before
+    // username.
     m_quickConnectHostEdit = new QLineEdit(this);
     m_quickConnectHostEdit->setPlaceholderText(tr("Host"));
     m_quickConnectHostEdit->setFixedWidth(160);
     connect(m_quickConnectHostEdit, &QLineEdit::returnPressed,
             this, &MainWindow::onQuickConnectReturnPressed);
     m_quickConnectToolBar->addWidget(m_quickConnectHostEdit);
+
+    m_quickConnectUsernameEdit = new QLineEdit(this);
+    m_quickConnectUsernameEdit->setPlaceholderText(tr("Username"));
+    m_quickConnectUsernameEdit->setFixedWidth(110);
+    connect(m_quickConnectUsernameEdit, &QLineEdit::returnPressed,
+            this, &MainWindow::onQuickConnectReturnPressed);
+    m_quickConnectToolBar->addWidget(m_quickConnectUsernameEdit);
 
     m_quickConnectPortEdit = new QLineEdit(this);
     m_quickConnectPortEdit->setPlaceholderText(tr("Port"));
