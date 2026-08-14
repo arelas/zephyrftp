@@ -8,7 +8,7 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
-## [0.7.16] — Fix runaway memory/hang on large batch transfers
+## [0.7.17] — Fix runaway memory/hang on large batch transfers
 
 ### Fixed
 

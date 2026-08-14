@@ -504,9 +504,19 @@ int main(int argc, char *argv[])
 
         phase6Pass = fastEnough && correctCountAndOrder;
         qDebug() << (phase6Pass ? "[phase6] PASS" : "[phase6] FAIL");
-    });
 
-    QTimer::singleShot(5600, &app, [&]() {
+        // Chained off phase6's OWN completion, not a separate fixed-delay
+        // timer — a real bug found on real CI (not locally): a slower/
+        // more loaded runner made phase6's actual work (scheduled to
+        // START at 5000ms) run long enough to still be in flight when an
+        // earlier draft's independent `QTimer::singleShot(5600, ...)`
+        // aggregation fired on its own fixed schedule, reading phase6Pass
+        // before this lambda ever set it — printing a false "AT LEAST ONE
+        // PHASE FAILED" moments before phase6's own PASS line even
+        // appeared in the log. Every phase before this one is safe from
+        // that same race only because each already runs to completion,
+        // synchronously, inside its own timer callback before the next
+        // one is scheduled — this now does the same.
         const bool overallPass = phase1Pass && phase2SyncPass && phase2Pass && phase3Pass
             && phase4Pass && phase5Pass && phase6Pass;
         qDebug() << (overallPass ? "[test] ALL PHASES PASS" : "[test] AT LEAST ONE PHASE FAILED");
