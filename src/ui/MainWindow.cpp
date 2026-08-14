@@ -10,6 +10,7 @@
 #include "CertificateVerifier.h"
 #include "IconTheme.h"
 #include "CompareDialog.h"
+#include "ProtocolCombo.h"
 #include "../AppSettings.h"
 #include "../backends/LocalBackend.h"
 #include "../backends/SftpBackend.h"
@@ -17,7 +18,7 @@
 #include "../backends/ConnectionRequest.h"
 #include "../backends/ConnectionDescriptor.h"
 #include "../backends/SftpCredentials.h"
-#include "../backends/QuickConnectParser.h"
+#include "../backends/Protocol.h"
 #include "../transfer/TransferManager.h"
 #include "../PathUtils.h"
 
@@ -42,6 +43,8 @@
 #include <QDockWidget>
 #include <QCloseEvent>
 #include <QLineEdit>
+#include <QComboBox>
+#include <QPushButton>
 #include <QInputDialog>
 #include <QKeyEvent>
 #include <QFile>
@@ -133,24 +136,6 @@ MainWindow::MainWindow(QWidget *parent)
 
 void MainWindow::buildMenuBar()
 {
-    // Constructed here, not in buildToolbar() where it actually lives —
-    // see this member's own doc comment (MainWindow.h) for why: the View
-    // menu's toggle below needs it to already exist, and buildMenuBar()
-    // runs before buildToolbar() in the constructor.
-    m_quickConnectEdit = new QLineEdit(this);
-    m_quickConnectEdit->setPlaceholderText(tr("user@host — Enter to connect"));
-    m_quickConnectEdit->setToolTip(
-        tr("Quick connect: [protocol://][user@]host[:port]\n"
-           "protocol is sftp, ftp, or ftps — defaults to your Preferences default protocol.\n"
-           "Password auth only; for a private key, use Connect... instead."));
-    m_quickConnectEdit->setFixedWidth(220);
-    // Visibility is controlled at the TOOLBAR level, not here — see
-    // m_quickConnectToolBar's own doc comment (MainWindow.h) for why:
-    // once quick connect has its own toolbar row, hiding just the field
-    // would leave an empty strip behind.
-    connect(m_quickConnectEdit, &QLineEdit::returnPressed,
-            this, &MainWindow::onQuickConnectReturnPressed);
-
     // A real menu bar, not just the toolbar — the toolbar was never
     // meant to be the only way into every action (About specifically
     // has no natural toolbar icon; "info circle" would be one more icon
@@ -205,14 +190,14 @@ void MainWindow::buildMenuBar()
     connect(commandsViewToggle, &QAction::toggled, m_commandsDock, &QDockWidget::setVisible);
     connect(m_commandsDock, &QDockWidget::visibilityChanged, commandsViewToggle, &QAction::setChecked);
 
-    // NOT a toggleViewAction() — m_quickConnectEdit's TOOLBAR (not a
-    // QDockWidget) is what actually gets shown/hidden here; see
-    // m_quickConnectToolBar's own doc comment (MainWindow.h) for why the
-    // whole toolbar, not just the field, is what this toggles. Not
-    // duplicated onto the toolbar itself, same reasoning as before this
-    // toolbar split: a toolbar icon toggling that same toolbar's own
-    // visibility reads as more confusing than useful.
-    QAction *quickConnectToggle = viewMenu->addAction(tr("&Quick Connect Field"));
+    // NOT a toggleViewAction() — m_quickConnectToolBar (not a
+    // QDockWidget) is what actually gets shown/hidden here; see its own
+    // doc comment (MainWindow.h) for why the whole toolbar, not each
+    // field individually, is what this toggles. Not duplicated onto the
+    // toolbar itself, same reasoning as before this toolbar split: a
+    // toolbar icon toggling that same toolbar's own visibility reads as
+    // more confusing than useful.
+    QAction *quickConnectToggle = viewMenu->addAction(tr("&Quick Connect Toolbar"));
     quickConnectToggle->setCheckable(true);
     quickConnectToggle->setChecked(m_settings->quickConnectFieldVisible());
     connect(quickConnectToggle, &QAction::toggled, this, [this](bool visible) {
@@ -223,13 +208,13 @@ void MainWindow::buildMenuBar()
     // Same shape as the quick-connect toggle above — one shared toggle
     // controls BOTH panes' filter-field visibility at once (each pane's
     // own filter TEXT stays independent, since the two panes usually
-    // show different directories). Unlike m_quickConnectEdit, m_leftPane/
-    // m_rightPane don't exist yet here (buildLayout() creates them AFTER
-    // buildMenuBar() runs) — no ordering hazard though, since this
-    // lambda only dereferences them at toggle time (a later, real user
-    // action), never at construction time; each pane sets its OWN
-    // initial filter-field visibility directly from AppSettings in its
-    // own constructor instead of waiting for this toggle to do it.
+    // show different directories). m_leftPane/m_rightPane don't exist
+    // yet here either (buildLayout() creates them AFTER buildMenuBar()
+    // runs) — no ordering hazard though, since this lambda only
+    // dereferences them at toggle time (a later, real user action),
+    // never at construction time; each pane sets its OWN initial
+    // filter-field visibility directly from AppSettings in its own
+    // constructor instead of waiting for this toggle to do it.
     QAction *filenameFilterToggle = viewMenu->addAction(tr("Filename &Filter"));
     filenameFilterToggle->setCheckable(true);
     filenameFilterToggle->setChecked(m_settings->filenameFilterVisible());
@@ -373,12 +358,54 @@ void MainWindow::buildToolbar()
     // it the way it originally did (a real reported issue: it read as
     // just another icon-bar widget rather than its own thing). The break
     // forces addToolBar() below onto a new row rather than appending to
-    // the same one. Constructed back in buildMenuBar() (see
-    // m_quickConnectEdit's own doc comment in MainWindow.h for why) —
-    // addWidget() reparents it here.
+    // the same one.
     addToolBarBreak(Qt::TopToolBarArea);
     m_quickConnectToolBar = addToolBar(tr("Quick Connect"));
-    m_quickConnectToolBar->addWidget(m_quickConnectEdit);
+
+    // Separate protocol/username/host/port fields plus an explicit
+    // Connect button — replaces an earlier single free-text
+    // "[protocol://][user@]host[:port]" field (a real reported
+    // usability issue: the syntax wasn't discoverable). Protocol
+    // defaults to Preferences' own default, same precedent
+    // connectViaDialog() already establishes for the full Connect
+    // dialog. Port is a plain QLineEdit, not a QSpinBox — a port is
+    // typed, not nudged one integer at a time (same reasoning
+    // PreferencesDialog/SiteManagerDialog's own port fields use).
+    m_quickConnectProtocolCombo = new QComboBox(this);
+    ProtocolCombo::populate(m_quickConnectProtocolCombo);
+    const int defaultProtocolIndex =
+        m_quickConnectProtocolCombo->findData(int(m_settings->defaultProtocol()));
+    if (defaultProtocolIndex >= 0)
+        m_quickConnectProtocolCombo->setCurrentIndex(defaultProtocolIndex);
+    m_quickConnectToolBar->addWidget(m_quickConnectProtocolCombo);
+
+    m_quickConnectUsernameEdit = new QLineEdit(this);
+    m_quickConnectUsernameEdit->setPlaceholderText(tr("Username"));
+    m_quickConnectUsernameEdit->setFixedWidth(110);
+    connect(m_quickConnectUsernameEdit, &QLineEdit::returnPressed,
+            this, &MainWindow::onQuickConnectReturnPressed);
+    m_quickConnectToolBar->addWidget(m_quickConnectUsernameEdit);
+
+    m_quickConnectHostEdit = new QLineEdit(this);
+    m_quickConnectHostEdit->setPlaceholderText(tr("Host"));
+    m_quickConnectHostEdit->setFixedWidth(160);
+    connect(m_quickConnectHostEdit, &QLineEdit::returnPressed,
+            this, &MainWindow::onQuickConnectReturnPressed);
+    m_quickConnectToolBar->addWidget(m_quickConnectHostEdit);
+
+    m_quickConnectPortEdit = new QLineEdit(this);
+    m_quickConnectPortEdit->setPlaceholderText(tr("Port"));
+    m_quickConnectPortEdit->setFixedWidth(55);
+    connect(m_quickConnectPortEdit, &QLineEdit::returnPressed,
+            this, &MainWindow::onQuickConnectReturnPressed);
+    m_quickConnectToolBar->addWidget(m_quickConnectPortEdit);
+
+    m_quickConnectConnectButton = new QPushButton(tr("Connect"), this);
+    m_quickConnectConnectButton->setIcon(IconTheme::tintedIcon(":/icons/plug.svg", IconTheme::Green));
+    connect(m_quickConnectConnectButton, &QPushButton::clicked,
+            this, &MainWindow::onQuickConnectReturnPressed);
+    m_quickConnectToolBar->addWidget(m_quickConnectConnectButton);
+
     m_quickConnectToolBar->setVisible(m_settings->quickConnectFieldVisible());
 }
 
@@ -672,11 +699,27 @@ void MainWindow::onConnectTriggered()
 
 void MainWindow::onQuickConnectReturnPressed()
 {
-    const QuickConnectResult result =
-        parseQuickConnectString(m_quickConnectEdit->text(), m_settings->defaultProtocol());
-    if (!result.ok) {
-        statusBar()->showMessage(result.errorMessage, 5000);
+    const QString host = m_quickConnectHostEdit->text().trimmed();
+    if (host.isEmpty()) {
+        statusBar()->showMessage(tr("Enter a host to connect to."), 5000);
         return;
+    }
+
+    const Protocol protocol = Protocol(m_quickConnectProtocolCombo->currentData().toInt());
+    const QString username = m_quickConnectUsernameEdit->text().trimmed();
+
+    // Blank means "use protocol's own default port" — same fallback
+    // the old free-text field's parser used.
+    const QString portText = m_quickConnectPortEdit->text().trimmed();
+    int port = defaultPortFor(protocol);
+    if (!portText.isEmpty()) {
+        bool portOk = false;
+        const int parsedPort = portText.toInt(&portOk);
+        if (!portOk || parsedPort < 1 || parsedPort > 65535) {
+            statusBar()->showMessage(tr("Invalid port \"%1\".").arg(portText), 5000);
+            return;
+        }
+        port = parsedPort;
     }
 
     // Password-only auth — matching SiteManagerDialog::onConnectClicked()'s
@@ -684,34 +727,36 @@ void MainWindow::onQuickConnectReturnPressed()
     // CredentialStore prefill: this is a one-off, not a saved site.
     // Private-key auth still requires the full Connect dialog — a
     // deliberate scope boundary, not an oversight (no reasonable way to
-    // fit a key path into a one-line quick-connect string).
+    // fit a key path into this toolbar).
     bool ok = false;
     const QString password = QInputDialog::getText(
-        this, tr("Connect"), tr("Password for %1@%2:").arg(result.username, result.host),
+        this, tr("Connect"), tr("Password for %1@%2:").arg(username, host),
         QLineEdit::Password, QString(), &ok);
     if (!ok)
         return;
 
     ConnectionRequest request;
-    request.protocol = result.protocol;
-    if (result.protocol == Protocol::Sftp) {
-        request.sftp.host = result.host;
-        request.sftp.port = result.port;
-        request.sftp.username = result.username;
+    request.protocol = protocol;
+    if (protocol == Protocol::Sftp) {
+        request.sftp.host = host;
+        request.sftp.port = port;
+        request.sftp.username = username;
         request.sftp.authMethod = SftpAuthMethod::Password;
         request.sftp.password = password;
     } else {
-        request.ftp.host = result.host;
-        request.ftp.port = result.port;
-        request.ftp.username = result.username;
+        request.ftp.host = host;
+        request.ftp.port = port;
+        request.ftp.username = username;
         request.ftp.password = password;
-        request.ftp.ftpsMode = protocolToFtpsMode(result.protocol);
+        request.ftp.ftpsMode = protocolToFtpsMode(protocol);
     }
 
     // Same fixed-right-pane shortcut connectViaDialog() already uses —
     // see startConnection()'s own comment.
     startConnection(request, m_rightPane);
-    m_quickConnectEdit->clear();
+    m_quickConnectUsernameEdit->clear();
+    m_quickConnectHostEdit->clear();
+    m_quickConnectPortEdit->clear();
 }
 
 void MainWindow::onSiteManagerTriggered()

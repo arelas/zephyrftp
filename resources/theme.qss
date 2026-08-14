@@ -143,9 +143,31 @@ QComboBox::down-arrow {
     height: 12px;
 }
 
+/* The dropdown POPUP is a separate widget (QAbstractItemView), not
+   covered by the plain QComboBox rule above (which only styles the
+   closed control) — without this it falls back to native/system
+   palette rendering, unrelated to this theme's own colors. */
+QComboBox QAbstractItemView {
+    background-color: #1a1d23;   /* --zf-surface */
+    color: #dfe4ea;               /* --zf-text-primary */
+    border: 1px solid #2a2e35;   /* --zf-border */
+    selection-background-color: rgba(91, 141, 239, 26);   /* --zf-blue-tint */
+    selection-color: #dfe4ea;
+    outline: none;
+}
+
 QLabel {
     color: #8790a0;               /* --zf-text-secondary */
     font-size: 11px;
+}
+
+/* Without this, QCheckBox's label text falls back to native/system
+   palette rendering (unstyled — QSS color inheritance from QDialog/
+   QMainWindow above doesn't reliably reach it on every platform this
+   app ships for), a real reported invisible-text bug. */
+QCheckBox {
+    color: #dfe4ea;               /* --zf-text-primary */
+    spacing: 6px;
 }
 
 /* CommandsPaneWidget's bottom-of-pane divider — same token every other

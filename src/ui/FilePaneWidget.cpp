@@ -222,24 +222,24 @@ void FilePaneWidget::buildUi()
     // not upload/download/connect-style actions, so they deliberately sit
     // outside the four-color system the rest of the icon set follows.
     m_backButton = new QToolButton(this);
-    m_backButton->setIcon(IconTheme::tintedIcon(":/icons/arrow-left.svg", IconTheme::Gray()));
+    m_backButton->setIcon(IconTheme::tintedIcon(":/icons/arrow-left.svg", IconTheme::Blue));
     m_backButton->setToolTip(tr("Back"));
     m_backButton->setEnabled(false);
     connect(m_backButton, &QToolButton::clicked, this, &FilePaneWidget::goBack);
 
     m_forwardButton = new QToolButton(this);
-    m_forwardButton->setIcon(IconTheme::tintedIcon(":/icons/arrow-right.svg", IconTheme::Gray()));
+    m_forwardButton->setIcon(IconTheme::tintedIcon(":/icons/arrow-right.svg", IconTheme::Blue));
     m_forwardButton->setToolTip(tr("Forward"));
     m_forwardButton->setEnabled(false);
     connect(m_forwardButton, &QToolButton::clicked, this, &FilePaneWidget::goForward);
 
     m_upButton = new QToolButton(this);
-    m_upButton->setIcon(IconTheme::tintedIcon(":/icons/corner-left-up.svg", IconTheme::Gray()));
+    m_upButton->setIcon(IconTheme::tintedIcon(":/icons/corner-left-up.svg", IconTheme::Blue));
     m_upButton->setToolTip(tr("Up one level"));
     connect(m_upButton, &QToolButton::clicked, this, &FilePaneWidget::goUp);
 
     m_homeButton = new QToolButton(this);
-    m_homeButton->setIcon(IconTheme::tintedIcon(":/icons/home.svg", IconTheme::Gray()));
+    m_homeButton->setIcon(IconTheme::tintedIcon(":/icons/home.svg", IconTheme::Blue));
     m_homeButton->setToolTip(tr("Home"));
     connect(m_homeButton, &QToolButton::clicked, this, &FilePaneWidget::goHome);
 
@@ -431,10 +431,10 @@ void FilePaneWidget::onPathBarReturnPressed()
 
 void FilePaneWidget::retintIcons()
 {
-    m_backButton->setIcon(IconTheme::tintedIcon(":/icons/arrow-left.svg", IconTheme::Gray()));
-    m_forwardButton->setIcon(IconTheme::tintedIcon(":/icons/arrow-right.svg", IconTheme::Gray()));
-    m_upButton->setIcon(IconTheme::tintedIcon(":/icons/corner-left-up.svg", IconTheme::Gray()));
-    m_homeButton->setIcon(IconTheme::tintedIcon(":/icons/home.svg", IconTheme::Gray()));
+    m_backButton->setIcon(IconTheme::tintedIcon(":/icons/arrow-left.svg", IconTheme::Blue));
+    m_forwardButton->setIcon(IconTheme::tintedIcon(":/icons/arrow-right.svg", IconTheme::Blue));
+    m_upButton->setIcon(IconTheme::tintedIcon(":/icons/corner-left-up.svg", IconTheme::Blue));
+    m_homeButton->setIcon(IconTheme::tintedIcon(":/icons/home.svg", IconTheme::Blue));
     rebuildModel();
 }
 

@@ -8,6 +8,30 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.13] — UI cosmetics pass, part 2
+
+### Changed
+
+- **Quick connect toolbar redesigned.** Replaced the single free-text
+  `[protocol://][user@]host[:port]` field with separate protocol
+  dropdown, Username, Host, and Port fields plus an explicit Connect
+  button — the old syntax wasn't discoverable.
+- **Checkbox and dropdown text visibility in light theme.** Checkbox
+  labels ("Show hidden files", "Save password") and combo-box dropdown
+  popups had no explicit styling in either theme and fell back to
+  native/system palette rendering — invisible-looking text in light
+  mode specifically. Both now styled explicitly in `theme.qss` and
+  `theme-light.qss`.
+- **Bandwidth limit unit clarified.** "Limit per transfer" now always
+  shows "(KB/s)" in its own row label — the spin box's unit suffix
+  disappeared entirely at the default "Unlimited" value, leaving no
+  indication of what unit a value would even be in.
+- **File pane navigation buttons** (Back/Forward/Up/Home) now use the
+  app's own documented "primary/navigation" blue accent instead of
+  plain gray, for better contrast in both themes.
+- **Compare Directories' Name column** now starts wide enough to show
+  Status/Left/Right without needing to scroll.
+
 ## [0.7.12] — UI cosmetics pass
 
 ### Changed

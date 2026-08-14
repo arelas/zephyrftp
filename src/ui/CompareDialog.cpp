@@ -92,6 +92,12 @@ void CompareDialog::buildUi()
     m_tree->setColumnCount(4);
     m_tree->setHeaderLabels({tr("Name"), tr("Status"), tr("Left"), tr("Right")});
     m_tree->setUniformRowHeights(true);
+    // Qt's own default initial column width (~100-150px) left Name too
+    // narrow for a typical file/folder path, pushing Status/Left/Right
+    // out of the visible area without the tree ever hinting they need
+    // scrolling — a real reported usability issue. Still freely
+    // resizable afterward; this only sets the STARTING width.
+    m_tree->setColumnWidth(0, 320);
     connect(m_tree, &QTreeWidget::itemChanged, this, &CompareDialog::onItemChanged);
     layout->addWidget(m_tree, /*stretch=*/1);
 

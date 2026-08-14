@@ -14,6 +14,8 @@ class QDockWidget;
 class QLineEdit;
 class QAction;
 class QToolBar;
+class QComboBox;
+class QPushButton;
 class AppSettings;
 class CommandsPaneWidget;
 class EditSessionManager;
@@ -117,8 +119,10 @@ private slots:
     // local panes too.
     void onCompareDirectoriesTriggered();
 
-    // Fired by m_quickConnectEdit's returnPressed() — parses its text
-    // (QuickConnectParser.h), prompts inline for a password (matching
+    // Fired by returnPressed() on any of the quick-connect toolbar's
+    // username/host/port fields, or by clicking its Connect button —
+    // reads the four fields directly (protocol combo, username/host/port
+    // edits), prompts inline for a password (matching
     // SiteManagerDialog::onConnectClicked()'s own synchronous
     // QInputDialog::getText(Password) pattern, no CredentialStore
     // prefill since this is a one-off, not a saved site), then dispatches
@@ -251,22 +255,27 @@ private:
     // directly). Constructed after m_transferManager/m_settings, before
     // either pane (both need to emit editRequested to it).
     EditSessionManager *m_editSessionManager = nullptr;
-    // Constructed in buildMenuBar(), NOT buildToolbar() where it's
-    // actually displayed — buildMenuBar() runs before buildToolbar() in
-    // the constructor (docks must exist before the View menu reads their
-    // toggleViewAction(), see that ordering's own comment), and the View
-    // menu's quick-connect toggle needs this to already exist. addWidget()
-    // in buildToolbar() reparents it into the toolbar; QLineEdit doesn't
-    // care that its initial parent (this) differs from where it ends up.
-    QLineEdit *m_quickConnectEdit = nullptr;
+    // Quick connect: separate protocol/username/host/port fields plus an
+    // explicit Connect button, all built in buildToolbar() (the View
+    // menu's toggle only needs m_quickConnectToolBar itself to exist,
+    // dereferenced lazily at toggle time — same "not needed until later"
+    // pattern m_leftPane/m_rightPane's own View-menu toggles already
+    // use — so unlike the single-field predecessor this replaced,
+    // nothing here needs to be pre-built in buildMenuBar()). Port is a
+    // plain QLineEdit, not a QSpinBox — a port is typed, not nudged.
+    QComboBox *m_quickConnectProtocolCombo = nullptr;
+    QLineEdit *m_quickConnectUsernameEdit = nullptr;
+    QLineEdit *m_quickConnectHostEdit = nullptr;
+    QLineEdit *m_quickConnectPortEdit = nullptr;
+    QPushButton *m_quickConnectConnectButton = nullptr;
 
     // Its own toolbar, directly under the main icon toolbar (see
-    // buildToolbar()'s own comment) — not sharing the icon bar the way
-    // it originally did. Stored as a member (unlike the main toolbar,
-    // a local variable in buildToolbar()) because the View menu's
-    // "Quick Connect Field" toggle needs to show/hide the whole toolbar
-    // row, not just the field inside it — hiding only the field would
-    // leave an empty toolbar strip behind.
+    // buildToolbar()'s own comment) — not sharing the icon bar. Stored
+    // as a member (unlike the main toolbar, a local variable in
+    // buildToolbar()) because the View menu's "Quick Connect Toolbar"
+    // toggle needs to show/hide the whole row at once, not each field
+    // individually — hiding only the fields would leave an empty
+    // toolbar strip behind.
     QToolBar *m_quickConnectToolBar = nullptr;
 
     // Built in buildToolbar() — stored (unlike sitesAction/connectAction/

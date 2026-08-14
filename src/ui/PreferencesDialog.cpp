@@ -182,7 +182,13 @@ PreferencesDialog::PreferencesDialog(AppSettings *settings, QWidget *parent)
     form->addRow(bandwidthDivider);
     auto *bandwidthLabel = new QLabel(tr("<b>Bandwidth</b>"), this);
     form->addRow(bandwidthLabel);
-    form->addRow(tr("Limit per transfer:"), m_bandwidthLimitSpin);
+    // The unit lives in the ROW LABEL, not just the spin box's own
+    // setSuffix(" KB/s") — that suffix is replaced entirely by
+    // setSpecialValueText("Unlimited") at the default value of 0, so a
+    // freshly-opened dialog (the common case) showed no unit at all. A
+    // real reported ambiguity ("Kb, Mb, MB, ?") this fixes regardless of
+    // the field's current value.
+    form->addRow(tr("Limit per transfer (KB/s):"), m_bandwidthLimitSpin);
 
     // QDialogButtonBox::Close is wired to reject() by Qt's own convention
     // (it's a RejectRole button) — accept() vs. reject() is meaningless
