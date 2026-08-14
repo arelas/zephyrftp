@@ -8,6 +8,23 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.23] — Fix a real freeze when sorting the transfer queue mid-transfer
+
+### Fixed
+
+- **Clicking a column header to sort the transfer queue while a
+  transfer was running could freeze the app**, worse the larger the
+  queue. Root cause: rebuilding the sorted table re-inserted every row
+  one at a time, which is cheap on a hidden table but pays for real
+  layout/paint work once the table is actually visible (as it always
+  is in the real app) — measured directly, a 1500-item rebuild went
+  from 89ms hidden to over a full second once shown, and got worse
+  than linearly slower as the queue grew. Fixed by resizing the table
+  once instead of growing it row by row; the same rebuild now takes
+  well under 200ms. Also stopped needlessly recomputing a progress
+  bar's color on every single progress update when it hadn't actually
+  changed.
+
 ## [0.7.22] — Fix doubled border on the new Transfers tabs
 
 ### Fixed
@@ -1933,7 +1950,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.22...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.23...HEAD
+[0.7.23]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.23
 [0.7.22]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.22
 [0.7.21]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.21
 [0.7.11]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.11

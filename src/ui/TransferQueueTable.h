@@ -89,6 +89,7 @@ private slots:
 private:
     int rowForId(int id) const;
     void appendRow(const TransferItem &item);
+    void fillRow(int row, const TransferItem &item);
 
     // Re-sorts manager->items() (filtered down to just m_category) by
     // (m_sortColumn, m_sortOrder) and rebuilds every row from scratch

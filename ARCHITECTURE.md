@@ -3415,6 +3415,71 @@ to drive FileZilla itself for a same-desktop comparison.
   `QWidget::grab()`-screenshot technique this project already uses for
   visual/config-value changes that don't warrant a new permanent test
   target (see the Light Theme entry above for the precedent).
+  **A real, severe performance bug, live-reported and reproduced
+  directly: "clicked sort on the queue during a transfer and the app
+  froze."** Root cause was in `resortAndRebuild()`, not anything
+  transfer-specific — every existing measurement of that method's cost
+  (`transfer-queue-test`'s own Phase 6 included) was on a table that's
+  never actually been shown, which turns out to matter enormously for
+  this specific operation: `resortAndRebuild()`'s old shape called
+  `insertRow()` once per item in a loop (via `appendRow()`), which is
+  cheap on a hidden table but pays for real, synchronous layout/paint
+  work on a real, visible one — measured directly, a 1500-row rebuild
+  took 89ms hidden vs. **1107ms once actually shown** (the Transfers
+  dock is always visible in the real app), scaling worse than linearly
+  as the queue grows (100 rows: 16ms; 500: 169ms; 1500: 1064ms — none
+  of those ratios are anywhere near proportional to the row-count
+  ratios). Fixed by presizing with a single `setRowCount(items.size())`
+  instead of N incremental ones (`appendRow()` split into itself, for
+  the single-item append path, plus a new `fillRow(row, item)` the bulk
+  path calls directly against a pre-sized table), plus
+  `setUpdatesEnabled(false)`/`(true)` around the whole rebuild. Measured
+  after the fix: the same 1500-row shown rebuild dropped to 112-150ms,
+  with the fixed version scaling close to linearly (500 rows: 32ms;
+  3000 rows: 268ms). A separate hypothesis — that SFTP/FTP's unthrottled
+  per-chunk `transferProgress` emission (no throttling on the signal
+  itself, only on the *speed number* recomputed from it, capped to
+  every 250ms in `TransferManager::onBackendProgress()`) was flooding
+  the GUI thread — was tested directly and ruled out as the dominant
+  cause: even 2000 rapid progress ticks measured at ~30ms total,
+  negligible next to the resort cost above. Found and fixed along the
+  way, not the dominant cost but real waste: `updateItem()` was
+  recomputing and reapplying the progress bar's chunk-color stylesheet
+  on *every* progress tick, even though the color only actually changes
+  on a status/direction/phase transition — a `zfChunkColor` dynamic
+  property now remembers the last-applied color so an unchanged tick
+  skips the `setStyleSheet()` call entirely. All of this reproduced and
+  measured via a disposable, non-committed probe (a fake `RemoteBackend`
+  emitting rapid progress ticks against a real `TransferManager`/
+  `TransferQueueWidget`, modeled on `transfer_pause_test.cpp`'s own
+  `FakePausableBackend`) — same established technique this project uses
+  for a change that doesn't warrant a new permanent target on its own.
+  This one did also get a small addition to the existing required
+  suite, since it's directly load-bearing for a real, reproduced
+  regression: `transfer-queue-test`'s Phase 6 gained a Phase 6b that
+  actually calls `show()` before re-sorting an already-populated 1500-
+  row table, with a generous (800ms) bound — confirmed to fail (1115ms)
+  against the pre-fix code and pass (148ms) against the fix, so it's a
+  genuine regression test, not a tautology.
+  **Competitive context, not just this project's own history**: this
+  exact class of bug — transfer-queue/progress UI performance under a
+  large batch or fast link — is a known, recurring problem across this
+  whole app category, not a sign of anything uniquely wrong here.
+  FileZilla has a long-standing open ticket for hangs with 700k-file
+  queues; WinSCP's own support forums have repeated, long-running
+  freeze/hang reports during transfers. FileZilla's own source
+  (`CStatusLineCtrl::SetTransferStatus()` in `statuslinectrl.cpp`, the
+  per-row live-progress widget analogous to this project's progress
+  bar) shows the general pattern worth keeping in mind for any FUTURE
+  work in this area even though it wasn't needed for this specific
+  fix: it stores the latest status cheaply on every raw transfer-engine
+  callback, but only actually redraws on a fixed 100ms (10Hz) repeating
+  timer — decoupling raw I/O event rate from UI refresh rate entirely,
+  a coarser throttle than anything this project currently does. Not
+  implemented here since the flood hypothesis was directly measured and
+  ruled out as not yet a real bottleneck — noted as the natural next
+  step if a much faster link or many concurrent transfers ever makes it
+  one.
 - `CommandsPaneWidget` (`src/ui/CommandsPaneWidget.h/.cpp`) — a live,
   read-only log of protocol traffic, modeled on FileZilla's own message
   log, docked between the toolbar and the file panes by default (View >

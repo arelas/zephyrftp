@@ -543,7 +543,39 @@ int main(int argc, char *argv[])
                   << "items present in correct sorted order after the single coalesced rebuild:"
                   << correctCountAndOrder;
 
-        phase6Pass = fastEnough && correctCountAndOrder;
+        // ---- Phase 6b: a third real regression, live-reported and
+        // reproduced directly — "clicked sort on the queue during a
+        // transfer and the app froze." Everything measured above (and
+        // by extension every earlier phase) constructs bulkWidget but
+        // never calls show() on it — which turns out to matter enormously
+        // for THIS specific operation: resortAndRebuild()'s old shape
+        // (setRowCount(0) then N individual insertRow() calls, one per
+        // appendRow()) measured at ~89ms for 1500 rows hidden but
+        // ~1107ms once actually shown (the Transfers dock is always
+        // visible in the real app) — each insertRow() call was paying
+        // for real, synchronous layout/paint work scoped to the table's
+        // size at that moment, invisible to any benchmark that never
+        // shows the widget. Fixed by presizing with a single
+        // setRowCount(items.size()) instead of N incremental ones (see
+        // TransferQueueTable::resortAndRebuild()'s own doc comment for
+        // the full before/after numbers) — this phase locks that in by
+        // actually showing the widget before clicking a second sort.
+        bulkWidget->show();
+        QElapsedTimer shownTimer;
+        shownTimer.start();
+        table->horizontalHeader()->sectionClicked(1);   // Direction column — a second, different sort
+        const qint64 shownElapsedMs = shownTimer.elapsed();
+        // Generous — the fixed version measures well under 200ms locally
+        // for 1500 shown rows; this just needs to be far below what the
+        // old per-row-insertRow() shape (~1100ms) would take, not to pin
+        // an exact number down.
+        const bool shownFastEnough = shownElapsedMs < 800;
+        qDebug() << "[phase6b] re-sorting 1500 already-populated rows on a SHOWN table took"
+                  << shownElapsedMs << "ms, expected well under 800ms:" << shownFastEnough;
+        const bool phase6bPass = shownFastEnough;
+        qDebug() << (phase6bPass ? "[phase6b] PASS" : "[phase6b] FAIL");
+
+        phase6Pass = fastEnough && correctCountAndOrder && phase6bPass;
         qDebug() << (phase6Pass ? "[phase6] PASS" : "[phase6] FAIL");
 
         // ---- Phase 7: a second real crash regression, found from a
