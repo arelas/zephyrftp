@@ -8,6 +8,37 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.12] — UI cosmetics pass
+
+### Changed
+
+- **Quick connect has its own toolbar**, docked directly under the main
+  icon toolbar instead of sharing it — the View menu's "Quick Connect
+  Field" toggle now shows/hides that whole row.
+- **View menu is plain checks, no icons.** Transfers/Commands previously
+  reused the toolbar's own `toggleViewAction()`, which meant its icon
+  bled into the menu too (one shared `QAction`, visible everywhere it's
+  added) — each now has its own menu entry, kept in sync with the dock's
+  visibility both directions.
+- **Menu bar is now a View-menu toggle**, with a hold-Alt-to-reveal
+  fallback when it's hidden — otherwise there'd be no way back to the
+  very toggle that hid it.
+- **Light theme contrast pass.** The menu bar previously had no styling
+  of its own in either theme (inherited a mismatched color/background
+  combination from `QMainWindow` that happened to look fine on dark, but
+  produced invisible text on light) — both `theme.qss` and
+  `theme-light.qss` now style it explicitly. Light theme's neutral
+  icon/text colors were also measurably too pale against a white
+  background (as low as ~2.9:1 contrast) and are darkened.
+- **Preferences dialog**: real divider lines ahead of the Proxy/Bandwidth
+  sections, increment arrows removed from the port and bandwidth-limit
+  fields (typed values, not nudged), and the confusing standalone "Local
+  & remote panes:" label next to the Show Hidden Files checkbox is gone
+  — the checkbox's own text now stands alone.
+- **Site Manager**: New Site/Duplicate/Delete/Export/Import buttons are
+  now a normalized, consistent width instead of each sizing to its own
+  label length.
+
 ## [0.7.11] — Light theme
 
 ### Added

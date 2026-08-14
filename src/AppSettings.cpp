@@ -159,6 +159,14 @@ void AppSettings::setFilenameFilterVisible(bool visible)
     save();
 }
 
+void AppSettings::setMenuBarVisible(bool visible)
+{
+    if (m_menuBarVisible == visible)
+        return;
+    m_menuBarVisible = visible;
+    save();
+}
+
 QString AppSettings::filePath()
 {
     return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
@@ -192,6 +200,7 @@ void AppSettings::load()
     m_bandwidthLimitKBps = obj.value(QStringLiteral("bandwidthLimitKBps")).toInt(0);
     m_synchronizedBrowsingEnabled = obj.value(QStringLiteral("synchronizedBrowsingEnabled")).toBool(false);
     m_theme = themeFromKey(obj.value(QStringLiteral("theme")).toString());
+    m_menuBarVisible = obj.value(QStringLiteral("menuBarVisible")).toBool(true);
 }
 
 void AppSettings::save() const
@@ -217,6 +226,7 @@ void AppSettings::save() const
     obj[QStringLiteral("bandwidthLimitKBps")] = m_bandwidthLimitKBps;
     obj[QStringLiteral("synchronizedBrowsingEnabled")] = m_synchronizedBrowsingEnabled;
     obj[QStringLiteral("theme")] = themeToKey(m_theme);
+    obj[QStringLiteral("menuBarVisible")] = m_menuBarVisible;
 
     // QSaveFile (not QFile + Truncate) — writes the new content to a
     // temporary file first and only atomically replaces settings.json on

@@ -34,6 +34,30 @@ QToolBar::separator {
     margin: 4px 6px;
 }
 
+/* Without an explicit rule here, QMenuBar was an unstyled child of the
+   QMainWindow rule above — it inherited that rule's `color` (QSS color
+   cascades to unstyled children) but NOT its `background-color` (falls
+   back to native/system rendering instead), an inheritance mismatch that
+   happened to look fine on this dark theme by coincidence but produced
+   genuinely invisible text on the light theme (dark-on-dark from the
+   native background, see theme-light.qss's own copy of this comment). */
+QMenuBar {
+    background-color: #1a1d23;   /* --zf-surface */
+    color: #dfe4ea;               /* --zf-text-primary */
+    border-bottom: 1px solid #2a2e35;   /* --zf-border */
+}
+QMenuBar::item {
+    background: transparent;
+    padding: 4px 10px;
+    color: #dfe4ea;               /* --zf-text-primary */
+}
+QMenuBar::item:selected {
+    background-color: rgba(91, 141, 239, 26);   /* --zf-blue-tint */
+}
+QMenuBar::item:pressed {
+    background-color: rgba(91, 141, 239, 40);
+}
+
 QToolButton {
     background: transparent;
     border: none;

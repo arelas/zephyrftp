@@ -24,17 +24,29 @@ Theme currentTheme()
 QColor Gray()
 {
     // --zf-text-secondary — matches resources/theme.qss's own token of
-    // the same name for whichever theme is active. Light value chosen to
-    // read reasonably against the light QSS's near-white background;
-    // see ARCHITECTURE.md's "Light theme" entry for the full color
-    // rationale.
-    return s_currentTheme == Theme::Light ? QColor(0x5c, 0x64, 0x72) : QColor(0x87, 0x90, 0xa0);
+    // the same name for whichever theme is active. The light value was
+    // originally the dark theme's own #5c6472 (its --zf-text-muted, not
+    // -secondary — reused on the assumption it'd read fine on white too),
+    // but that measured out to a real, reported "washed out" problem: on
+    // white it's a noticeably softer-looking gray than the same relative
+    // darkness reads as on the dark theme's near-black background (this
+    // color is used for nearly every neutral icon in the app — nav
+    // buttons, every file/folder row icon, most toolbar icons — so a low-
+    // contrast value here was widely visible, not a one-off). Darkened to
+    // #4a5160, matching the dark theme's own icon-to-background contrast
+    // ratio more closely rather than reusing an unrelated dark-theme token.
+    return s_currentTheme == Theme::Light ? QColor(0x4a, 0x51, 0x60) : QColor(0x87, 0x90, 0xa0);
 }
 
 QColor GrayMuted()
 {
-    // --zf-text-muted, same reasoning as Gray() above.
-    return s_currentTheme == Theme::Light ? QColor(0x90, 0x98, 0xa8) : QColor(0x5c, 0x64, 0x72);
+    // --zf-text-muted, same "measurably too washed out on white" reasoning
+    // as Gray() above — darkened from #9098a8 (roughly 2.9:1 contrast
+    // against white, below even the 3:1 WCAG floor for non-text content)
+    // to #78808f (roughly 4.1:1), while keeping it visibly lighter than
+    // Gray() so the two still read as distinct "secondary" vs. "muted"
+    // tones.
+    return s_currentTheme == Theme::Light ? QColor(0x78, 0x80, 0x8f) : QColor(0x5c, 0x64, 0x72);
 }
 
 namespace {

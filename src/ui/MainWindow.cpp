@@ -43,6 +43,7 @@
 #include <QCloseEvent>
 #include <QLineEdit>
 #include <QInputDialog>
+#include <QKeyEvent>
 #include <QFile>
 #include <QTextStream>
 #include <QApplication>
@@ -143,7 +144,10 @@ void MainWindow::buildMenuBar()
            "protocol is sftp, ftp, or ftps — defaults to your Preferences default protocol.\n"
            "Password auth only; for a private key, use Connect... instead."));
     m_quickConnectEdit->setFixedWidth(220);
-    m_quickConnectEdit->setVisible(m_settings->quickConnectFieldVisible());
+    // Visibility is controlled at the TOOLBAR level, not here — see
+    // m_quickConnectToolBar's own doc comment (MainWindow.h) for why:
+    // once quick connect has its own toolbar row, hiding just the field
+    // would leave an empty strip behind.
     connect(m_quickConnectEdit, &QLineEdit::returnPressed,
             this, &MainWindow::onQuickConnectReturnPressed);
 
@@ -177,42 +181,42 @@ void MainWindow::buildMenuBar()
     QAction *preferencesAction = editMenu->addAction(tr("&Preferences..."));
     connect(preferencesAction, &QAction::triggered, this, &MainWindow::onPreferencesTriggered);
 
-    // toggleViewAction() is a checkable QAction Qt keeps in sync with the
-    // dock's own visibility automatically (both directions: toggling the
-    // action shows/hides the dock, and the dock being hidden any other way
-    // — a native close button on its floating window, for instance —
-    // unchecks the action). This is the fix for a real reported dead end:
-    // an undocked (floating) Transfers panel still gets a real, WM-drawn
-    // close button on its own top-level window regardless of this dock's
-    // own DockWidgetClosable feature, and closing it that way previously
-    // left no way to get it back at all.
+    // The toolbar's Transfers/Commands buttons each reuse their dock's
+    // own toggleViewAction() (see buildToolbar()) — a single shared
+    // QAction whose ICON, once set there, would otherwise bleed into
+    // this menu too (a QAction is one object, visible everywhere it's
+    // added). The View menu wants plain checks, no icons, so each entry
+    // here is its own separate QAction instead, wired to the dock's
+    // visibility BOTH directions: toggling here shows/hides the dock,
+    // and the dock's visibilityChanged (which also fires for every other
+    // way a dock's visibility can change — the toolbar button, restoreState(),
+    // or a floating dock's native WM-drawn close button) keeps the
+    // checkmark honest.
     QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
-    QAction *transfersToggle = m_transfersDock->toggleViewAction();
-    transfersToggle->setText(tr("&Transfers"));
-    viewMenu->addAction(transfersToggle);
+    QAction *transfersViewToggle = viewMenu->addAction(tr("&Transfers"));
+    transfersViewToggle->setCheckable(true);
+    transfersViewToggle->setChecked(m_transfersDock->isVisible());
+    connect(transfersViewToggle, &QAction::toggled, m_transfersDock, &QDockWidget::setVisible);
+    connect(m_transfersDock, &QDockWidget::visibilityChanged, transfersViewToggle, &QAction::setChecked);
 
-    // Same toggleViewAction() pattern as Transfers above — same fix for
-    // the same dead end (a floating dock's WM-drawn close button has no
-    // other way back without this).
-    QAction *commandsToggle = m_commandsDock->toggleViewAction();
-    commandsToggle->setText(tr("&Commands"));
-    viewMenu->addAction(commandsToggle);
+    QAction *commandsViewToggle = viewMenu->addAction(tr("&Commands"));
+    commandsViewToggle->setCheckable(true);
+    commandsViewToggle->setChecked(m_commandsDock->isVisible());
+    connect(commandsViewToggle, &QAction::toggled, m_commandsDock, &QDockWidget::setVisible);
+    connect(m_commandsDock, &QDockWidget::visibilityChanged, commandsViewToggle, &QAction::setChecked);
 
-    // NOT a toggleViewAction() — m_quickConnectEdit is a plain toolbar
-    // widget, not a QDockWidget, so there's no Qt-managed checkable
-    // action to reuse (confirmed no such widget existed anywhere in this
-    // codebase before this). A manually-managed checkable QAction instead,
-    // wired directly to the field's own setVisible() and persisted via
-    // AppSettings — View-menu only, not duplicated onto the toolbar the
-    // way Transfers/Commands are (a toolbar icon toggling a toolbar
-    // FIELD's own visibility read as more confusing than useful, and
-    // every plausible icon here would visually collide with the
-    // existing green plug.svg Connect... action right next to it).
+    // NOT a toggleViewAction() — m_quickConnectEdit's TOOLBAR (not a
+    // QDockWidget) is what actually gets shown/hidden here; see
+    // m_quickConnectToolBar's own doc comment (MainWindow.h) for why the
+    // whole toolbar, not just the field, is what this toggles. Not
+    // duplicated onto the toolbar itself, same reasoning as before this
+    // toolbar split: a toolbar icon toggling that same toolbar's own
+    // visibility reads as more confusing than useful.
     QAction *quickConnectToggle = viewMenu->addAction(tr("&Quick Connect Field"));
     quickConnectToggle->setCheckable(true);
     quickConnectToggle->setChecked(m_settings->quickConnectFieldVisible());
     connect(quickConnectToggle, &QAction::toggled, this, [this](bool visible) {
-        m_quickConnectEdit->setVisible(visible);
+        m_quickConnectToolBar->setVisible(visible);
         m_settings->setQuickConnectFieldVisible(visible);
     });
 
@@ -273,9 +277,27 @@ void MainWindow::buildMenuBar()
     QAction *compareDirectoriesAction = viewMenu->addAction(tr("&Compare Directories..."));
     connect(compareDirectoriesAction, &QAction::triggered, this, &MainWindow::onCompareDirectoriesTriggered);
 
+    viewMenu->addSeparator();
+    // Hiding the menu bar hides this very toggle along with it — that's
+    // intentional, not a dead end: holding Alt (see keyPressEvent()'s own
+    // doc comment) temporarily reveals the bar so it can be switched back
+    // on. No icon, same "View menu is plain checks" convention as every
+    // other entry here now follows.
+    QAction *menuBarToggle = viewMenu->addAction(tr("Menu &Bar"));
+    menuBarToggle->setCheckable(true);
+    menuBarToggle->setChecked(m_settings->menuBarVisible());
+    connect(menuBarToggle, &QAction::toggled, this, [this](bool visible) {
+        menuBar()->setVisible(visible);
+        m_settings->setMenuBarVisible(visible);
+    });
+
     QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
     QAction *aboutAction = helpMenu->addAction(tr("&About ZephyrFTP..."));
     connect(aboutAction, &QAction::triggered, this, &MainWindow::onAboutTriggered);
+
+    // Applied last, after every menu above exists — hiding the bar
+    // doesn't destroy its menus, just its own visibility.
+    menuBar()->setVisible(m_settings->menuBarVisible());
 }
 
 void MainWindow::buildToolbar()
@@ -297,12 +319,6 @@ void MainWindow::buildToolbar()
     auto *connectAction = toolbar->addAction(
         IconTheme::tintedIcon(":/icons/plug.svg", IconTheme::Green), tr("Connect..."));
     connect(connectAction, &QAction::triggered, this, &MainWindow::onConnectTriggered);
-
-    // Constructed back in buildMenuBar() (see m_quickConnectEdit's own
-    // doc comment in MainWindow.h for why) — addWidget() reparents it
-    // into this toolbar; its visibility was already set from
-    // AppSettings there too, so nothing further to sync here.
-    toolbar->addWidget(m_quickConnectEdit);
 
     auto *disconnectAction = toolbar->addAction(
         IconTheme::tintedIcon(":/icons/plug-connected-x.svg", IconTheme::Red), tr("Disconnect"));
@@ -352,6 +368,18 @@ void MainWindow::buildToolbar()
     auto *aboutAction = toolbar->addAction(
         IconTheme::tintedIcon(":/icons/info-circle.svg", IconTheme::Blue), tr("About ZephyrFTP..."));
     connect(aboutAction, &QAction::triggered, this, &MainWindow::onAboutTriggered);
+
+    // Its own toolbar, directly under the icon bar above — not sharing
+    // it the way it originally did (a real reported issue: it read as
+    // just another icon-bar widget rather than its own thing). The break
+    // forces addToolBar() below onto a new row rather than appending to
+    // the same one. Constructed back in buildMenuBar() (see
+    // m_quickConnectEdit's own doc comment in MainWindow.h for why) —
+    // addWidget() reparents it here.
+    addToolBarBreak(Qt::TopToolBarArea);
+    m_quickConnectToolBar = addToolBar(tr("Quick Connect"));
+    m_quickConnectToolBar->addWidget(m_quickConnectEdit);
+    m_quickConnectToolBar->setVisible(m_settings->quickConnectFieldVisible());
 }
 
 void MainWindow::buildLayout()
@@ -1051,6 +1079,24 @@ void MainWindow::closeEvent(QCloseEvent *event)
     disconnectPane(m_leftPane);
     disconnectPane(m_rightPane);
     QMainWindow::closeEvent(event);
+}
+
+void MainWindow::keyPressEvent(QKeyEvent *event)
+{
+    if (event->key() == Qt::Key_Alt && !m_settings->menuBarVisible() && !menuBar()->isVisible())
+        menuBar()->setVisible(true);
+    QMainWindow::keyPressEvent(event);
+}
+
+void MainWindow::keyReleaseEvent(QKeyEvent *event)
+{
+    // menuBar()->activeAction() is non-null while a menu opened from
+    // this reveal is still being navigated (arrow keys, a mnemonic) —
+    // skip hiding in that case so releasing Alt mid-navigation doesn't
+    // yank the bar out from under it.
+    if (event->key() == Qt::Key_Alt && !m_settings->menuBarVisible() && !menuBar()->activeAction())
+        menuBar()->setVisible(false);
+    QMainWindow::keyReleaseEvent(event);
 }
 
 void MainWindow::onRefreshTriggered()

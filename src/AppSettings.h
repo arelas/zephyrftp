@@ -118,6 +118,15 @@ public:
     bool filenameFilterVisible() const { return m_filenameFilterVisible; }
     void setFilenameFilterVisible(bool visible);
 
+    // Whether the menu bar itself is shown — toggled from its own View
+    // menu. Defaults to true. No change signal — same reasoning as
+    // quickConnectFieldVisible above: MainWindow owns both the toggle
+    // and the menu bar, wired directly in the same call stack. Holding
+    // Alt still reveals a hidden menu bar temporarily regardless of
+    // this value — see MainWindow::keyPressEvent()'s own doc comment.
+    bool menuBarVisible() const { return m_menuBarVisible; }
+    void setMenuBarVisible(bool visible);
+
     // Whether navigating one pane drives the other to the corresponding
     // relative path — toggled from the View menu. Defaults to FALSE,
     // unlike quickConnectFieldVisible/filenameFilterVisible above: this
@@ -159,6 +168,7 @@ private:
     QString m_proxyUsername;
     bool m_quickConnectFieldVisible = true;
     bool m_filenameFilterVisible = true;
+    bool m_menuBarVisible = true;
     int m_bandwidthLimitKBps = 0;
     bool m_synchronizedBrowsingEnabled = false;
     Theme m_theme = Theme::Dark;

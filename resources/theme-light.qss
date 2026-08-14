@@ -30,12 +30,37 @@ QToolBar::separator {
     margin: 4px 6px;
 }
 
+/* Without an explicit rule here, QMenuBar was an unstyled child of the
+   QMainWindow rule above — it inherited that rule's `color` (QSS color
+   cascades to unstyled children) but NOT its `background-color` (falls
+   back to native/system rendering instead). On the dark theme that
+   mismatch happened to look fine by coincidence; on this light theme it
+   produced real, reported invisible menu-bar text (dark text drawn
+   against whatever the native/system menu-bar background actually is,
+   not necessarily this theme's own light surface). */
+QMenuBar {
+    background-color: #eef0f3;   /* --zf-surface (light) */
+    color: #1a1d23;               /* --zf-text-primary (light) */
+    border-bottom: 1px solid #d8dce2;   /* --zf-border (light) */
+}
+QMenuBar::item {
+    background: transparent;
+    padding: 4px 10px;
+    color: #1a1d23;               /* --zf-text-primary (light) */
+}
+QMenuBar::item:selected {
+    background-color: rgba(91, 141, 239, 26);   /* --zf-blue-tint */
+}
+QMenuBar::item:pressed {
+    background-color: rgba(91, 141, 239, 40);
+}
+
 QToolButton {
     background: transparent;
     border: none;
     border-radius: 6px;          /* --zf-radius */
     padding: 6px;
-    color: #5c6472;               /* --zf-text-secondary (light) */
+    color: #4a5160;               /* --zf-text-secondary (light) — see IconTheme::Gray()'s own comment on why this was darkened from #5c6472 */
 }
 QToolButton:hover {
     background-color: rgba(0, 0, 0, 12);   /* --zf-surface-hover — darkens a light surface, mirrors the dark variant's whitening overlay */
@@ -106,7 +131,7 @@ QComboBox::down-arrow {
 }
 
 QLabel {
-    color: #5c6472;               /* --zf-text-secondary (light) */
+    color: #4a5160;               /* --zf-text-secondary (light) — see IconTheme::Gray()'s own comment */
     font-size: 11px;
 }
 
@@ -142,7 +167,7 @@ QPushButton[primary="true"]:hover {
 
 QStatusBar {
     background-color: #ffffff;   /* --zf-bg (light) */
-    color: #5c6472;               /* --zf-text-secondary (light) */
+    color: #4a5160;               /* --zf-text-secondary (light) — see IconTheme::Gray()'s own comment */
     border-top: 1px solid #d8dce2;   /* --zf-border (light) */
     font-size: 11px;
 }
@@ -172,7 +197,7 @@ QMenu::item:selected {
     background-color: rgba(91, 141, 239, 26);   /* --zf-blue-tint */
 }
 QMenu::item:disabled {
-    color: #9098a8;               /* --zf-text-muted (light) */
+    color: #78808f;               /* --zf-text-muted (light) — see IconTheme::GrayMuted()'s own comment */
 }
 
 QProgressBar {

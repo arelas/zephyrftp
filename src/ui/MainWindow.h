@@ -13,6 +13,7 @@ class CertificateVerifier;
 class QDockWidget;
 class QLineEdit;
 class QAction;
+class QToolBar;
 class AppSettings;
 class CommandsPaneWidget;
 class EditSessionManager;
@@ -46,6 +47,17 @@ protected:
     // (deleteLater() + thread->quit() + thread->wait()) rather than
     // duplicating that logic here.
     void closeEvent(QCloseEvent *event) override;
+
+    // Bare Alt, held, temporarily reveals the menu bar when the View
+    // menu's "Menu Bar" toggle has it hidden — otherwise there'd be no
+    // way back to that very toggle once the bar disappears. Released in
+    // keyReleaseEvent() below, unless a menu is currently open (mid
+    // mnemonic navigation), in which case releasing Alt shouldn't yank
+    // the bar out from under an in-progress interaction. A no-op both
+    // directions when the toggle is on — the bar is already visible, so
+    // there's nothing for either handler to do.
+    void keyPressEvent(QKeyEvent *event) override;
+    void keyReleaseEvent(QKeyEvent *event) override;
 
 private slots:
     void onLeftFileActivated(const QString &name);
@@ -247,6 +259,15 @@ private:
     // in buildToolbar() reparents it into the toolbar; QLineEdit doesn't
     // care that its initial parent (this) differs from where it ends up.
     QLineEdit *m_quickConnectEdit = nullptr;
+
+    // Its own toolbar, directly under the main icon toolbar (see
+    // buildToolbar()'s own comment) — not sharing the icon bar the way
+    // it originally did. Stored as a member (unlike the main toolbar,
+    // a local variable in buildToolbar()) because the View menu's
+    // "Quick Connect Field" toggle needs to show/hide the whole toolbar
+    // row, not just the field inside it — hiding only the field would
+    // leave an empty toolbar strip behind.
+    QToolBar *m_quickConnectToolBar = nullptr;
 
     // Built in buildToolbar() — stored (unlike sitesAction/connectAction/
     // disconnectAction/refreshAction/aboutAction, still plain locals

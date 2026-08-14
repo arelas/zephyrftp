@@ -26,6 +26,7 @@
 #include <QFileDialog>
 #include <QUuid>
 #include <QMap>
+#include <algorithm>
 
 namespace {
 constexpr int IdRole = Qt::UserRole;
@@ -98,6 +99,24 @@ void SiteManagerDialog::buildUi()
     auto *importButton = new QPushButton(tr("Import..."), this);
     importButton->setIcon(IconTheme::tintedIcon(":/icons/arrow-down.svg", IconTheme::Blue));
     connect(importButton, &QPushButton::clicked, this, &SiteManagerDialog::onImportSites);
+
+    // Normalized to a shared width — a real reported inconsistency:
+    // each button's own natural sizeHint() varies with its label length
+    // ("New Site" vs. "Duplicate" vs. "Delete" vs. "Export..." vs.
+    // "Import..."), so left unset they rendered at visibly different
+    // sizes despite sitting in the same two-column layout.
+    const int actionButtonWidth = std::max({
+        newSiteButton->sizeHint().width(),
+        m_duplicateButton->sizeHint().width(),
+        m_deleteButton->sizeHint().width(),
+        exportButton->sizeHint().width(),
+        importButton->sizeHint().width(),
+    });
+    newSiteButton->setFixedWidth(actionButtonWidth);
+    m_duplicateButton->setFixedWidth(actionButtonWidth);
+    m_deleteButton->setFixedWidth(actionButtonWidth);
+    exportButton->setFixedWidth(actionButtonWidth);
+    importButton->setFixedWidth(actionButtonWidth);
 
     auto *importExportRow = new QHBoxLayout;
     importExportRow->addWidget(exportButton);

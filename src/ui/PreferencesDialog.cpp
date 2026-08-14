@@ -11,7 +11,9 @@
 #include <QComboBox>
 #include <QLineEdit>
 #include <QSpinBox>
+#include <QAbstractSpinBox>
 #include <QLabel>
+#include <QFrame>
 #include <QDialogButtonBox>
 
 PreferencesDialog::PreferencesDialog(AppSettings *settings, QWidget *parent)
@@ -91,8 +93,18 @@ PreferencesDialog::PreferencesDialog(AppSettings *settings, QWidget *parent)
         m_settings->setProxyHost(m_proxyHostEdit->text());
     });
 
+    // No up/down arrows: a port is typed, not nudged one integer at a
+    // time — same reasoning and precedent as SiteManagerDialog's own
+    // port field. QAbstractSpinBox's own sizeHint() still reserves space
+    // for the (now invisible) spin-button area, a real height mismatch
+    // against every sibling QLineEdit in this form — matched to
+    // m_proxyHostEdit's actual sizeHint rather than a hardcoded number,
+    // same fix SiteManagerDialog already applies for the identical
+    // widget/rule combination.
+    m_proxyPortSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
     m_proxyPortSpin->setRange(1, 65535);
     m_proxyPortSpin->setValue(m_settings->proxyPort());
+    m_proxyPortSpin->setFixedHeight(m_proxyHostEdit->sizeHint().height());
     connect(m_proxyPortSpin, &QSpinBox::valueChanged, this, [this](int value) {
         m_settings->setProxyPort(value);
     });
@@ -124,20 +136,38 @@ PreferencesDialog::PreferencesDialog(AppSettings *settings, QWidget *parent)
     // connections made AFTER this changes — an already-open connection
     // keeps whatever limit was in effect when it connected, same as the
     // proxy setting above.
+    // No up/down arrows, same reasoning as m_proxyPortSpin above — a
+    // bandwidth limit is typed, not nudged one KB/s at a time.
+    m_bandwidthLimitSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
     m_bandwidthLimitSpin->setRange(0, 1000000);
     m_bandwidthLimitSpin->setSpecialValueText(tr("Unlimited"));
     m_bandwidthLimitSpin->setSuffix(tr(" KB/s"));
     m_bandwidthLimitSpin->setValue(m_settings->bandwidthLimitKBps());
+    m_bandwidthLimitSpin->setFixedHeight(m_proxyHostEdit->sizeHint().height());
     connect(m_bandwidthLimitSpin, &QSpinBox::valueChanged, this, [this](int value) {
         m_settings->setBandwidthLimitKBps(value);
     });
 
+    // Single-arg addRow(), not a separate row label — m_showHiddenFilesCheck's
+    // own text ("Show hidden files (dotfiles)") already fully describes
+    // what it does; the old paired label here ("Local && remote panes:")
+    // read as an unrelated, non-interactive control sitting next to a
+    // checkbox that "didn't seem to do anything" — a real reported
+    // confusion, not a functional bug (the setting itself always worked;
+    // see FilePaneWidget's own showHiddenFilesChanged handling).
     auto *form = new QFormLayout;
-    form->addRow(tr("Local && remote panes:"), m_showHiddenFilesCheck);
+    form->addRow(m_showHiddenFilesCheck);
     form->addRow(tr("Default protocol for new connections:"), m_defaultProtocolCombo);
     form->addRow(tr("Theme:"), m_themeCombo);
     form->addRow(tr("External editor command:"), m_externalEditorCommandEdit);
 
+    // Real QFrame::HLine dividers ahead of each section, not just a bold
+    // label — the bold text alone read as visually cluttered/flat
+    // against the general fields above it.
+    auto *proxyDivider = new QFrame(this);
+    proxyDivider->setFrameShape(QFrame::HLine);
+    proxyDivider->setFrameShadow(QFrame::Sunken);
+    form->addRow(proxyDivider);
     auto *proxyLabel = new QLabel(tr("<b>Proxy</b>"), this);
     form->addRow(proxyLabel);
     form->addRow(tr("Type:"), m_proxyTypeCombo);
@@ -146,6 +176,10 @@ PreferencesDialog::PreferencesDialog(AppSettings *settings, QWidget *parent)
     form->addRow(tr("Username:"), m_proxyUsernameEdit);
     form->addRow(tr("Password:"), m_proxyPasswordEdit);
 
+    auto *bandwidthDivider = new QFrame(this);
+    bandwidthDivider->setFrameShape(QFrame::HLine);
+    bandwidthDivider->setFrameShadow(QFrame::Sunken);
+    form->addRow(bandwidthDivider);
     auto *bandwidthLabel = new QLabel(tr("<b>Bandwidth</b>"), this);
     form->addRow(bandwidthLabel);
     form->addRow(tr("Limit per transfer:"), m_bandwidthLimitSpin);
