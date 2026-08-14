@@ -277,15 +277,36 @@ QSplitter::handle {
     background-color: #d8dce2;   /* --zf-border (light) */
 }
 
-QScrollBar:vertical, QScrollBar:horizontal {
+/* Same reasoning as theme.qss's own identical rule — a real reported
+   bug (non-functional/hard-to-grab scroll bars) fixed by giving the
+   track an explicit size and the handle a minimum size, rather than
+   leaving either to Qt's own QSS-mode fallback. */
+QScrollBar:vertical {
     background: #ffffff;         /* --zf-bg (light) */
     border: none;
+    width: 12px;
+    margin: 0px;
 }
-QScrollBar::handle {
+QScrollBar:horizontal {
+    background: #ffffff;         /* --zf-bg (light) */
+    border: none;
+    height: 12px;
+    margin: 0px;
+}
+QScrollBar::handle:vertical {
     background: #d8dce2;         /* --zf-border (light) */
     border-radius: 4px;
+    min-height: 24px;
+}
+QScrollBar::handle:horizontal {
+    background: #d8dce2;         /* --zf-border (light) */
+    border-radius: 4px;
+    min-width: 24px;
 }
 QScrollBar::add-line, QScrollBar::sub-line {
     height: 0;
     width: 0;
+}
+QScrollBar::add-page, QScrollBar::sub-page {
+    background: transparent;
 }

@@ -256,6 +256,24 @@ private slots:
 private:
     void startNext();
 
+    // Cheap (bounded by m_active.size(), NOT the queue's size) pre-check
+    // used by enqueue() instead of calling startNext() unconditionally
+    // for every newly-Queued item — a real O(N²) bug found from a live
+    // report, distinct from (and layered on top of) m_scanFloor above:
+    // a tight loop of enqueue() calls (any bulk drag-drop or folder
+    // transfer) against an already-busy backend meant EVERY call paid
+    // for a full startNext() scan that could only ever conclude "still
+    // busy" — m_scanFloor doesn't help here, since every one of those
+    // items genuinely IS still Queued (not yet resolved), just
+    // unable to dispatch. If every backend `item` would need is already
+    // claimed AND something is already running, skip the scan for THIS
+    // item entirely rather than deferring it — safe because the only
+    // event that can make it dispatchable (a backend being released)
+    // already re-triggers a full startNext() on its own
+    // (releaseActiveTransfer()'s caller), so nothing is ever
+    // permanently missed, only the redundant immediate re-scan.
+    void startNextIfLikelyToDispatch(const TransferItem &item);
+
     // Connects a backend's transferProgress/transferFinished/transferFailed/
     // transferPaused signals to this class's four onBackend*() slots —
     // Qt::UniqueConnection, so calling this repeatedly against the same
@@ -424,6 +442,34 @@ private:
 
     QList<TransferItem> m_items;
     int m_nextId = 1;
+
+    // id -> index into m_items. Safe as a plain incrementally-maintained
+    // map specifically because m_items is append-only and its indices are
+    // stable for an item's whole lifetime (same invariant ActiveTransfer::
+    // itemIndex above already relies on) — every insertion just adds one
+    // new entry, nothing already in the map ever needs updating or
+    // removing. Populated at every one of the handful of `m_items.append()`
+    // call sites. indexById() used to do a linear scan of the WHOLE
+    // (never-shrinking) list instead — a real bug found from a live
+    // report: cancelItem()/pauseItem()/resumeItem()/retryItem() are one-
+    // off user actions, but onEntryMoved()/onEntryMoveFailed() fire once
+    // PER FILE for a bulk Move, turning that O(N) scan into O(N²) across
+    // a large batch and contributing to a real reported hang.
+    QHash<int, int> m_indexById;
+
+    // Lower bound below which no item in m_items is Queued anymore —
+    // lets startNext() skip re-scanning an ever-growing prefix of already-
+    // resolved items on every single call instead of always starting from
+    // index 0. A second real O(N²) source found from the same live hang
+    // report: startNext() runs roughly once per dispatch AND once per
+    // completion, and m_items only ever grows, so scanning the whole list
+    // every time made a large batch's total scanning cost grow with the
+    // square of its size. Advanced lazily at the end of startNext() (skip
+    // past any leading run of non-Queued items); pulled back down by
+    // retryItem()/resumeItem() when either revives an item at an index
+    // below the current floor, since m_scanFloor's own invariant ("nothing
+    // below this index is Queued") would otherwise be silently violated.
+    int m_scanFloor = 0;
 
     // One entry per item currently claiming a backend — everything from
     // "startNext() committed to this item" (before its conflict check

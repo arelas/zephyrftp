@@ -520,6 +520,133 @@ int main(int argc, char *argv[])
         phase6Pass = fastEnough && correctCountAndOrder;
         qDebug() << (phase6Pass ? "[phase6] PASS" : "[phase6] FAIL");
 
+        // ---- Phase 7: a second real crash regression, found from a
+        // follow-up live report AFTER phase6's fix already shipped — the
+        // app still hung (though it eventually recovered) on a large
+        // transfer with NO sort ever touched, meaning phase6's fix (which
+        // only coalesces onItemAdded()'s rebuild-while-SORTED path) never
+        // even applies. THREE separate O(N)-or-worse-per-event
+        // bottlenecks, all hit for an unsorted bulk transfer, found by
+        // isolating where the time actually went (a diagnostic split of
+        // "file creation" vs. "the enqueue() loop itself" vs. "waiting
+        // for completions" — the SECOND of those turned out to dominate
+        // by nearly two orders of magnitude, not the first two hypotheses
+        // this phase originally shipped to prove):
+        // (1) TransferQueueWidget::rowForId(), called from onItemUpdated()
+        //     (fires on every progress tick), used to linearly scan every
+        //     row — fixed with an id->row hash map.
+        // (2) TransferManager::startNext()'s own scan used to always
+        //     start from index 0 even though m_items only ever grows —
+        //     fixed with a lazily-advancing "nothing below this index is
+        //     still Queued" floor. This helps once items actually start
+        //     RESOLVING, but on its own did almost nothing for THIS
+        //     phase's actual pattern (measured: enqueuing 15,000 items
+        //     still took 10.4 SECONDS with only fixes 1+2 applied) —
+        //     because ALL of them stay genuinely Queued-and-busy for the
+        //     entire synchronous enqueue loop (nothing can complete
+        //     without an event-loop turn, which the loop never yields),
+        //     so the floor has nothing resolved to skip past.
+        // (3) THE actual dominant cost: enqueue() called startNext()'s
+        //     full scan UNCONDITIONALLY for every new item, even when
+        //     every backend it could possibly use was already known to
+        //     be claimed — turning "enqueue 15,000 items against one busy
+        //     backend" into 15,000 full rescans of an ever-growing
+        //     Queued-but-busy prefix, an O(N²) storm independent of (1)/
+        //     (2). Fixed with startNextIfLikelyToDispatch() — a cheap,
+        //     m_active-sized (not queue-sized) pre-check that skips the
+        //     scan entirely when nothing could possibly dispatch, safe
+        //     because a backend actually freeing up already re-triggers
+        //     a full scan on its own. This one change alone took the
+        //     enqueue loop for 15,000 items from ~10,400ms to ~20ms in
+        //     manual testing.
+        //
+        // Proof here is real end-to-end execution, not just queueing
+        // shape like phase6: a real batch of small local files, actually
+        // transferred start to finish, unsorted (the exact condition
+        // phase6 doesn't cover), on a FRESH manager/pair so this doesn't
+        // interact with phases 1-3's own shared manager. Chained directly
+        // off phase6's own completion (see this test's own hard-won
+        // lesson above on why an independent timer here would risk yet
+        // another CI-only race) — polls for completion via repeated
+        // processEvents() calls rather than a nested QEventLoop::exec(),
+        // for the same reason. Pass/fail is based on ACTUALLY FINISHING
+        // within a very generous timeout, not a tight performance number
+        // — completing at all, without hanging, is the real thing this
+        // guards against; the old code did eventually finish too (per
+        // the live report), just unacceptably slowly. ----
+        bool phase7Pass = false;
+        {
+            const QString bulkSrcDir = QStringLiteral("/tmp/transfer_test/bulk_src");
+            const QString bulkDstDir = QStringLiteral("/tmp/transfer_test/bulk_dst");
+            QDir(bulkSrcDir).removeRecursively();
+            QDir(bulkDstDir).removeRecursively();
+            QDir().mkpath(bulkSrcDir);
+            QDir().mkpath(bulkDstDir);
+
+            constexpr int kRealFileCount = 3000;
+            for (int i = 0; i < kRealFileCount; ++i) {
+                QFile f(bulkSrcDir + QStringLiteral("/real_%1.bin").arg(i, 4, 10, QLatin1Char('0')));
+                f.open(QIODevice::WriteOnly);
+                f.write(QByteArray(200, 'x'));
+            }
+
+            auto *realManager = new TransferManager(&app);
+            auto *realLeftPane = new FilePaneWidget(new LocalBackend());
+            auto *realRightPane = new FilePaneWidget(new LocalBackend());
+            realLeftPane->navigateTo(bulkSrcDir);
+            realRightPane->navigateTo(bulkDstDir);
+
+            // Settle both panes' navigation before enqueueing anything —
+            // navigateTo() dispatches via Qt::QueuedConnection (even a
+            // LocalBackend's own auto-connect-on-construction navigation
+            // is queued, not synchronous), so calling enqueue() in the
+            // same synchronous block without first letting that resolve
+            // is a real, previously-documented race in this exact
+            // codebase (see sync-browsing-test's own history) — enqueue()
+            // would silently build paths against a still-empty
+            // currentDirectory(). Polled, not a fixed delay, and bounded
+            // by a generous timeout consistent with this file's own
+            // established margins.
+            {
+                QElapsedTimer settle;
+                settle.start();
+                while ((realLeftPane->currentDirectory() != bulkSrcDir
+                        || realRightPane->currentDirectory() != bulkDstDir)
+                       && settle.elapsed() < 5000) {
+                    qApp->processEvents(QEventLoop::AllEvents, 10);
+                }
+            }
+
+            int doneCount = 0;
+            QObject::connect(realManager, &TransferManager::itemUpdated, &app, [&](const TransferItem &it) {
+                if (it.status == TransferStatus::Done)
+                    ++doneCount;
+            });
+
+            QElapsedTimer timer;
+            timer.start();
+            // Unsorted (default TransferQueueWidget state, never touched
+            // here) — the actual condition this phase exists to cover.
+            for (int i = 0; i < kRealFileCount; ++i)
+                realManager->enqueue(realLeftPane, realRightPane,
+                                      QStringLiteral("real_%1.bin").arg(i, 4, 10, QLatin1Char('0')));
+
+            QElapsedTimer waitTimer;
+            waitTimer.start();
+            while (doneCount < kRealFileCount && waitTimer.elapsed() < 60000)
+                qApp->processEvents(QEventLoop::AllEvents, 20);
+
+            const qint64 elapsedMs = timer.elapsed();
+            const bool allCompleted = doneCount == kRealFileCount;
+            qDebug() << "[phase7]" << kRealFileCount << "real, unsorted local-to-local transfers all "
+                        "reached Done:" << allCompleted << "(" << doneCount << "/" << kRealFileCount
+                     << ") in" << elapsedMs << "ms — informational only, not a pass/fail gate (see this "
+                        "phase's own doc comment on why completion, not timing, is what's asserted)";
+
+            phase7Pass = allCompleted;
+            qDebug() << (phase7Pass ? "[phase7] PASS" : "[phase7] FAIL");
+        }
+
         // Chained off phase6's OWN completion, not a separate fixed-delay
         // timer — a real bug found on real CI (not locally): a slower/
         // more loaded runner made phase6's actual work (scheduled to
@@ -533,7 +660,7 @@ int main(int argc, char *argv[])
         // synchronously, inside its own timer callback before the next
         // one is scheduled — this now does the same.
         const bool overallPass = phase1Pass && phase2SyncPass && phase2Pass && phase3Pass
-            && phase4Pass && phase5Pass && phase6Pass;
+            && phase4Pass && phase5Pass && phase6Pass && phase7Pass;
         qDebug() << (overallPass ? "[test] ALL PHASES PASS" : "[test] AT LEAST ONE PHASE FAILED");
         app.exit(overallPass ? 0 : 1);
     });

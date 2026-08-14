@@ -98,6 +98,13 @@ TransferQueueWidget::TransferQueueWidget(TransferManager *manager, QWidget *pare
 
 int TransferQueueWidget::rowForId(int id) const
 {
+    const auto it = m_rowById.constFind(id);
+    if (it != m_rowById.constEnd())
+        return it.value();
+    // Falls back to a linear scan only if the map somehow missed an
+    // entry — should be unreachable in practice (every row is added via
+    // appendRow(), which always populates m_rowById at the same time),
+    // kept as a defensive net rather than trusting that invariant blindly.
     for (int row = 0; row < m_table->rowCount(); ++row) {
         auto *item = m_table->item(row, ColName);
         if (item && item->data(IdRole).toInt() == id)
@@ -362,6 +369,7 @@ void TransferQueueWidget::appendRow(const TransferItem &item)
 {
     const int row = m_table->rowCount();
     m_table->insertRow(row);
+    m_rowById.insert(item.id, row);
 
     auto *nameItem = new QTableWidgetItem(item.fileName);
     nameItem->setData(IdRole, item.id);
@@ -653,6 +661,7 @@ void TransferQueueWidget::resortAndRebuild()
     // following each with onItemUpdated() on the same real item brings
     // every row back to its actual current state, just in the new order.
     m_table->setRowCount(0);
+    m_rowById.clear();   // every row index is about to change — appendRow() below repopulates it
     for (const TransferItem &item : items) {
         appendRow(item);
         onItemUpdated(item);

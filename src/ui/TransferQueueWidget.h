@@ -4,6 +4,7 @@
 #include <QPoint>
 #include <QIcon>
 #include <QColor>
+#include <QHash>
 #include "../transfer/TransferItem.h"
 
 class QTableWidget;
@@ -108,4 +109,14 @@ private:
 
     QTableWidget *m_table;
     TransferManager *m_manager;
+
+    // item id -> current row. rowForId() used to do a linear scan of
+    // every row on EVERY call — called from onItemUpdated(), which fires
+    // once per progress tick for every item — a real O(N) cost per
+    // update found from the same live large-batch-hang report the
+    // O(N²) resortAndRebuild() bug was (see onItemAdded()'s own doc
+    // comment). Kept in sync by appendRow() (every insert) and
+    // resortAndRebuild() (cleared and fully repopulated, since a full
+    // rebuild renumbers every row anyway).
+    QHash<int, int> m_rowById;
 };

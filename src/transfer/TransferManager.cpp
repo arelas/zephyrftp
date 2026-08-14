@@ -102,10 +102,11 @@ void TransferManager::enqueue(FilePaneWidget *sourcePane, FilePaneWidget *destPa
     }
 
     m_items.append(item);
+    m_indexById.insert(item.id, m_items.size() - 1);
     emit itemAdded(m_items.last());
 
     if (item.status == TransferStatus::Queued)
-        startNext();
+        startNextIfLikelyToDispatch(item);
 }
 
 void TransferManager::enqueueFolder(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
@@ -205,6 +206,7 @@ int TransferManager::startEditDownload(FilePaneWidget *sourcePane, const QString
     item.skipConflictCheckOnDispatch = true;
 
     m_items.append(item);
+    m_indexById.insert(item.id, m_items.size() - 1);
     emit itemAdded(m_items.last());
 
     if (item.status == TransferStatus::Queued)
@@ -228,6 +230,7 @@ int TransferManager::startEditUpload(FilePaneWidget *destPane, const QString &lo
     item.skipConflictCheckOnDispatch = true;
 
     m_items.append(item);
+    m_indexById.insert(item.id, m_items.size() - 1);
     emit itemAdded(m_items.last());
 
     if (item.status == TransferStatus::Queued)
@@ -325,6 +328,7 @@ void TransferManager::restorePersistedQueue(FilePaneWidget *localExecutorPane)
         }
 
         m_items.append(item);
+        m_indexById.insert(item.id, m_items.size() - 1);
         emit itemAdded(m_items.last());
     }
 
@@ -379,8 +383,18 @@ void TransferManager::tryReclaimPendingItems(FilePaneWidget *pane)
         emit itemUpdated(item);
     }
 
-    if (claimedAny)
+    // Same m_scanFloor defense retryItem()/resumeItem() need — this loop
+    // can revive an arbitrary (possibly already-passed-by-the-floor)
+    // item back to Queued too, but unlike those two, it has no single
+    // item index handy (a range-based loop over every PendingReconnect
+    // item, not a lookup by id). A plain reset to 0 is fine here rather
+    // than tracking the lowest revived index — a pane reconnecting is
+    // rare, not a hot path, so an occasional full-range rescan costs
+    // nothing worth optimizing away.
+    if (claimedAny) {
+        m_scanFloor = 0;
         startNext();
+    }
 }
 
 void TransferManager::dispatchMoveEntry(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
@@ -400,6 +414,7 @@ void TransferManager::dispatchMoveEntry(FilePaneWidget *sourcePane, FilePaneWidg
     item.direction = TransferDirection::Move;
     item.status = TransferStatus::InProgress;
     m_items.append(item);
+    m_indexById.insert(item.id, m_items.size() - 1);
     const int itemId = item.id;
     emit itemAdded(m_items.last());
 
@@ -495,18 +510,50 @@ void TransferManager::startFolderFileTransfers(FilePaneWidget *sourcePane, FileP
     emit folderTransferFinished(folderName, fileCount);
 }
 
+void TransferManager::startNextIfLikelyToDispatch(const TransferItem &item)
+{
+    if (m_active.isEmpty()) {
+        startNext();   // nothing running at all — definitely worth a real scan
+        return;
+    }
+    for (RemoteBackend *backend : requiredBackendsForDispatch(item)) {
+        if (!isBackendClaimed(backend)) {
+            startNext();   // at least one backend this item needs is free — worth a real scan
+            return;
+        }
+    }
+    // Every backend this item needs is already claimed — startNext()'s
+    // full scan is guaranteed to find nothing new for it right now, so
+    // skip paying for one. See this method's own doc comment
+    // (TransferManager.h) for why this is safe, not just an optimistic
+    // shortcut.
+}
+
 void TransferManager::startNext()
 {
-    // Scans the WHOLE queue on every call, not just the first Queued item
-    // found — a busy backend no longer blocks an unrelated item on a
-    // free backend from starting in the same pass. An item is claimed
-    // (an ActiveTransfer entry appended) the moment this loop commits to
-    // it, BEFORE its async conflict check even goes out — same ordering
-    // the old single m_activeIndex used, just scoped per-item now,
-    // closing the same double-dispatch race: without claiming first, two
-    // Queued items for the same backend could both pass the busy check
-    // in one scan before either's checkExists() resolves.
-    for (int i = 0; i < m_items.size(); ++i) {
+    // Scans every Queued-or-later item on every call, not just the first
+    // Queued item found — a busy backend no longer blocks an unrelated
+    // item on a free backend from starting in the same pass. An item is
+    // claimed (an ActiveTransfer entry appended) the moment this loop
+    // commits to it, BEFORE its async conflict check even goes out — same
+    // ordering the old single m_activeIndex used, just scoped per-item
+    // now, closing the same double-dispatch race: without claiming first,
+    // two Queued items for the same backend could both pass the busy
+    // check in one scan before either's checkExists() resolves.
+    //
+    // Starts from m_scanFloor, not always 0 — a real O(N²) bug found from
+    // a live report: m_items only ever grows (append-only), and
+    // startNext() is called roughly once per dispatch AND once per
+    // completion, so always rescanning from index 0 meant a large batch's
+    // total scan cost grew with the SQUARE of its size (each call
+    // re-walking an ever-longer prefix of already-resolved items just to
+    // skip past them). m_scanFloor tracks "nothing below this index is
+    // Queued anymore" and is advanced at the end of this function —
+    // retryItem()/resumeItem() are responsible for pulling it back down
+    // if either revives an item below the current floor, since only they
+    // can move an item's status back TO Queued after this floor has
+    // already passed it.
+    for (int i = m_scanFloor; i < m_items.size(); ++i) {
         TransferItem &item = m_items[i];
         if (item.status != TransferStatus::Queued)
             continue;
@@ -574,6 +621,16 @@ void TransferManager::startNext()
         // keep scanning rather than returning — a different Queued item
         // on a different, still-free backend can start in this same pass
     }
+
+    // Skip past any leading run of items that are no longer Queued —
+    // see m_scanFloor's own doc comment (TransferManager.h). Safe to do
+    // unconditionally here: any item this exact call just claimed either
+    // already had its status flipped away from Queued (dispatchActiveItem()
+    // does that before returning) or is still genuinely Queued (skipped
+    // for being busy) — either way this loop's own view of each item's
+    // CURRENT status is accurate at this point.
+    while (m_scanFloor < m_items.size() && m_items[m_scanFloor].status != TransferStatus::Queued)
+        ++m_scanFloor;
 
     // Nothing left to run anywhere — a fresh batch of transfers should
     // get fresh conflict decisions rather than silently inheriting a
@@ -860,6 +917,17 @@ void TransferManager::retryItem(int id)
         && item.status != TransferStatus::Skipped)
         return;
 
+    // About to move idx back to Queued below — m_scanFloor's own
+    // invariant ("nothing below this index is Queued") would otherwise
+    // silently break if idx is below the current floor (a real
+    // possibility: this item could have been resolved, and the floor
+    // advanced past it, long before this explicit retry). Pulling the
+    // floor down here is the one and only place that invariant needs
+    // defending against a REVIVED item — startNext()'s own floor-advance
+    // never does this by itself, since it only ever moves forward.
+    if (idx < m_scanFloor)
+        m_scanFloor = idx;
+
     // A Move item never becomes an ActiveTransfer entry and never
     // reaches this Queued/m_active pipeline in the first place (see
     // moveEntry()'s own doc comment) — re-queuing one here would hit
@@ -929,6 +997,11 @@ void TransferManager::resumeItem(int id)
     TransferItem &item = m_items[idx];
     if (item.status != TransferStatus::Paused)
         return;
+
+    // Same m_scanFloor defense as retryItem() above — this is about to
+    // move idx back to Queued too.
+    if (idx < m_scanFloor)
+        m_scanFloor = idx;
 
     // Deliberately NOT resetting bytesDone — that's the resume offset
     // startNext() will pass through to the backend. This is the one
@@ -1217,6 +1290,7 @@ void TransferManager::onDestinationExistsChecked(const QString &path, bool exist
             item.errorMessage = tr("Can't move into \"%1\": a folder with that name already exists "
                                     "at the destination, and Move can't merge folders.").arg(name);
             m_items.append(item);
+            m_indexById.insert(item.id, m_items.size() - 1);
             emit itemAdded(m_items.last());
             maybeResetMoveConflictResolution();
             return;
@@ -1492,9 +1566,5 @@ void TransferManager::maybeResetMoveConflictResolution()
 
 int TransferManager::indexById(int id) const
 {
-    for (int i = 0; i < m_items.size(); ++i) {
-        if (m_items[i].id == id)
-            return i;
-    }
-    return -1;
+    return m_indexById.value(id, -1);
 }

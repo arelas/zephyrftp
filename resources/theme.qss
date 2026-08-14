@@ -310,15 +310,46 @@ QSplitter::handle {
     background-color: #2a2e35;   /* --zf-border */
 }
 
-QScrollBar:vertical, QScrollBar:horizontal {
+/* A real reported bug: without an explicit width/height here, Qt's
+   QSS box model (switched into once ANY QScrollBar rule exists at all,
+   replacing native style rendering) could size the scrollbar down to
+   something too thin to see or grab — "don't seem to have working
+   vertical scroll bars" in both CommandsPaneWidget's QPlainTextEdit and
+   TransferQueueWidget's QTableWidget, the two places this was reported.
+   min-height/min-width on the handle is the other half of the same
+   fix — without it, a long scrollable list (a big Commands log, a
+   large transfer queue) could shrink the handle to an unclickable
+   sliver even with the track itself correctly sized. add-page/sub-page
+   (the track segments before/after the handle) are given an explicit
+   transparent background so they don't paint over anything unexpected
+   — QSS doesn't reliably fall back to "do nothing" for an unstyled
+   subcontrol once its siblings are styled. */
+QScrollBar:vertical {
     background: #14171c;         /* --zf-bg */
     border: none;
+    width: 12px;
+    margin: 0px;
 }
-QScrollBar::handle {
+QScrollBar:horizontal {
+    background: #14171c;         /* --zf-bg */
+    border: none;
+    height: 12px;
+    margin: 0px;
+}
+QScrollBar::handle:vertical {
     background: #2a2e35;         /* --zf-border */
     border-radius: 4px;
+    min-height: 24px;
+}
+QScrollBar::handle:horizontal {
+    background: #2a2e35;         /* --zf-border */
+    border-radius: 4px;
+    min-width: 24px;
 }
 QScrollBar::add-line, QScrollBar::sub-line {
     height: 0;
     width: 0;
+}
+QScrollBar::add-page, QScrollBar::sub-page {
+    background: transparent;
 }

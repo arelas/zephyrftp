@@ -8,6 +8,26 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.19] — Fix remaining large-transfer hang + scroll bars
+
+### Fixed
+
+- **The app could still hang on a large transfer even without ever
+  sorting the Transfers panel** (v0.7.18 only fixed the sorted case).
+  Root-caused to three separate O(N)-or-worse-per-event costs:
+  `TransferQueueWidget::rowForId()`'s linear scan on every progress
+  tick, `TransferManager::startNext()` always rescanning from index 0
+  on an ever-growing list, and — the dominant one — `enqueue()` calling
+  a full dispatch scan unconditionally for every new item even when
+  every backend was already known to be busy. That last one alone made
+  queuing 15,000 files take over 10 seconds before any real transfer
+  work even started. All three fixed; the same 15,000-file scenario now
+  completes start to finish in well under 10 seconds total.
+- **Commands and Transfers panel vertical scroll bars didn't have a
+  real, grabbable size** in either theme — the QSS gave the scroll bar
+  no explicit width/height and no minimum handle size, both real gaps
+  once any custom scroll bar styling is in play.
+
 ## [0.7.18] — Fix runaway memory/hang on large batch transfers
 
 ### Fixed
