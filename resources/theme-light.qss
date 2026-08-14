@@ -130,6 +130,18 @@ QComboBox::down-arrow {
     height: 12px;
 }
 
+/* An EDITABLE QComboBox draws its closed-state text via a real child
+   QLineEdit — see theme.qss's own identical comment for why this needs
+   its own rule (SiteManagerDialog's Group field is this app's only
+   editable combo, and the specific real reported bug this fixes).
+   border: none/background: transparent — the outer QComboBox rule
+   already supplies both. */
+QComboBox QLineEdit {
+    background: transparent;
+    border: none;
+    color: #1a1d23;               /* --zf-text-primary (light) */
+}
+
 /* The dropdown POPUP is a separate widget (QAbstractItemView), not
    covered by the plain QComboBox rule above — see theme.qss's own
    identical comment. Without this, the popup fell back to native/
@@ -155,6 +167,33 @@ QLabel {
 QCheckBox {
     color: #1a1d23;               /* --zf-text-primary (light) */
     spacing: 6px;
+}
+
+/* Same bug, same fix, as QCheckBox above — SiteManagerDialog's
+   Authentication and starting-directory radio button labels were
+   unstyled and fell back to native rendering; a real reported bug on
+   this theme specifically. */
+QRadioButton {
+    color: #1a1d23;               /* --zf-text-primary (light) */
+    spacing: 6px;
+}
+
+/* Disabled-state text/box colors — see theme.qss's own identical
+   comment for the full reasoning. This is the theme the original bug
+   report was actually about (a starting-directory field disabled while
+   "Home directory" is selected reading as near-invisible against a
+   light background under Qt's own native disabled palette). */
+QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled {
+    color: #78808f;               /* --zf-text-muted (light) */
+    background-color: #ffffff;   /* --zf-bg (light) */
+    border-color: #d8dce2;       /* --zf-border (light) */
+}
+QRadioButton:disabled, QCheckBox:disabled {
+    color: #78808f;               /* --zf-text-muted (light) */
+}
+QPushButton:disabled {
+    color: #78808f;               /* --zf-text-muted (light) */
+    border-color: #d8dce2;       /* --zf-border (light) */
 }
 
 /* CommandsPaneWidget's bottom-of-pane divider — same token every other

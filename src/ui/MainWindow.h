@@ -255,7 +255,7 @@ private:
     // directly). Constructed after m_transferManager/m_settings, before
     // either pane (both need to emit editRequested to it).
     EditSessionManager *m_editSessionManager = nullptr;
-    // Quick connect: separate protocol/username/host/port fields plus an
+    // Quick connect: separate username/host/port/protocol fields plus an
     // explicit Connect button, all built in buildToolbar() (the View
     // menu's toggle only needs m_quickConnectToolBar itself to exist,
     // dereferenced lazily at toggle time — same "not needed until later"

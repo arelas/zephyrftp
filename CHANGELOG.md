@@ -8,6 +8,31 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.14] — UI cosmetics pass, part 3
+
+### Changed
+
+- **Site Manager's Group dropdown, Authentication radios, and starting-
+  directory options were invisible in light mode.** The Group field is
+  this app's only *editable* combo box, which draws its closed-state
+  text through a separate child `QLineEdit` the general combo-box
+  styling never reached; `QRadioButton` (Password/Private key, Home/
+  Specific directory) had no styling at all, same class of bug as the
+  checkbox fix in the previous release. Both fixed in `theme.qss`/
+  `theme-light.qss`.
+- **Disabled fields now render in a legible, theme-consistent muted
+  color** instead of falling back to Qt's own native disabled palette —
+  the starting-directory field (disabled while "Home directory" is
+  selected) was the specific reported case, but this applies to every
+  disabled text field, combo, radio, checkbox, and button.
+- **Quick connect toolbar field order**: protocol now sits right before
+  the Connect button instead of leading the row.
+- **File pane navigation button contrast increased further**: icons
+  enlarged (20→24px), and `IconTheme::tintedIcon()` now generates an
+  explicit, readable disabled-state icon instead of relying on Qt's own
+  auto-desaturation, which was washing the disabled Back/Forward icons
+  out to near-invisibility.
+
 ## [0.7.13] — UI cosmetics pass, part 2
 
 ### Changed

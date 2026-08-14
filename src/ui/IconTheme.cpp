@@ -115,6 +115,21 @@ QIcon tintedIcon(const QString &resourcePath, const QColor &color, int size)
     QIcon icon;
     icon.addPixmap(base);
 
+    // Explicit Disabled-state pixmap — without this, Qt auto-generates
+    // one via QStyle::generatedIconPixmap(), which desaturates/lightens
+    // the color using its own algorithm rather than anything theme-aware.
+    // For a small, already-thin monochrome glyph, that auto-generated
+    // result reads as barely-there — a real reported contrast problem,
+    // not just a style-purity concern. A fixed, reduced-alpha copy of
+    // the SAME tint color reads as clearly "grayed out but still there"
+    // instead, consistent across both themes since it derives from
+    // whatever color the caller already chose.
+    QColor disabledColor = color;
+    disabledColor.setAlpha(static_cast<int>(color.alpha() * 0.5));
+    const QPixmap disabledBase = renderTinted(renderer, disabledColor, size);
+    if (!disabledBase.isNull())
+        icon.addPixmap(disabledBase, QIcon::Disabled);
+
     // @2x variant for HiDPI displays. setDevicePixelRatio() is what tells
     // Qt this pixmap represents the same logical size as `base` at twice
     // the resolution — without it, QIcon would treat this as a second,
@@ -134,6 +149,12 @@ QIcon tintedIcon(const QString &resourcePath, const QColor &color, int size)
     if (!hidpi.isNull()) {
         hidpi.setDevicePixelRatio(2.0);
         icon.addPixmap(hidpi);
+    }
+
+    QPixmap hidpiDisabled = renderTinted(renderer, disabledColor, size * 2);
+    if (!hidpiDisabled.isNull()) {
+        hidpiDisabled.setDevicePixelRatio(2.0);
+        icon.addPixmap(hidpiDisabled, QIcon::Disabled);
     }
 
     cache.insert(key, icon);

@@ -143,6 +143,23 @@ QComboBox::down-arrow {
     height: 12px;
 }
 
+/* An EDITABLE QComboBox (SiteManagerDialog's Group field is this app's
+   only one) actually draws its closed-state text via a real CHILD
+   QLineEdit overlaid on the combo's own frame — the plain QComboBox
+   rule above styles the frame, but this inner editor is a distinct
+   widget that needs its own rule, or it falls back to native/system
+   palette rendering (a real reported invisible-text bug, only on this
+   one editable combo — every other combo in the app draws its own
+   closed text directly, no separate child widget involved). border:
+   none/background: transparent — the outer QComboBox rule already
+   supplies both a visible background and border; painting a second,
+   possibly-misaligned one from this inner widget would double up. */
+QComboBox QLineEdit {
+    background: transparent;
+    border: none;
+    color: #dfe4ea;               /* --zf-text-primary */
+}
+
 /* The dropdown POPUP is a separate widget (QAbstractItemView), not
    covered by the plain QComboBox rule above (which only styles the
    closed control) — without this it falls back to native/system
@@ -168,6 +185,42 @@ QLabel {
 QCheckBox {
     color: #dfe4ea;               /* --zf-text-primary */
     spacing: 6px;
+}
+
+/* Same bug, same fix, as QCheckBox above — SiteManagerDialog's
+   Authentication (Password/Private key) and starting-directory (Home/
+   Specific) radio button labels were unstyled and fell back to
+   native/system rendering. */
+QRadioButton {
+    color: #dfe4ea;               /* --zf-text-primary */
+    spacing: 6px;
+}
+
+/* Disabled-state text/box colors — without these, every disabled
+   QLineEdit/QComboBox/QRadioButton/QCheckBox/QPushButton (e.g. a
+   starting-directory field disabled while "Home directory" is
+   selected, or proxy fields disabled while proxy type is None) falls
+   back to Qt's own native disabled palette, unrelated to this theme —
+   a real reported near-invisible-text bug on the light theme
+   specifically (see theme-light.qss), reproduced here for symmetry and
+   because the dark theme's own native disabled palette isn't
+   guaranteed consistent either. Muted but still legible, not merely
+   "technically present."
+   --zf-text-muted for the text, --zf-bg (flatter than the enabled
+   --zf-surface) for the box background — a visibly different, clearly
+   "off" look from the enabled state, not just dimmer text on the same
+   background. */
+QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled {
+    color: #5c6472;               /* --zf-text-muted */
+    background-color: #14171c;   /* --zf-bg */
+    border-color: #2a2e35;       /* --zf-border */
+}
+QRadioButton:disabled, QCheckBox:disabled {
+    color: #5c6472;               /* --zf-text-muted */
+}
+QPushButton:disabled {
+    color: #5c6472;               /* --zf-text-muted */
+    border-color: #2a2e35;       /* --zf-border */
 }
 
 /* CommandsPaneWidget's bottom-of-pane divider — same token every other

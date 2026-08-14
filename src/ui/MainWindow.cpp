@@ -362,7 +362,7 @@ void MainWindow::buildToolbar()
     addToolBarBreak(Qt::TopToolBarArea);
     m_quickConnectToolBar = addToolBar(tr("Quick Connect"));
 
-    // Separate protocol/username/host/port fields plus an explicit
+    // Separate username/host/port/protocol fields plus an explicit
     // Connect button — replaces an earlier single free-text
     // "[protocol://][user@]host[:port]" field (a real reported
     // usability issue: the syntax wasn't discoverable). Protocol
@@ -371,14 +371,9 @@ void MainWindow::buildToolbar()
     // dialog. Port is a plain QLineEdit, not a QSpinBox — a port is
     // typed, not nudged one integer at a time (same reasoning
     // PreferencesDialog/SiteManagerDialog's own port fields use).
-    m_quickConnectProtocolCombo = new QComboBox(this);
-    ProtocolCombo::populate(m_quickConnectProtocolCombo);
-    const int defaultProtocolIndex =
-        m_quickConnectProtocolCombo->findData(int(m_settings->defaultProtocol()));
-    if (defaultProtocolIndex >= 0)
-        m_quickConnectProtocolCombo->setCurrentIndex(defaultProtocolIndex);
-    m_quickConnectToolBar->addWidget(m_quickConnectProtocolCombo);
-
+    // Order (username/host/port, THEN protocol, THEN Connect) matches a
+    // real reported preference — protocol sits right before the action
+    // it configures rather than leading the row.
     m_quickConnectUsernameEdit = new QLineEdit(this);
     m_quickConnectUsernameEdit->setPlaceholderText(tr("Username"));
     m_quickConnectUsernameEdit->setFixedWidth(110);
@@ -399,6 +394,14 @@ void MainWindow::buildToolbar()
     connect(m_quickConnectPortEdit, &QLineEdit::returnPressed,
             this, &MainWindow::onQuickConnectReturnPressed);
     m_quickConnectToolBar->addWidget(m_quickConnectPortEdit);
+
+    m_quickConnectProtocolCombo = new QComboBox(this);
+    ProtocolCombo::populate(m_quickConnectProtocolCombo);
+    const int defaultProtocolIndex =
+        m_quickConnectProtocolCombo->findData(int(m_settings->defaultProtocol()));
+    if (defaultProtocolIndex >= 0)
+        m_quickConnectProtocolCombo->setCurrentIndex(defaultProtocolIndex);
+    m_quickConnectToolBar->addWidget(m_quickConnectProtocolCombo);
 
     m_quickConnectConnectButton = new QPushButton(tr("Connect"), this);
     m_quickConnectConnectButton->setIcon(IconTheme::tintedIcon(":/icons/plug.svg", IconTheme::Green));
