@@ -10,6 +10,7 @@
 #include <QAction>
 #include <QProgressBar>
 #include <QLabel>
+#include <QTimer>
 #include <algorithm>
 
 namespace {
@@ -326,8 +327,32 @@ void TransferQueueWidget::onItemAdded(const TransferItem &item)
     // appendRow() followed by a sort — resortAndRebuild()'s own loop
     // calls appendRow() directly (not this method), specifically to avoid
     // this redirect recursing back into itself.
+    //
+    // Deferred via a coalesced QTimer::singleShot(0, ...), NOT called
+    // synchronously — a real, severe bug found from a live crash report:
+    // enqueueing N items in a tight loop (any folder transfer, or a
+    // multi-select drag-drop) fires this once PER ITEM, synchronously,
+    // all within the same loop; calling resortAndRebuild() (a full
+    // table wipe + rebuild of every row's items AND cell widgets) on
+    // every single one is O(N) work times N calls = O(N²) total —
+    // thousands of files means tens of millions of widget allocations,
+    // which hung the GUI thread long enough for Windows to report the
+    // process as unresponsive while memory climbed at a runaway rate
+    // (WER's RADAR_PRE_LEAK_64 + "stopped interacting with Windows" is
+    // exactly this pattern, not a real leak in the classic sense).
+    // m_rebuildPending guards against scheduling more than one deferred
+    // rebuild per burst — every itemAdded() in the same synchronous loop
+    // shares the single rebuild that runs once the loop actually returns
+    // control to the event loop, turning the O(N²) storm into one O(N)
+    // rebuild covering the whole batch.
     if (m_sortColumn != -1) {
-        resortAndRebuild();
+        if (!m_rebuildPending) {
+            m_rebuildPending = true;
+            QTimer::singleShot(0, this, [this]() {
+                m_rebuildPending = false;
+                resortAndRebuild();
+            });
+        }
         return;
     }
     appendRow(item);

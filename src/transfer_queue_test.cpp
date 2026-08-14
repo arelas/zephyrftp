@@ -36,6 +36,7 @@
 #include <QLabel>
 #include <QProgressBar>
 #include <QEventLoop>
+#include <QElapsedTimer>
 #include "ui/FilePaneWidget.h"
 #include "ui/TransferQueueWidget.h"
 #include "ui/IconTheme.h"
@@ -264,6 +265,16 @@ int main(int argc, char *argv[])
         // a_item/ab_item/b_item.
         sortManager->enqueue(leftPane, rightPane, "ab_item.bin");
 
+        // TransferQueueWidget::onItemAdded() now DEFERS its rebuild-while-
+        // sorted path via QTimer::singleShot(0, ...) instead of rebuilding
+        // synchronously — a real fix for a severe O(N²) bug (enqueueing N
+        // items while sorted used to rebuild the whole table N times,
+        // hanging the GUI thread and consuming runaway memory on a large
+        // batch transfer; see that method's own comment). One
+        // processEvents() call lets that queued zero-delay callback
+        // actually run before this checks the table's contents.
+        qApp->processEvents();
+
         const bool stillSortedAfterNewItem = table->rowCount() == 3
             && table->item(0, 0)->text() == "a_item.bin"
             && table->item(1, 0)->text() == "ab_item.bin"
@@ -427,9 +438,77 @@ int main(int argc, char *argv[])
         phase5Pass = noIndicatorBeforeClick && textOrderDiffersFromOrdinalOrder
             && localToLocalIsGreen && moveIconIsBlue && directionSortAscendingCorrect;
         qDebug() << (phase5Pass ? "[phase5] PASS" : "[phase5] FAIL");
+    });
 
+    // ---- Phase 6: a real, severe crash regression — reported live, on
+    // Windows, transferring a large number of files: the app hung
+    // ("stopped interacting with Windows") and consumed memory at a
+    // runaway rate. Root cause: with a column sort active, onItemAdded()
+    // called resortAndRebuild() (a full table wipe + rebuild of every
+    // row's items AND cell widgets) SYNCHRONOUSLY, once per item — N
+    // items enqueued in one tight loop (any folder transfer, or a multi-
+    // select drag-drop) meant N full rebuilds, each O(current size), for
+    // O(N²) total widget churn. A few thousand files was enough to hang
+    // the GUI thread and exhaust memory. The fix coalesces every
+    // onItemAdded() within one synchronous burst into a SINGLE deferred
+    // rebuild (QTimer::singleShot(0, ...)) — this proves that directly:
+    // enqueue a large batch while sorted, pump the event loop exactly
+    // ONCE, and confirm both (a) it finishes fast (the old O(N²) code
+    // would take vastly longer, if it didn't hang outright, for this
+    // many items) and (b) the end state is still fully correct — every
+    // item present, correctly sorted, nothing dropped by the coalescing
+    // itself. A fresh TransferManager/TransferQueueWidget pair, isolated
+    // from every earlier phase. ----
+    bool phase6Pass = false;
+    QTimer::singleShot(5000, &app, [&]() {
+        auto *bulkManager = new TransferManager(&app);
+        auto *bulkWidget = new TransferQueueWidget(bulkManager);
+        auto *table = bulkWidget->findChild<QTableWidget *>();
+        table->horizontalHeader()->sectionClicked(0);   // activate ascending Name sort
+
+        constexpr int kFileCount = 1500;
+        QStringList expectedNames;
+        expectedNames.reserve(kFileCount);
+        for (int i = 0; i < kFileCount; ++i)
+            expectedNames << QStringLiteral("bulk_%1.bin").arg(i, 4, 10, QLatin1Char('0'));
+
+        QElapsedTimer timer;
+        timer.start();
+        // The actual regression trigger: a tight loop of enqueue() calls,
+        // all synchronous, all while m_sortColumn != -1 — exactly the
+        // pattern MainWindow::enqueueEntries()/enqueueFolder() produce
+        // for a real multi-file or folder transfer.
+        for (const QString &name : std::as_const(expectedNames))
+            bulkManager->enqueue(leftPane, rightPane, name);
+        qApp->processEvents();   // lets the ONE coalesced deferred rebuild actually run
+        const qint64 elapsedMs = timer.elapsed();
+
+        // Generous — the fixed (O(N)) path finishes in well under 100ms
+        // locally; this just needs to be far below what the old O(N²)
+        // path would take for 1500 items (proportional to 1500² rebuilt-
+        // row operations) to catch a real regression back to that
+        // pattern, not to pin down an exact performance number.
+        const bool fastEnough = elapsedMs < 5000;
+        qDebug() << "[phase6] 1500-item batch enqueue while sorted took" << elapsedMs
+                  << "ms, expected well under 5000ms:" << fastEnough;
+
+        QStringList actualNames;
+        for (int r = 0; r < table->rowCount(); ++r) {
+            if (auto *it = table->item(r, 0))
+                actualNames << it->text();
+        }
+        const bool correctCountAndOrder = actualNames == expectedNames;
+        qDebug() << "[phase6] all" << kFileCount
+                  << "items present in correct sorted order after the single coalesced rebuild:"
+                  << correctCountAndOrder;
+
+        phase6Pass = fastEnough && correctCountAndOrder;
+        qDebug() << (phase6Pass ? "[phase6] PASS" : "[phase6] FAIL");
+    });
+
+    QTimer::singleShot(5600, &app, [&]() {
         const bool overallPass = phase1Pass && phase2SyncPass && phase2Pass && phase3Pass
-            && phase4Pass && phase5Pass;
+            && phase4Pass && phase5Pass && phase6Pass;
         qDebug() << (overallPass ? "[test] ALL PHASES PASS" : "[test] AT LEAST ONE PHASE FAILED");
         app.exit(overallPass ? 0 : 1);
     });

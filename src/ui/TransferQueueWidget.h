@@ -82,6 +82,19 @@ private:
     int m_sortColumn = -1;   // -1: unsorted, insertion order (the pre-sort default)
     Qt::SortOrder m_sortOrder = Qt::AscendingOrder;
 
+    // Coalesces onItemAdded()'s resortAndRebuild() calls while a sort is
+    // active — see that method's own comment for the real, severe bug
+    // this fixes: enqueueing N files in a tight loop (a folder transfer,
+    // or any multi-select drag-drop) used to trigger N separate full-
+    // table rebuilds, each rebuilding the table's CURRENT size — an O(N²)
+    // storm of QTableWidgetItem/QProgressBar/QLabel/QWidget allocation
+    // that made a large batch transfer hang the GUI thread and consume
+    // runaway memory (a real, reported crash on Windows — WER's
+    // RADAR_PRE_LEAK_64 + "stopped interacting with Windows", both
+    // symptoms this exact pattern produces). Guards a single deferred
+    // rebuild per burst instead of one per item.
+    bool m_rebuildPending = false;
+
     // Direction arrow (up/down/left-right) recolored per the item's
     // current status, or check/x for the two terminal states — per
     // ICON-MAP.md's "Transfer direction & status" table.

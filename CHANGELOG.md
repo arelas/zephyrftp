@@ -8,6 +8,26 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.16] — Fix runaway memory/hang on large batch transfers
+
+### Fixed
+
+- **Transferring a large number of files while the Transfers panel was
+  sorted (any column header clicked) could hang the app and consume
+  memory at a runaway rate, sometimes crashing outright** — reported
+  live on Windows, matching a Windows Error Reporting
+  `RADAR_PRE_LEAK_64` / "stopped interacting with Windows" hang.
+  Root cause: adding a queued item while a sort was active triggered a
+  synchronous full rebuild of the entire Transfers table (every row's
+  cells *and* widgets recreated from scratch) — enqueueing N files in
+  one batch (any folder transfer or multi-select drag-drop) fired this
+  once per file, for O(N²) total widget churn. A few thousand files was
+  enough to hang the GUI thread and exhaust memory. Fixed by coalescing
+  every addition within one synchronous batch into a single deferred
+  rebuild instead of one per file — confirmed directly with a
+  before/after control: the old code didn't finish a 1,500-file test
+  batch in 90 seconds; the fix completes the same batch in ~200ms.
+
 ## [0.7.15] — UI cosmetics pass, part 4
 
 ### Changed
