@@ -8,6 +8,17 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Added
+
+- **Verify a completed transfer's checksum.** Right-click a finished
+  item in the transfer queue and choose Verify Checksum... to confirm
+  it matches on both ends (SHA-256). Manual and on-demand, not
+  automatic — for anything other than a local-to-local copy, verifying
+  means genuinely re-reading the remote file a second time over the
+  network (neither SFTP nor FTP offer a usable server-side hash), so
+  this only runs when you ask for a specific file, never silently in
+  the background. Not offered for server-to-server transfers.
+
 ## [0.7.26] — Fix a compressed field in Site Manager at its default size
 
 ### Fixed

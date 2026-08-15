@@ -47,8 +47,14 @@ public:
     // the destination exists and a deliberate overwrite is intended, this
     // avoids popping one askConflict() modal per file in a bulk batch.
     // Default false preserves every existing caller's behavior unchanged.
-    void enqueue(FilePaneWidget *sourcePane, FilePaneWidget *destPane, const QString &fileName,
-                 bool assumeOverwrite = false);
+    //
+    // Returns the new item's id — added for ChecksumVerifier (src/
+    // transfer/ChecksumVerifier.h), which needs to know exactly which
+    // item to watch via itemUpdated() rather than inferring it from
+    // signal-ordering. Every pre-existing caller ignores the return
+    // value, so this is a source-compatible change.
+    int enqueue(FilePaneWidget *sourcePane, FilePaneWidget *destPane, const QString &fileName,
+                bool assumeOverwrite = false);
 
     // Recursively transfers a whole folder: enumerates it via
     // FolderEnumerator (against the SOURCE backend), creates the mirrored
@@ -116,6 +122,31 @@ public:
     int startEditDownload(FilePaneWidget *sourcePane, const QString &fileName);
     int startEditUpload(FilePaneWidget *destPane, const QString &localTempPath,
                          const QString &remotePath, const QString &fileName);
+
+    // ChecksumVerifier's (src/transfer/ChecksumVerifier.h) sole entry
+    // point into TransferManager: re-downloads a single remote file to a
+    // fresh, guaranteed-unique local temp path so its bytes can be hashed
+    // a second time, independently of whatever was captured during the
+    // original transfer. Deliberately NOT built on top of enqueue() —
+    // enqueue() derives its paths from pane->currentDirectory() + a bare
+    // filename, which is wrong here: by the time someone clicks "Verify
+    // Checksum" on a completed item, the pane may well have navigated
+    // elsewhere, and re-deriving the path that way could silently verify
+    // the wrong file (or fail to find it) instead of the exact path the
+    // original transfer actually used. remotePath is therefore the
+    // original item's own already-resolved sourcePath/destPath, passed
+    // through as-is. Otherwise identical in shape to startEditDownload()
+    // above (same "no destPane, conflict-check skipped, fresh temp
+    // path" structure) — reuses TransferDirection::EditDownload rather
+    // than introducing a new direction, since every dispatch/pool/claim
+    // switch already handles that shape correctly; sets
+    // TransferItem::isVerificationTask = true (before itemAdded fires)
+    // to disambiguate from a real edit-in-place download, which is what
+    // keeps this out of the visible transfer queue and out of
+    // EditSessionManager's own routing (keyed by id, not direction alone
+    // — a foreign id is a silent, safe no-op there).
+    int startVerificationDownload(FilePaneWidget *remotePane, const QString &remotePath,
+                                   const QString &fileName);
 
     // True when both panes have a backend and both report the same,
     // non-empty connectionIdentity() — the precondition for both methods
@@ -404,6 +435,13 @@ private:
     // to start editing it); see EditSessionManager for the component
     // that actually deletes it once editing ends.
     QString allocateEditTempFilePath(const TransferItem &item) const;
+
+    // Same idea again, "verify_"-prefixed, for startVerificationDownload()
+    // above. Unlike the edit-temp file, this one is short-lived by
+    // design — ChecksumVerifier deletes it itself right after hashing it
+    // (Done) or as soon as it fails/is cancelled, rather than outliving
+    // its own item's terminal status.
+    QString allocateVerificationTempFilePath(const TransferItem &item) const;
 
     // No-op for every direction except RemoteToRemote (checked internally
     // via item.direction/tempFilePath). Called from onBackendFinished()

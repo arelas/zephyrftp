@@ -107,18 +107,34 @@ tracks what's changed between them.
 - **A real transfer queue** — see what's moving and how fast, pause a
   transfer to a server and pick it back up later without starting over,
   cancel something outright, or retry something that failed, all from
-  one place. **Survives closing the app, too**: anything still queued,
-  paused, or mid-transfer when you quit is there again next time you
-  launch — a transfer to/from a server picks back up automatically the
-  moment you reconnect to that server (shown as "Waiting to reconnect"
-  in the meantime), never before, and never with a password remembered
-  or a connection attempted on its own.
+  one place. Active, Completed, and Failed transfers are split into
+  their own tabs, so a finished batch or a file worth retrying doesn't
+  get lost in a long list of everything still queued. **Survives
+  closing the app, too**: anything still queued, paused, or mid-transfer
+  when you quit is there again next time you launch — a transfer to/from
+  a server picks back up automatically the moment you reconnect to that
+  server (shown as "Waiting to reconnect" in the meantime), never
+  before, and never with a password remembered or a connection attempted
+  on its own.
 - **Transfers run concurrently when they don't conflict** — uploading
   from one pane and downloading on the other now happen at the same
   time instead of one waiting for the other, automatically, no setting
   to turn on. Two transfers that would use the *same* connection still
   run one after another, since a single SFTP/FTP session can't safely
   do two things at once.
+- **Simultaneous connections per site** — a site can open more than one
+  connection at once (Site Manager, 1-10, off by default) so a batch of
+  many files transfers in genuine parallel instead of one at a time
+  through a single connection. Opens extra connections on demand, using
+  the same credentials as the main one — no extra password or
+  server-identity prompts.
+- **Verify a transfer's checksum** — right-click a completed transfer in
+  the queue and choose Verify Checksum... to confirm the file matches on
+  both ends (SHA-256). For anything involving a server, this means a
+  genuine second read of the remote file over the network (there's no
+  cheaper way to check — neither SFTP nor FTP offer a usable server-side
+  hash here), so it's a deliberate, on-demand action, not something run
+  automatically in the background.
 - **Bandwidth limit per transfer** — set a KB/s cap in Preferences
   (blank/0 means unlimited, the default) and every SFTP/FTP transfer
   paces itself down to that rate. Per-transfer, not one shared cap
@@ -393,6 +409,14 @@ rather than being half-implemented:
   far. The `.dmg` is also unsigned and unnotarized (no paid Apple
   Developer account exists for this project), so Gatekeeper blocks the
   first launch until you right-click → Open — see Download above.
+- **Checksum verification isn't offered for server-to-server transfers,
+  and never runs automatically.** Both are deliberate: verifying always
+  means re-reading a remote file over the network a second time (no
+  server-side hash is reachable through SFTP or FTP), so it's an
+  on-demand action for a specific completed transfer, not a background
+  check — and a server-to-server transfer already involved a local
+  staging copy on the way through, which the "both ends" check doesn't
+  cleanly map onto.
 
 ## For developers and tinkerers
 

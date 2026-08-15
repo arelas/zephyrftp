@@ -209,4 +209,15 @@ struct TransferItem {
     // persistence is scoped to LocalToLocal/LocalToRemote/RemoteToLocal
     // only), so `direction` is always unambiguous here.
     ConnectionDescriptor pendingConnection;
+
+    // True only for the hidden, synthetic temp-download item
+    // ChecksumVerifier::verify() creates to re-read a remote file's bytes
+    // a second time (see ChecksumVerifier.h) — never set for an ordinary,
+    // user-visible transfer. TransferQueueWidget's onItemAdded()/
+    // onItemUpdated() and TransferQueueTable::resortAndRebuild() all
+    // check this to keep verification traffic out of the visible queue
+    // entirely; TransferManager itself never inspects it; the item still
+    // goes through the exact same claim/pool/cancel machinery as any
+    // other item.
+    bool isVerificationTask = false;
 };

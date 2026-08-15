@@ -76,6 +76,15 @@ public:
     // it, the same reason FilePaneWidget::parentOfPath() is public.
     static QString directionText(TransferDirection direction);
 
+signals:
+    // The one piece of forwarding this class needs beyond its own direct
+    // m_manager calls (see showContextMenu()'s own comment) — "Verify
+    // Checksum..." needs ChecksumVerifier, which this class has no
+    // reference to; TransferQueueWidget (which already constructs every
+    // instance of this class) connects this to
+    // ChecksumVerifier::verify().
+    void verifyChecksumRequested(int itemId);
+
 private slots:
     void showContextMenu(const QPoint &pos);
 

@@ -615,6 +615,19 @@ void TransferQueueTable::showContextMenu(const QPoint &pos)
                              && (status == TransferStatus::Failed || status == TransferStatus::Cancelled
                                  || status == TransferStatus::Skipped));
 
+    // Only offered for a genuinely completed, verifiable transfer —
+    // RemoteToRemote and Move are excluded (see ChecksumVerifier.h's own
+    // doc comment on RemoteToRemote's scope, and moveEntry()'s doc
+    // comment on why Move is a fundamentally different operation); this
+    // is a UX nicety (don't show an action that would just report "can't
+    // be verified"), not the authoritative check — ChecksumVerifier::
+    // verify() re-checks all of this itself regardless of how it's
+    // triggered.
+    QAction *verifyAction = menu.addAction(
+        IconTheme::tintedIcon(":/icons/check.svg", IconTheme::Green), tr("Verify Checksum..."));
+    verifyAction->setEnabled(status == TransferStatus::Done && !isMove
+                              && direction != TransferDirection::RemoteToRemote);
+
     QAction *chosen = menu.exec(m_table->viewport()->mapToGlobal(pos));
     if (chosen == cancelAction)
         m_manager->cancelItem(id);
@@ -624,6 +637,8 @@ void TransferQueueTable::showContextMenu(const QPoint &pos)
         m_manager->resumeItem(id);
     else if (chosen == retryAction)
         m_manager->retryItem(id);
+    else if (chosen == verifyAction)
+        emit verifyChecksumRequested(id);
 }
 
 void TransferQueueTable::onHeaderSectionClicked(int column)
@@ -646,6 +661,12 @@ void TransferQueueTable::resortAndRebuild()
 {
     QList<TransferItem> items;
     for (const TransferItem &item : m_manager->items()) {
+        // Hidden, synthetic checksum-verification temp-downloads (see
+        // TransferItem::isVerificationTask's own doc comment) go through
+        // the exact same status/category machinery as any ordinary
+        // transfer, but must never actually render as a queue row.
+        if (item.isVerificationTask)
+            continue;
         if (categoryFor(item.status) == m_category)
             items.append(item);
     }

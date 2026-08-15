@@ -6,7 +6,9 @@
 #include "TransferQueueTable.h"
 
 class TransferManager;
+class ChecksumVerifier;
 class QTabWidget;
+class QProgressDialog;
 
 // Three tabs — Active, Completed, Failed — splitting what used to be one
 // flat table by each item's own status category (see QueueCategory in
@@ -46,15 +48,36 @@ private slots:
     void onItemAdded(const TransferItem &item);
     void onItemUpdated(const TransferItem &item);
 
+    // "Verify Checksum..." wiring — this class owns the ChecksumVerifier
+    // (see ChecksumVerifier.h's own doc comment on why: it needs
+    // presentation (QMessageBox/QProgressDialog), which the individual
+    // TransferQueueTable instances don't have, but MainWindow doesn't
+    // need to be involved either — this widget already sits right above
+    // all three tables and already owns the TransferManager* they share).
+    void onVerifyChecksumRequested(int itemId);
+    void onVerificationProgress(int itemId, qint64 bytesDone, qint64 bytesTotal);
+    void onVerificationFinished(int itemId, bool matched, const QString &localHex, const QString &remoteHex);
+    void onVerificationFailed(int itemId, const QString &reason);
+
 private:
     TransferQueueTable *tableFor(QueueCategory category) const;
     void updateTabLabel(QueueCategory category);
+    void closeVerifyDialog(int itemId);
+    QString fileNameForItem(int id) const;
 
     TransferManager *m_manager;
+    ChecksumVerifier *m_checksumVerifier;
     QTabWidget *m_tabs;
     TransferQueueTable *m_activeTable;
     TransferQueueTable *m_completedTable;
     TransferQueueTable *m_failedTable;
+
+    // One progress dialog per in-flight verification, keyed by the
+    // ORIGINAL item's id — supports verifying more than one transfer at
+    // once, same as the app already supports concurrent transfers
+    // themselves. Removed (and deleteLater()'d) the moment
+    // verificationFinished/verificationFailed arrives for that id.
+    QHash<int, QProgressDialog *> m_verifyDialogs;
 
     // item id -> which tab currently holds it — lets onItemUpdated()
     // detect a category change (migrate: remove from the old tab, add

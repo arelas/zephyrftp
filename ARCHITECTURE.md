@@ -2479,6 +2479,73 @@ to drive FileZilla itself for a same-desktop comparison.
   mismatch `m_portSpin`'s own comment right above it already documents
   and works around, just not yet applied to this newer sibling field.
   Fixed with the same `setFixedHeight()` treatment.
+  **Transfer integrity checksums** — right-click a `Done`, non-
+  `RemoteToRemote` item in the transfer queue and choose "Verify
+  Checksum..." to confirm it matches on both ends (SHA-256). The pivotal
+  constraint driving the whole design, confirmed by reading the
+  installed `libssh2_sftp.h` directly rather than assumed: no
+  check-file/hash extension binding exists, and no generic "send an
+  arbitrary SFTP extended request" escape hatch either, so server-side
+  SFTP hash verification is unreachable without bypassing libssh2's
+  public API entirely; `FtpBackend` and this project's own test servers
+  send no hash command either. That means verifying anything but a
+  `LocalToLocal` transfer can only mean re-reading the remote file a
+  second time over the network — there's no cheaper path — which is why
+  this is a manual, per-file action rather than automatic: doubling
+  transfer cost silently in the background would be a bad default.
+  `LocalToLocal` hashes both files directly (genuinely free, no network
+  involved). Everything else hashes its local side directly and re-reads
+  its remote side via a new `TransferManager::startVerificationDownload()`
+  — deliberately NOT built on `enqueue()`, which derives its paths from
+  `pane->currentDirectory() + a bare filename` (wrong here: the pane may
+  have navigated elsewhere by the time someone clicks Verify on an old
+  completed item) — instead mirroring `startEditDownload()`'s exact
+  shape (explicit remote path, no `destPane`, conflict-check skipped,
+  fresh temp path) and reusing `TransferDirection::EditDownload` rather
+  than adding a new direction, since every dispatch/pool/claim switch
+  already handles that shape correctly. The new, hidden item is
+  disambiguated from a real edit-in-place download by a new
+  `TransferItem::isVerificationTask` flag (set before `itemAdded` fires)
+  — `TransferQueueTable`'s category filter and `TransferQueueWidget`'s
+  `onItemAdded()`/`onItemUpdated()` both gained a one-line guard on it,
+  the only two places that needed to change to keep it out of the
+  visible queue entirely. Going through the ordinary claim/pool
+  machinery this way means the hidden re-download automatically gets
+  busy-backend queuing (verifying an item whose remote side is already
+  claimed by another in-flight transfer correctly stays `Queued` rather
+  than corrupting it) and cancellation for free — confirmed by a new
+  `checksum-verification-test` scenario, not just asserted. The new
+  `ChecksumVerifier` class (`src/transfer/ChecksumVerifier.h/.cpp`) is
+  the orchestrator — constructed with a `TransferManager*`, used only
+  through its public surface, matching this project's established
+  "extract a focused subsystem" pattern (`DirectoryComparer`/
+  `CompareSyncExecutor`); local hashing runs via `QtConcurrent::run()` +
+  `QFutureWatcher` (never synchronous — hashing a large local file
+  inline would reintroduce the exact GUI-thread-blocking bug class the
+  v0.7.20 local-copy fix exists to prevent). `TransferQueueWidget` (not
+  `MainWindow`) owns the `ChecksumVerifier`, connects each
+  `TransferQueueTable`'s new `verifyChecksumRequested` signal to it, and
+  shows the result `QMessageBox`/in-flight `QProgressDialog` itself —
+  kept there, not routed further up, once checking `TransferQueueTable::
+  showContextMenu()`'s actual existing pattern found the other four
+  context-menu actions (Cancel/Pause/Resume/Retry) call `TransferManager`
+  directly with no signal-forwarding chain to `MainWindow` at all, so
+  "Verify Checksum" only needed to reach as far as the widget that
+  already constructs every table, not the whole way up. Verified three
+  ways: a new required-suite `checksum-verification-test`
+  (`FakeVerifiableBackend`, matching `remote-to-remote-test`'s/
+  `transfer-concurrency-test`'s own real-bytes-on-disk fake-backend
+  technique, with one addition — a single mutable `remoteContent` field
+  the test corrupts directly between an original transfer and a later
+  `verify()` call to simulate real server-side drift) covering match,
+  mismatch, busy-backend queuing, cancellation, and hidden-from-UI, all
+  passing; and a disposable, non-committed live probe against a real
+  `SftpBackend`/local `sshd` (this project's established throwaway-
+  verification technique) that uploaded a real file, verified a match,
+  then corrupted the server's own copy out-of-band (direct filesystem
+  write, bypassing SFTP entirely) and confirmed the mismatch was
+  correctly caught — proving this against real libssh2 I/O, not just the
+  fake backend.
   **`RemoteToRemote` (server-to-server) is staged through a local temp
   file** — neither backend has a direct way to move a file straight to
   another server, so `dispatchActiveItem()` runs it in two phases:

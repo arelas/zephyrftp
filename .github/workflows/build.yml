@@ -89,6 +89,7 @@ jobs:
           move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test sync-browsing-test
           compare-sync-test
           script-runner-test
+          checksum-verification-test
           -- -j$(nproc)
 
       # windeployqt isn't packaged for this cross toolchain at all (and
@@ -232,6 +233,7 @@ jobs:
           run_test sync-browsing-test
           run_test compare-sync-test
           run_test script-runner-test
+          run_test checksum-verification-test
 
       # Single-config generator (mingw64-cmake defaults to Unix
       # Makefiles) — unlike the old MSVC/Ninja multi-config setup, the
@@ -295,6 +297,7 @@ jobs:
           move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test sync-browsing-test
           compare-sync-test
           script-runner-test
+          checksum-verification-test
           -- -j$(nproc)
 
       # Runs directly, no wine/xvfb — these are native Linux binaries, and
@@ -351,6 +354,7 @@ jobs:
           ./sync-browsing-test
           ./compare-sync-test
           ./script-runner-test
+          ./checksum-verification-test
 
       # Just the binary — this is the "plain tarball" approach, not a
       # bundled/portable build: it dynamically links against system
@@ -434,6 +438,7 @@ jobs:
           move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test sync-browsing-test
           compare-sync-test
           script-runner-test
+          checksum-verification-test
           -- -j$(nproc)
 
       # Same reasoning as build-linux's own test-suite step: a genuinely
@@ -491,6 +496,7 @@ jobs:
           ./sync-browsing-test
           ./compare-sync-test
           ./script-runner-test
+          ./checksum-verification-test
 
       - name: Build .rpm package
         run: |
@@ -553,6 +559,7 @@ jobs:
           move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test sync-browsing-test
           compare-sync-test
           script-runner-test
+          checksum-verification-test
           -- -j$(nproc)
 
       # Same reasoning as build-linux-rpm's own test-suite step: a
@@ -606,6 +613,7 @@ jobs:
           ./sync-browsing-test
           ./compare-sync-test
           ./script-runner-test
+          ./checksum-verification-test
 
       - name: Build AppImage
         run: |
@@ -698,6 +706,7 @@ jobs:
           move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test sync-browsing-test verify-credential-store
           compare-sync-test
           script-runner-test
+          checksum-verification-test
           -- -j$(sysctl -n hw.ncpu)
 
       # Native binaries on native hardware, same reasoning as
@@ -754,6 +763,7 @@ jobs:
           ./sync-browsing-test
           ./compare-sync-test
           ./script-runner-test
+          ./checksum-verification-test
 
           ./verify-credential-store
 

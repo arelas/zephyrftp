@@ -66,8 +66,8 @@ TransferManager::TransferManager(QObject *parent)
     QDir(stagingDirPath()).removeRecursively();
 }
 
-void TransferManager::enqueue(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
-                               const QString &fileName, bool assumeOverwrite)
+int TransferManager::enqueue(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
+                              const QString &fileName, bool assumeOverwrite)
 {
     TransferItem item;
     item.id = m_nextId++;
@@ -107,6 +107,8 @@ void TransferManager::enqueue(FilePaneWidget *sourcePane, FilePaneWidget *destPa
 
     if (item.status == TransferStatus::Queued)
         startNextIfLikelyToDispatch(item);
+
+    return item.id;
 }
 
 void TransferManager::enqueueFolder(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
@@ -228,6 +230,31 @@ int TransferManager::startEditUpload(FilePaneWidget *destPane, const QString &lo
     // Overwriting the file the user was just editing isn't a real
     // conflict — same reasoning as startEditDownload() above.
     item.skipConflictCheckOnDispatch = true;
+
+    m_items.append(item);
+    m_indexById.insert(item.id, m_items.size() - 1);
+    emit itemAdded(m_items.last());
+
+    if (item.status == TransferStatus::Queued)
+        startNext();
+    return item.id;
+}
+
+int TransferManager::startVerificationDownload(FilePaneWidget *remotePane, const QString &remotePath,
+                                                 const QString &fileName)
+{
+    TransferItem item;
+    item.id = m_nextId++;
+    item.fileName = fileName;
+    item.sourcePane = remotePane;
+    item.destPane = nullptr;   // no destination pane — same shape as EditDownload, see its own doc comment
+    item.direction = TransferDirection::EditDownload;
+    item.sourcePath = remotePath;   // the ORIGINAL item's already-resolved path, not re-derived from currentDirectory()
+    item.destPath = allocateVerificationTempFilePath(item);
+    // A fresh, guaranteed-unique temp path can never conflict with
+    // anything — same reasoning as startEditDownload() above.
+    item.skipConflictCheckOnDispatch = true;
+    item.isVerificationTask = true;
 
     m_items.append(item);
     m_indexById.insert(item.id, m_items.size() - 1);
@@ -928,6 +955,16 @@ QString TransferManager::allocateEditTempFilePath(const TransferItem &item) cons
     // comment for the id-collision reasoning, which applies identically
     // here.
     return stagingDir + QStringLiteral("/edit_%1_%2")
+        .arg(item.id)
+        .arg(QFileInfo(item.fileName).fileName());
+}
+
+QString TransferManager::allocateVerificationTempFilePath(const TransferItem &item) const
+{
+    const QString stagingDir = stagingDirPath();
+    QDir().mkpath(stagingDir);
+
+    return stagingDir + QStringLiteral("/verify_%1_%2")
         .arg(item.id)
         .arg(QFileInfo(item.fileName).fileName());
 }

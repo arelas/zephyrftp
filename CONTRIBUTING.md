@@ -440,14 +440,14 @@ representative of any real desktop:
 
 ## Running the test suites
 
-Twenty-two `EXCLUDE_FROM_ALL` CMake targets make up the required suite as
-of this writing — not part of a normal `make`, built and run
+Twenty-three `EXCLUDE_FROM_ALL` CMake targets make up the required suite
+as of this writing — not part of a normal `make`, built and run
 explicitly, and all of them (not just a "core" subset) need to actually
 pass before a change is done. The count keeps growing as the project
 does; rather than renumbering everything and rewriting this whole
 section each time, new targets get their own short subsection further
-below instead. Don't trust "twenty" to still be accurate by the time
-you're reading this — this paragraph is the one place that number lives,
+below instead. Don't trust "twenty-three" to still be accurate by the
+time you're reading this — this paragraph is the one place that number lives,
 so if it's wrong, the fix is here, not a hunt through the rest of this
 file. The original ten, each with its own run command:
 
@@ -1091,6 +1091,48 @@ a real local `sshd`.
 ```
 cmake --build build --target script-runner-test
 QT_QPA_PLATFORM=offscreen ./build/script-runner-test
+```
+
+### `checksum-verification-test`
+
+Self-contained, `EXCLUDE_FROM_ALL`, added to all five `build.yml` jobs —
+`ChecksumVerifier`'s own coverage (SHA-256, manually-triggered, on-demand
+transfer verification — see `src/transfer/ChecksumVerifier.h`'s own class
+doc comment for why this exists at all: neither SFTP nor FTP have a
+reachable server-side hash mechanism this codebase can use, confirmed by
+reading `libssh2_sftp.h` directly, so verifying anything but a
+`LocalToLocal` transfer means re-reading the remote side a second time
+over the network). Uses a small `FakeVerifiableBackend` (the same
+`QTimer`-tick, real-bytes-on-disk technique `remote-to-remote-test`'s/
+`transfer-concurrency-test`'s own fakes already establish) with one
+addition: a single mutable `remoteContent` field standing in for
+"whatever the server currently has," which the test mutates directly
+between an original transfer and a later `verify()` call to simulate the
+remote copy having changed since — a real, deliberately induced
+mismatch, not a hypothetical one. Six scenarios: `LocalToLocal` hashes
+both files directly and matches, with no hidden temp-download needed at
+all; `RemoteToLocal` matches when unchanged, then correctly detects a
+mismatch on the exact same already-`Done` item once the "server" content
+is corrupted; `LocalToRemote` re-reads the actual uploaded bytes and
+matches; a verification's hidden temp-download correctly stays `Queued`
+behind a real, second, in-flight transfer sharing the same backend
+instance rather than corrupting it, then dispatches and finishes once
+that backend frees up; `cancel()` during an in-flight verification stops
+it immediately, with no eventual `verificationFinished`; and none of the
+hidden temp-download items — several are created across the scenarios
+above — ever produce a visible row in `TransferQueueWidget`'s tabs,
+checked against a real `TransferQueueWidget` instance that's been
+listening since before the first scenario ran. A one-off, disposable
+live-SFTP probe (this project's established throwaway-verification
+technique — see this file's "core discipline" section — never committed,
+so there's nothing to run here) additionally confirmed this same
+mismatch detection against a REAL `SftpBackend`/real libssh2 session,
+including a real out-of-band corruption of the server-side file, before
+this feature shipped.
+
+```
+cmake --build build --target checksum-verification-test
+QT_QPA_PLATFORM=offscreen ./build/checksum-verification-test
 ```
 
 ## Live-server verification (SFTP public-key auth, FTP/FTPS, cancel/pause/resume)
