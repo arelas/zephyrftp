@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.27] — Transfer checksum verification
+
 ### Added
 
 - **Verify a completed transfer's checksum.** Right-click a finished
@@ -2004,7 +2006,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.26...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.27...HEAD
+[0.7.27]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.27
 [0.7.26]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.26
 [0.7.25]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.25
 [0.7.24]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.24
