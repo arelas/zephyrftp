@@ -867,6 +867,35 @@ void FilePaneWidget::onPathBarIconClicked()
     QMenu menu(this);
     QAction *sitesAction = menu.addAction(
         IconTheme::tintedIcon(":/icons/server-cog.svg", IconTheme::Blue), tr("Sites..."));
+
+    // Loaded directly, the same way TransferQueueTable.cpp already calls
+    // SiteStore::load() for its own site-picking submenu — a small, pure
+    // data read, not worth routing through MainWindow first. Built
+    // BEFORE Connect...'s own action so "pick something to reconnect to
+    // quickly" reads as the more prominent option, matching Sites...'s
+    // own precedence.
+    const QList<ConnectionHistoryEntry> recent = ConnectionHistoryStore::load();
+    QMenu *recentMenu = menu.addMenu(
+        IconTheme::tintedIcon(":/icons/device-laptop.svg", IconTheme::Blue), tr("Recent Connections"));
+    QHash<QAction *, ConnectionHistoryEntry> recentActions;
+    if (recent.isEmpty()) {
+        QAction *placeholder = recentMenu->addAction(tr("No recent connections"));
+        placeholder->setEnabled(false);
+    } else {
+        for (const ConnectionHistoryEntry &entry : recent) {
+            const QString protocolSuffix = entry.protocol == Protocol::Ftp
+                ? tr(" (FTP)")
+                : entry.protocol == Protocol::Ftps ? tr(" (FTPS)") : QString();
+            QAction *action = recentMenu->addAction(
+                tr("%1@%2:%3%4").arg(entry.username, entry.host).arg(entry.port).arg(protocolSuffix));
+            recentActions.insert(action, entry);
+        }
+        recentMenu->addSeparator();
+        recentMenu->addAction(tr("Clear Recent Connections"), this, [] {
+            ConnectionHistoryStore::clear();
+        });
+    }
+
     QAction *connectAction = menu.addAction(
         IconTheme::tintedIcon(":/icons/plug.svg", IconTheme::Green), tr("Connect..."));
     QAction *disconnectAction = menu.addAction(
@@ -889,6 +918,8 @@ void FilePaneWidget::onPathBarIconClicked()
         emit connectRequested(this);
     else if (chosen == disconnectAction)
         emit disconnectRequested(this);
+    else if (recentActions.contains(chosen))
+        emit recentConnectionRequested(this, recentActions.value(chosen));
 }
 
 void FilePaneWidget::promptAndCreateFile(const QString &directory)

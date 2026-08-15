@@ -90,6 +90,7 @@ jobs:
           compare-sync-test
           script-runner-test
           checksum-verification-test
+          connection-history-test
           -- -j$(nproc)
 
       # windeployqt isn't packaged for this cross toolchain at all (and
@@ -234,6 +235,7 @@ jobs:
           run_test compare-sync-test
           run_test script-runner-test
           run_test checksum-verification-test
+          run_test connection-history-test
 
       # Single-config generator (mingw64-cmake defaults to Unix
       # Makefiles) — unlike the old MSVC/Ninja multi-config setup, the
@@ -298,6 +300,7 @@ jobs:
           compare-sync-test
           script-runner-test
           checksum-verification-test
+          connection-history-test
           -- -j$(nproc)
 
       # Runs directly, no wine/xvfb — these are native Linux binaries, and
@@ -355,6 +358,7 @@ jobs:
           ./compare-sync-test
           ./script-runner-test
           ./checksum-verification-test
+          ./connection-history-test
 
       # Just the binary — this is the "plain tarball" approach, not a
       # bundled/portable build: it dynamically links against system
@@ -439,6 +443,7 @@ jobs:
           compare-sync-test
           script-runner-test
           checksum-verification-test
+          connection-history-test
           -- -j$(nproc)
 
       # Same reasoning as build-linux's own test-suite step: a genuinely
@@ -497,6 +502,7 @@ jobs:
           ./compare-sync-test
           ./script-runner-test
           ./checksum-verification-test
+          ./connection-history-test
 
       - name: Build .rpm package
         run: |
@@ -560,6 +566,7 @@ jobs:
           compare-sync-test
           script-runner-test
           checksum-verification-test
+          connection-history-test
           -- -j$(nproc)
 
       # Same reasoning as build-linux-rpm's own test-suite step: a
@@ -614,6 +621,7 @@ jobs:
           ./compare-sync-test
           ./script-runner-test
           ./checksum-verification-test
+          ./connection-history-test
 
       - name: Build AppImage
         run: |
@@ -707,6 +715,7 @@ jobs:
           compare-sync-test
           script-runner-test
           checksum-verification-test
+          connection-history-test
           -- -j$(sysctl -n hw.ncpu)
 
       # Native binaries on native hardware, same reasoning as
@@ -764,6 +773,7 @@ jobs:
           ./compare-sync-test
           ./script-runner-test
           ./checksum-verification-test
+          ./connection-history-test
 
           ./verify-credential-store
 

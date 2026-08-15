@@ -9,6 +9,7 @@
 #include <functional>
 #include "../backends/RemoteBackend.h"
 #include "../backends/ConnectionDescriptor.h"
+#include "../backends/ConnectionHistory.h"
 
 class FileTreeView;
 class QLineEdit;
@@ -266,6 +267,13 @@ signals:
     void connectRequested(FilePaneWidget *pane);
     void siteManagerRequested(FilePaneWidget *pane);
     void disconnectRequested(FilePaneWidget *pane);
+
+    // A "Recent Connections" submenu entry was chosen from the same
+    // path-bar icon menu — same "prompt/menu locally, never construct a
+    // backend" shape as the three signals above. Carries the full entry
+    // (not just an index into the store) so MainWindow doesn't need to
+    // re-load/re-derive anything from it.
+    void recentConnectionRequested(FilePaneWidget *pane, const ConnectionHistoryEntry &entry);
 
     // "Edit" chosen from the right-click context menu for a single,
     // non-directory entry on a REMOTE pane (see showContextMenu()'s own

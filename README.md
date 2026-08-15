@@ -66,6 +66,16 @@ tracks what's changed between them.
   way Site Manager's own Connect button asks for it. No Connect dialog
   to open first. Hide it if you don't want it via View → Quick Connect
   Field.
+- **Recent Connections** — every pane's own Sites/Connect/Disconnect
+  menu (click the icon at the left of the path bar) now has a Recent
+  Connections submenu listing the last 10 servers you connected to
+  ad-hoc (Quick Connect or the plain Connect... dialog) without saving
+  them as a site. Pick one to reconnect instantly — you're prompted for
+  the password (or key passphrase) again, the same as any first
+  connection; nothing is ever stored. Connecting to something already
+  in the list just moves it back to the top instead of duplicating it.
+  Sites you've explicitly saved in Site Manager aren't duplicated
+  here — that list is already one click away there.
 - **Proxy support (SOCKS5 or HTTP CONNECT)** — set one in Preferences
   and every SFTP/FTP/FTPS connection goes through it, no per-site setup
   needed. For anyone behind a corporate network that requires an

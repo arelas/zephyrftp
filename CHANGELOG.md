@@ -8,6 +8,18 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Added
+
+- **Recent Connections.** Each pane's Sites/Connect/Disconnect menu
+  (the icon at the left of the path bar) now has a Recent Connections
+  submenu listing the last 10 servers you connected to ad-hoc (Quick
+  Connect or the plain Connect... dialog) without saving them as a
+  site — pick one to reconnect instantly, prompted for the password or
+  key passphrase again just like any first connection. Nothing is ever
+  stored on disk for these — stricter than Site Manager's own opt-in
+  password saving. Sites already saved in Site Manager aren't
+  duplicated into this list.
+
 ## [0.7.28] — Fix a clipped progress dialog label
 
 ### Fixed

@@ -66,6 +66,7 @@ set(SOURCES
     src/ui/MainWindow.cpp
     src/backends/QuickConnectParser.cpp
     src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/ConnectionDialog.cpp
@@ -343,6 +344,7 @@ qt_add_executable(smoke-test EXCLUDE_FROM_ALL
     src/ui/MainWindow.cpp
     src/backends/QuickConnectParser.cpp
     src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/ConnectionDialog.cpp
@@ -396,6 +398,7 @@ qt_add_executable(checksum-verification-test EXCLUDE_FROM_ALL
     src/ui/MainWindow.cpp
     src/backends/QuickConnectParser.cpp
     src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/ConnectionDialog.cpp
@@ -443,6 +446,7 @@ qt_add_executable(sync-browsing-test EXCLUDE_FROM_ALL
     src/ui/MainWindow.cpp
     src/backends/QuickConnectParser.cpp
     src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/ConnectionDialog.cpp
@@ -488,6 +492,7 @@ qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
     src/ui/MainWindow.cpp
     src/backends/QuickConnectParser.cpp
     src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/ConnectionDialog.cpp
@@ -534,6 +539,16 @@ qt_add_executable(site-store-test EXCLUDE_FROM_ALL
 target_include_directories(site-store-test PRIVATE src)
 target_link_libraries(site-store-test PRIVATE Qt6::Core)
 
+# --- Connection history store test (pure QCoreApplication, no GUI
+# needed) — same shape as site-store-test above, see
+# src/connection_history_test.cpp's own header comment.
+qt_add_executable(connection-history-test EXCLUDE_FROM_ALL
+    src/connection_history_test.cpp
+    src/backends/ConnectionHistory.cpp
+)
+target_include_directories(connection-history-test PRIVATE src)
+target_link_libraries(connection-history-test PRIVATE Qt6::Core)
+
 # --- AppSettings persistence test (pure QCoreApplication, no GUI needed) ---
 qt_add_executable(app-settings-test EXCLUDE_FROM_ALL
     src/app_settings_test.cpp
@@ -579,6 +594,7 @@ qt_add_executable(navigation-test EXCLUDE_FROM_ALL
     src/AppSettings.cpp
     src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
@@ -596,6 +612,7 @@ qt_add_executable(transfer-pause-test EXCLUDE_FROM_ALL
     src/AppSettings.cpp
     src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
@@ -636,6 +653,7 @@ qt_add_executable(folder-transfer-test EXCLUDE_FROM_ALL
     src/AppSettings.cpp
     src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
@@ -656,6 +674,7 @@ qt_add_executable(compare-sync-test EXCLUDE_FROM_ALL
     src/AppSettings.cpp
     src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
@@ -683,6 +702,7 @@ qt_add_executable(script-runner-test EXCLUDE_FROM_ALL
     src/AppSettings.cpp
     src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
@@ -715,6 +735,7 @@ qt_add_executable(conflict-resolution-test EXCLUDE_FROM_ALL
     src/AppSettings.cpp
     src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
@@ -780,6 +801,7 @@ qt_add_executable(sort-and-commands-test EXCLUDE_FROM_ALL
     src/AppSettings.cpp
     src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/CommandsPaneWidget.cpp
@@ -809,6 +831,7 @@ qt_add_executable(remote-to-remote-test EXCLUDE_FROM_ALL
     src/AppSettings.cpp
     src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
@@ -839,6 +862,7 @@ qt_add_executable(move-entry-test EXCLUDE_FROM_ALL
     src/AppSettings.cpp
     src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
@@ -867,6 +891,7 @@ qt_add_executable(edit-session-test EXCLUDE_FROM_ALL
     src/AppSettings.cpp
     src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
@@ -897,6 +922,7 @@ qt_add_executable(queue-persistence-test EXCLUDE_FROM_ALL
     src/AppSettings.cpp
     src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
@@ -924,6 +950,7 @@ qt_add_executable(transfer-concurrency-test EXCLUDE_FROM_ALL
     src/AppSettings.cpp
     src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
@@ -999,6 +1026,7 @@ qt_add_executable(verify-sftp-move EXCLUDE_FROM_ALL
     src/AppSettings.cpp
     src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
@@ -1031,6 +1059,7 @@ qt_add_executable(verify-remote-to-remote-live EXCLUDE_FROM_ALL
     src/AppSettings.cpp
     src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
@@ -1065,6 +1094,7 @@ qt_add_executable(verify-concurrent-transfers-live EXCLUDE_FROM_ALL
     src/AppSettings.cpp
     src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
@@ -1099,6 +1129,7 @@ qt_add_executable(verify-ftp-move EXCLUDE_FROM_ALL
     src/AppSettings.cpp
     src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp
@@ -1266,6 +1297,7 @@ qt_add_executable(verify-script-runner-live EXCLUDE_FROM_ALL
     src/AppSettings.cpp
     src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
     src/ui/IconTheme.cpp

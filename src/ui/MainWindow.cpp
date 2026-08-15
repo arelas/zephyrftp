@@ -17,6 +17,7 @@
 #include "../backends/FtpBackend.h"
 #include "../backends/ConnectionRequest.h"
 #include "../backends/ConnectionDescriptor.h"
+#include "../backends/ConnectionHistory.h"
 #include "../backends/SftpCredentials.h"
 #include "../backends/Protocol.h"
 #include "../transfer/TransferManager.h"
@@ -49,6 +50,7 @@
 #include <QKeyEvent>
 #include <QFile>
 #include <QTextStream>
+#include <QDateTime>
 #include <QApplication>
 
 MainWindow::MainWindow(QWidget *parent)
@@ -464,6 +466,10 @@ void MainWindow::buildLayout()
     connect(m_rightPane, &FilePaneWidget::siteManagerRequested, this, &MainWindow::onPaneSiteManagerRequested);
     connect(m_leftPane, &FilePaneWidget::disconnectRequested, this, &MainWindow::onPaneDisconnectRequested);
     connect(m_rightPane, &FilePaneWidget::disconnectRequested, this, &MainWindow::onPaneDisconnectRequested);
+    connect(m_leftPane, &FilePaneWidget::recentConnectionRequested,
+            this, &MainWindow::onPaneRecentConnectionRequested);
+    connect(m_rightPane, &FilePaneWidget::recentConnectionRequested,
+            this, &MainWindow::onPaneRecentConnectionRequested);
 
     connect(m_leftPane, &FilePaneWidget::editRequested, this, &MainWindow::onPaneEditRequested);
     connect(m_rightPane, &FilePaneWidget::editRequested, this, &MainWindow::onPaneEditRequested);
@@ -783,6 +789,47 @@ void MainWindow::onPaneDisconnectRequested(FilePaneWidget *pane)
     disconnectPane(pane);
 }
 
+void MainWindow::onPaneRecentConnectionRequested(FilePaneWidget *pane, const ConnectionHistoryEntry &entry)
+{
+    ConnectionRequest request = entry.toConnectionRequest();
+
+    // Same prompt SiteManagerDialog::onConnectClicked() shows for its own
+    // Connect button — adapted inline rather than reused directly, since
+    // that class owns dialog-specific widget state this flow has no use
+    // for. Deliberately no CredentialStore save-back step afterward: a
+    // history entry has no saved-site id to key a stored secret on, and
+    // pre-filling from a stored secret isn't offered here either, for the
+    // same reason. Cancelling the prompt aborts without connecting, same
+    // as every other entry point that shows one.
+    if (request.protocol == Protocol::Sftp && request.sftp.authMethod == SftpAuthMethod::PublicKey) {
+        bool ok = false;
+        const QString passphrase = QInputDialog::getText(
+            this, tr("Key Passphrase"),
+            tr("Passphrase for the private key (leave blank if none):"),
+            QLineEdit::Password, QString(), &ok);
+        if (!ok)
+            return;
+        request.sftp.passphrase = passphrase;
+    } else {
+        bool ok = false;
+        const QString password = QInputDialog::getText(
+            this, tr("Password"),
+            tr("Password for %1@%2:").arg(
+                request.protocol == Protocol::Sftp ? request.sftp.username : request.ftp.username,
+                request.host()),
+            QLineEdit::Password, QString(), &ok);
+        if (!ok)
+            return;
+
+        if (request.protocol == Protocol::Sftp)
+            request.sftp.password = password;
+        else
+            request.ftp.password = password;
+    }
+
+    startConnection(request, pane);
+}
+
 void MainWindow::onPaneEditRequested(FilePaneWidget *pane, const RemoteEntry &entry)
 {
     m_editSessionManager->startEditing(pane, entry);
@@ -1011,13 +1058,40 @@ void MainWindow::startConnection(const ConnectionRequest &request, FilePaneWidge
     // the same reasoning FilePaneWidget::setBackend() already relies on
     // for its own connections to this backend.
     const QString host = request.host();
-    connect(backend, &RemoteBackend::connected, this, [this, host, targetPane]() {
+    connect(backend, &RemoteBackend::connected, this, [this, host, targetPane, request]() {
         statusBar()->showMessage(tr("Connected to %1").arg(host), 5000);
         // Any restored queue item still PendingReconnect and waiting for
         // exactly this connection picks back up automatically from here
         // — see TransferManager::tryReclaimPendingItems()'s own doc
         // comment. A harmless no-op when there's nothing waiting.
         m_transferManager->tryReclaimPendingItems(targetPane);
+
+        // Recorded here — on genuine success, not merely on attempt —
+        // rather than alongside the ConnectionDescriptor built below,
+        // which runs synchronously right after setBackend() regardless
+        // of whether the connection actually succeeds. Only ad-hoc
+        // connections (no sourceSiteId) are recorded: one already saved
+        // in Site Manager is one click away there, so duplicating it
+        // into a second list would be noise, not new value. See
+        // ConnectionHistoryEntry's own doc comment for why no secret is
+        // ever captured here.
+        if (request.sourceSiteId.isEmpty()) {
+            ConnectionHistoryEntry entry;
+            entry.protocol = request.protocol;
+            entry.host = request.host();
+            entry.port = request.port();
+            entry.username = request.username();
+            if (request.protocol == Protocol::Sftp) {
+                entry.authMethod = request.sftp.authMethod;
+                entry.privateKeyPath = request.sftp.privateKeyPath;
+            } else {
+                entry.ftpsMode = request.ftp.ftpsMode;
+            }
+            entry.useHomeDirectory = request.useHomeDirectory();
+            entry.startingDirectory = request.startingDirectory();
+            entry.lastConnectedAtMs = QDateTime::currentMSecsSinceEpoch();
+            ConnectionHistoryStore::recordConnection(entry);
+        }
     });
     connect(backend, &RemoteBackend::connectionFailed, this, [this, host](const QString &reason) {
         statusBar()->showMessage(tr("Failed to connect to %1: %2").arg(host, reason), 8000);

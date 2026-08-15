@@ -440,13 +440,13 @@ representative of any real desktop:
 
 ## Running the test suites
 
-Twenty-three `EXCLUDE_FROM_ALL` CMake targets make up the required suite
+Twenty-four `EXCLUDE_FROM_ALL` CMake targets make up the required suite
 as of this writing — not part of a normal `make`, built and run
 explicitly, and all of them (not just a "core" subset) need to actually
 pass before a change is done. The count keeps growing as the project
 does; rather than renumbering everything and rewriting this whole
 section each time, new targets get their own short subsection further
-below instead. Don't trust "twenty-three" to still be accurate by the
+below instead. Don't trust "twenty-four" to still be accurate by the
 time you're reading this — this paragraph is the one place that number lives,
 so if it's wrong, the fix is here, not a hunt through the rest of this
 file. The original ten, each with its own run command:
@@ -1133,6 +1133,50 @@ this feature shipped.
 ```
 cmake --build build --target checksum-verification-test
 QT_QPA_PLATFORM=offscreen ./build/checksum-verification-test
+```
+
+### `connection-history-test`
+
+Self-contained, `EXCLUDE_FROM_ALL`, added to all five `build.yml` jobs —
+`ConnectionHistoryStore`'s own coverage (see `src/backends/
+ConnectionHistory.h`'s own class doc comment for the full design: a
+"Recent Connections" submenu for ad-hoc — never Site-Manager-saved —
+connections, no secret ever stored, with no opt-in exception, stricter
+than `SavedSite`'s own opt-in `CredentialStore` password saving).
+Pure `QCoreApplication`, `QStandardPaths::setTestModeEnabled(true)` —
+same shape as `site-store-test` above, since this is the identical
+class of small JSON-backed store. 16 assertions: a round-trip for an
+SFTP key-auth entry and an FTPS entry, preserving every field exactly;
+`toConnectionRequest()`'s secrets-always-empty guarantee; the same
+raw-JSON KEY-inspection technique `site-store-test` established (actual
+`QJsonObject` keys, not a substring search — that would false-positive
+on the harmless `"authMethod": "password"` label) confirming no
+`password`/`passphrase` key ever appears in `connection_history.json`;
+`recordConnection()`'s dedup-on-(protocol,host,port,username)-and-move-
+to-front behavior, including confirming a DIFFERENT username on the
+same host is correctly treated as a distinct entry, not deduplicated;
+cap-at-10 truncation (11 distinct hosts in, confirm the oldest — not
+the newest — is the one dropped); `clear()`; the empty-store case; and
+`loadFromFile()`/`saveToFile()`'s path-parameterized behavior, same
+reasoning as `site-store-test`'s own pair. All 16 passed on the first
+run. Two disposable, non-committed probes additionally confirmed what
+this headless test can't see: a screenshot probe of the real "Recent
+Connections" submenu (`FilePaneWidget::onPathBarIconClicked()`) under
+the real stylesheet — both the empty-state placeholder and a populated
+list with an SFTP and an FTPS entry rendered correctly on the first
+try, no bug found (unlike `checksum-verification-test`'s own progress-
+dialog fix above); and a live-SFTP probe connecting a real
+`SftpBackend`, recording a real entry via the exact same
+`ConnectionHistoryStore::recordConnection()` call the production hook
+in `MainWindow::startConnection()` makes, reconstructing a
+`ConnectionRequest` from that stored entry via `toConnectionRequest()`,
+and reconnecting with a fresh `SftpBackend` — proving the full
+record -> reconstruct -> reconnect round trip against real libssh2
+I/O, not just in-memory structs.
+
+```
+cmake --build build --target connection-history-test
+QT_QPA_PLATFORM=offscreen ./build/connection-history-test
 ```
 
 ## Live-server verification (SFTP public-key auth, FTP/FTPS, cancel/pause/resume)

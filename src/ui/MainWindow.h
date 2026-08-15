@@ -22,6 +22,7 @@ class EditSessionManager;
 class CompareDialog;
 class TransferQueueWidget;
 struct ConnectionRequest;
+struct ConnectionHistoryEntry;
 
 // Top-level window: two FilePaneWidgets side by side (commander style),
 // a docked transfer queue along the bottom, and a toolbar for
@@ -86,6 +87,14 @@ private slots:
     void onPaneConnectRequested(FilePaneWidget *pane);
     void onPaneSiteManagerRequested(FilePaneWidget *pane);
     void onPaneDisconnectRequested(FilePaneWidget *pane);
+
+    // "Recent Connections" submenu selection (see FilePaneWidget::
+    // onPathBarIconClicked()) — entry already carries every non-secret
+    // field needed to reconnect; this prompts for exactly the one secret
+    // still missing (password, or a key's passphrase) before calling
+    // startConnection(), the same single dispatch path every other
+    // connection entry point already uses.
+    void onPaneRecentConnectionRequested(FilePaneWidget *pane, const ConnectionHistoryEntry &entry);
 
     // "Edit" chosen from a pane's own right-click context menu (see
     // FilePaneWidget::editRequested()'s doc comment) — routes straight

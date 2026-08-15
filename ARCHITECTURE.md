@@ -2562,6 +2562,50 @@ to drive FileZilla itself for a same-desktop comparison.
   two `QMessageBox` result dialogs (match and mismatch) and the
   context-menu item itself were screenshotted the same way and rendered
   correctly the first time — no fix needed there.
+  **Connection history** — each pane's own path-bar Connect/Sites/
+  Disconnect menu (`FilePaneWidget::onPathBarIconClicked()`) gained a
+  "Recent Connections" submenu, listing up to the 10 most recent AD-HOC
+  connections (Quick Connect or the plain Connect... dialog) so one can
+  be picked to reconnect without retyping host/port/username/auth
+  method. Deliberately excludes anything already saved in Site
+  Manager (`ConnectionRequest::sourceSiteId` non-empty) — that's
+  already one click away there, so duplicating it into a second list
+  would be noise, not new value. New `src/backends/ConnectionHistory.h`/
+  `.cpp` (`ConnectionHistoryEntry` + `ConnectionHistoryStore`) mirrors
+  `SavedSite.h`/`SiteStore`'s own combined struct-plus-store-class
+  convention, in its own `connection_history.json` file rather than a
+  second array folded into `sites.json` — matching
+  `TransferQueueStore`'s own established "one persistence convention,
+  one file per concern" precedent. **No secret is ever stored, with no
+  opt-in exception** — stricter than `SavedSite`'s own opt-in
+  `CredentialStore` password saving, since a history entry has no
+  stable, user-chosen identity worth keying a stored secret on;
+  reconnecting always re-prompts for exactly one secret, adapting
+  `SiteManagerDialog::onConnectClicked()`'s own existing passphrase-vs-
+  password branch inline (no `CredentialStore` save-back step). Recorded
+  from inside `MainWindow::startConnection()`'s existing `connected`
+  signal lambda — deliberately NOT the nearby `ConnectionDescriptor`-
+  building code a few lines below it, which runs synchronously right
+  after `setBackend()` regardless of whether the connection actually
+  succeeds (confirmed by reading the code before assuming); recording
+  there would have captured typo'd hosts that never actually connected.
+  `recordConnection()` dedupes on (protocol, host, port, username),
+  moving an existing match to the front instead of duplicating it, and
+  caps the list at 10. Verified three ways, same pattern as the
+  checksums feature above: a new required-suite `connection-history-
+  test` (16 assertions — round-trip for an SFTP-key and an FTPS entry,
+  `toConnectionRequest()`'s secrets-always-empty guarantee, the same
+  raw-JSON-key-inspection technique `site-store-test` established
+  confirming no `password`/`passphrase` key ever appears, dedup/move-
+  to-front, cap-at-10, `clear()`, and path-parameterized `loadFromFile()`/
+  `saveToFile()`); a disposable screenshot probe of the real submenu
+  (empty state, and a populated one with an SFTP and an FTPS entry) —
+  rendered correctly on the first try, no bug found this time, unlike
+  the checksums progress dialog above; and a disposable live-SFTP probe
+  connecting a real `SftpBackend`, recording a real entry, reconstructing
+  a `ConnectionRequest` from it, and reconnecting with a fresh backend —
+  proving the record -> reconstruct -> reconnect round trip against
+  real libssh2 I/O, not just in-memory structs.
   **`RemoteToRemote` (server-to-server) is staged through a local temp
   file** — neither backend has a direct way to move a file straight to
   another server, so `dispatchActiveItem()` runs it in two phases:
