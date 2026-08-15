@@ -928,6 +928,18 @@ void MainWindow::startConnection(const ConnectionRequest &request, FilePaneWidge
     // that way. This function is the only place in the UI layer that knows
     // concrete backend types exist.
     RemoteBackend *backend = nullptr;
+    // Built alongside `backend` in each branch below, capturing the SAME
+    // resolved credentials (proxy/bandwidth already mixed in) — used
+    // after setBackend() to let the target pane build up to
+    // request.simultaneousConnections() total connections to this same
+    // server, on demand, for TransferManager to dispatch through in
+    // parallel. See FilePaneWidget::configureTransferPool()'s own doc
+    // comment. Left default-constructed (empty) for a request with
+    // simultaneousConnections() <= 1 — configureTransferPool() still
+    // gets called (clamping maxSize to 1), but an empty factory is never
+    // invoked since pickIdleTransferBackend() only reaches for it once
+    // every existing connection is already busy.
+    FilePaneWidget::TransferBackendFactory poolFactory;
     switch (request.protocol) {
     case Protocol::Sftp: {
         // request is a const&, so the global proxy config (see
@@ -941,6 +953,12 @@ void MainWindow::startConnection(const ConnectionRequest &request, FilePaneWidge
         creds.proxy = m_settings->resolvedProxyConfig();
         creds.bandwidthLimitKBps = m_settings->bandwidthLimitKBps();
         backend = new SftpBackend(creds, m_hostKeyVerifier);
+        poolFactory = [this, creds]() -> QPair<RemoteBackend *, QThread *> {
+            auto *extraBackend = new SftpBackend(creds, m_hostKeyVerifier);
+            auto *extraThread = new QThread(this);
+            extraBackend->moveToThread(extraThread);
+            return {extraBackend, extraThread};
+        };
         break;
     }
     case Protocol::Ftp:
@@ -959,6 +977,12 @@ void MainWindow::startConnection(const ConnectionRequest &request, FilePaneWidge
         creds.proxy = m_settings->resolvedProxyConfig();
         creds.bandwidthLimitKBps = m_settings->bandwidthLimitKBps();
         backend = new FtpBackend(creds, m_certificateVerifier);
+        poolFactory = [this, creds]() -> QPair<RemoteBackend *, QThread *> {
+            auto *extraBackend = new FtpBackend(creds, m_certificateVerifier);
+            auto *extraThread = new QThread(this);
+            extraBackend->moveToThread(extraThread);
+            return {extraBackend, extraThread};
+        };
         break;
     }
     }
@@ -1016,6 +1040,7 @@ void MainWindow::startConnection(const ConnectionRequest &request, FilePaneWidge
     // disableSynchronizedBrowsingIfActive()'s own doc comment.
     disableSynchronizedBrowsingIfActive();
     targetPane->setBackend(backend, thread);
+    targetPane->configureTransferPool(request.simultaneousConnections(), poolFactory);
 
     // After setBackend(), not before — setBackend() itself resets the
     // pane's connectionDescriptor() to empty on every swap (see its own

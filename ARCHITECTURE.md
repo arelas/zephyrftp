@@ -2355,6 +2355,95 @@ to drive FileZilla itself for a same-desktop comparison.
   too, catching any cross-thread corruption a timing-only check would
   miss. See `src/verify_concurrent_transfers_live.cpp`'s own header
   comment and CONTRIBUTING.md's matching entry for exact run commands.
+  **Simultaneous connections per site (v0.7.24)** — found while
+  investigating why a bulk transfer of many small files felt slow: every
+  file to/from a given site reused that pane's *single* backend
+  connection, so a batch always serialized one file at a time through
+  it, no matter how many were queued — the exact gap FileZilla/WinSCP's
+  own "N simultaneous connections" setting exists to close, confirmed
+  via `transfer_concurrency_test.cpp`'s own header comment ("two items
+  that share the SAME backend instance still serialize strictly").
+  `SavedSite::simultaneousConnections` (default 1, so every existing
+  site's behavior is unchanged unless explicitly raised, 1-10 via a
+  `SiteManagerDialog` spinbox) now lets a site open extra connections on
+  demand. `FilePaneWidget` owns the pool (`configureTransferPool()`/
+  `pickIdleTransferBackend()`) — built lazily, one at a time, only once
+  `TransferManager` actually needs one, via the exact same
+  construction recipe `MainWindow::startConnection()` already uses for
+  the primary (same credentials, no new password/host-key prompts for
+  pool members: the primary's own TOFU accept already covers the shared
+  `known_hosts`/`known_certs.json` file every pool member reads).
+  `TransferManager`'s own claim/lock model (`isBackendClaimed()`,
+  `ActiveTransfer::claimedBackends`) needed **zero changes** — it
+  already treats N independent backend instances correctly, which is
+  what made cross-pane concurrency (above) work in the first place. The
+  one real gap: `requiredBackendsForDispatch()` always resolved to
+  exactly `pane->backend()`, so a new `TransferItem::capturedTransferBackend`
+  (set at most once, at the moment a pool member is actually claimed,
+  mirroring `capturedDestBackend`'s own existing pattern below) makes
+  that resolution stable across the method's several call sites instead
+  of risking a second, different pick.
+  **Three real bugs found only by actually running a pooled scenario
+  end-to-end, not by inspection** — `transfer-concurrency-test`'s new
+  Scenario 5 (a real `FilePaneWidget` pool, not just two independently-
+  constructed fake panes) catches all three again now:
+  1. `startNextIfLikelyToDispatch()`'s enqueue-time "is a real scan even
+     worth it" heuristic predates pooling; its documented safety
+     invariant ("skipping is safe because whatever would make an item
+     dispatchable already re-triggers a scan on its own") silently broke
+     for a pooled pane, since growing the pool is a new event type only
+     reachable from *inside* an actual `startNext()` scan — items sat
+     Queued, never scanned, until something unrelated happened to
+     trigger one. Fixed with a new `FilePaneWidget::hasTransferPool()`
+     escape hatch (deliberately imprecise — "is pooling enabled," not
+     "is the pool actually not full right now," since the precise
+     answer needs `pickIdleTransferBackend()`'s own side effects).
+  2. An item re-scanned while still nominally `Queued` (its own async
+     `checkExists()` response not back yet, so `item.status` hadn't
+     flipped to `InProgress` even though it already held a real claim)
+     read as a fresh, unclaimed candidate for a pool pick — spuriously
+     handing it a *second*, different backend and creating a second
+     `ActiveTransfer` entry for the same item, while its real, already-
+     in-flight `checkExists()` call stayed orphaned on the first one.
+     One of three items dispatched to a freshly-grown pool got stuck at
+     `InProgress`/0 bytes forever before this was found and fixed with
+     an `activeIndexForItem(i) < 0` guard.
+  3. A null-pointer crash tearing down a pool member built with no
+     `QThread` (legitimate — a pool member never needs one for e.g. a
+     `LocalBackend`-style backend) during Disconnect, since the
+     teardown loop assumed every entry had one, unlike the primary's own
+     already-guarded `if (m_backendThread)` teardown right next to it.
+  Also confirmed against a real SFTP server (`tools/local-test-servers/
+  start-sftp-pubkey.sh`, a disposable, non-committed probe — this
+  project's established technique for a change like this that doesn't
+  warrant a new permanent live-server target on its own, since
+  `transfer-concurrency-test`'s Scenario 5 already covers the
+  correctness side): real `SftpBackend` instances coexist with no
+  hidden global lock (`ensureSession()`'s own session/socket state is
+  entirely per-instance), no repeated host-key prompts once the shared
+  `known_hosts` file has the entry, and clean teardown on Disconnect.
+  The realistic warm-pool throughput comparison (a cold pool's first
+  batch pays for establishing new SSH sessions — real handshake/auth
+  crypto — as part of its own measured window, so that comparison alone
+  is misleading) showed a genuine ~2x speedup for pool size 4 vs. 1 on
+  loopback, small because loopback latency is near-zero — the same
+  mechanism `transfer-concurrency-test`'s fake backends already showed
+  scaling dramatically once realistic per-item latency is involved.
+  A companion fix shipped alongside this: `FtpBackend.cpp`'s
+  `known_certs.json` read-modify-write got the same `QLockFile`
+  protection `SftpBackend.cpp`'s `known_hosts` already has (a real,
+  previously-confirmed live bug for concurrent instances — see
+  `verifyHostKey()`'s own doc comment) — needed because pooling makes
+  "several concurrent first-time connects to the same host" the common
+  case instead of a rare, incidental one.
+  Deliberately out of scope for this pass: `RemoteToRemote` (still
+  exactly one source + one dest connection, its own two-phase
+  `capturedDestBackend` logic below untouched) and `Move` (never reaches
+  `startNext()`, a metadata-only operation with no data-transfer
+  component pooling could speed up); pooling is per-*pane*, not a
+  global per-site connection registry shared across both panes; and no
+  new resilience for a pool member's connection dropping mid-transfer
+  beyond what a primary-connection loss already gets.
   **`RemoteToRemote` (server-to-server) is staged through a local temp
   file** — neither backend has a direct way to move a file straight to
   another server, so `dispatchActiveItem()` runs it in two phases:

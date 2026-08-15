@@ -178,6 +178,17 @@ void SiteManagerDialog::buildUi()
     m_portSpin->setFixedHeight(m_hostEdit->sizeHint().height());
     connect(m_portSpin, &QSpinBox::editingFinished, this, &SiteManagerDialog::onFieldEdited);
 
+    // 1-10: a small, bounded range where up/down nudging is genuinely
+    // useful (unlike Port's much wider range above), so the default
+    // spin buttons stay on here. 1 (the default) is today's exact
+    // behavior — every file serializes through one connection; see
+    // SavedSite::simultaneousConnections' own doc comment for what a
+    // higher value actually does.
+    m_simultaneousConnectionsSpin = new QSpinBox(this);
+    m_simultaneousConnectionsSpin->setRange(1, 10);
+    m_simultaneousConnectionsSpin->setValue(1);
+    connect(m_simultaneousConnectionsSpin, &QSpinBox::editingFinished, this, &SiteManagerDialog::onFieldEdited);
+
     m_usernameEdit = new QLineEdit(this);
     connect(m_usernameEdit, &QLineEdit::editingFinished, this, &SiteManagerDialog::onFieldEdited);
 
@@ -289,6 +300,7 @@ void SiteManagerDialog::buildUi()
     m_authRowLabel = new QLabel(tr("Authentication:"), this);
     form->addRow(m_authRowLabel, m_authRowWidget);
     form->addRow(tr("Starting directory:"), dirFieldColumn);
+    form->addRow(tr("Simultaneous connections:"), m_simultaneousConnectionsSpin);
 
     auto *rightLayout = new QVBoxLayout;
     rightLayout->addLayout(form);
@@ -460,6 +472,7 @@ void SiteManagerDialog::loadSiteIntoForm(const SavedSite &site)
     const QSignalBlocker b1(m_nameEdit);
     const QSignalBlocker b2(m_hostEdit);
     const QSignalBlocker b3(m_portSpin);
+    const QSignalBlocker b3b(m_simultaneousConnectionsSpin);
     const QSignalBlocker b4(m_usernameEdit);
     const QSignalBlocker b5(m_passwordAuthRadio);
     const QSignalBlocker b6(m_keyAuthRadio);
@@ -485,6 +498,7 @@ void SiteManagerDialog::loadSiteIntoForm(const SavedSite &site)
     // Fall back to the default for THIS site's protocol, not a hardcoded
     // 22 — a saved FTP site with a missing/zero port should land on 21.
     m_portSpin->setValue(site.port > 0 ? site.port : defaultPortFor(site.protocol));
+    m_simultaneousConnectionsSpin->setValue(site.simultaneousConnections > 0 ? site.simultaneousConnections : 1);
     m_usernameEdit->setText(site.username);
     if (site.authMethod == SftpAuthMethod::PublicKey)
         m_keyAuthRadio->setChecked(true);
@@ -543,6 +557,7 @@ void SiteManagerDialog::commitFormToSelectedSite()
     site->protocol = Protocol(m_protocolCombo->currentData().toInt());
     site->host = m_hostEdit->text().trimmed();
     site->port = m_portSpin->value();
+    site->simultaneousConnections = m_simultaneousConnectionsSpin->value();
     // Trimmed like host above — same real bug ConnectionDialog's
     // identical field had, found by the same code review: invisible
     // leading/trailing whitespace (common when pasting from a
@@ -781,6 +796,7 @@ void SiteManagerDialog::onConnectClicked()
         scratch.protocol = Protocol(m_protocolCombo->currentData().toInt());
         scratch.host = m_hostEdit->text().trimmed();
         scratch.port = m_portSpin->value();
+        scratch.simultaneousConnections = m_simultaneousConnectionsSpin->value();
         scratch.username = m_usernameEdit->text().trimmed();
         scratch.authMethod = m_keyAuthRadio->isChecked() ? SftpAuthMethod::PublicKey : SftpAuthMethod::Password;
         scratch.privateKeyPath = m_privateKeyPathEdit->text().trimmed();

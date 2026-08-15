@@ -522,11 +522,25 @@ void TransferManager::startNextIfLikelyToDispatch(const TransferItem &item)
             return;
         }
     }
-    // Every backend this item needs is already claimed — startNext()'s
-    // full scan is guaranteed to find nothing new for it right now, so
-    // skip paying for one. See this method's own doc comment
-    // (TransferManager.h) for why this is safe, not just an optimistic
-    // shortcut.
+    // Every backend this item needs is already claimed — normally
+    // startNext()'s full scan is guaranteed to find nothing new for it
+    // right now, and skipping is safe (see this method's own doc
+    // comment, TransferManager.h). That guarantee breaks for a POOLED
+    // pane specifically: growing the pool is a new event type only
+    // reachable from inside an actual startNext() scan (see
+    // FilePaneWidget::hasTransferPool()'s own doc comment) — nothing
+    // else re-triggers a scan for THIS reason the way a backend release
+    // elsewhere already does. A deliberately cheap, imprecise check
+    // (is pooling enabled at all, not "is the pool actually not full
+    // right now") — an occasional real scan that finds the pool
+    // genuinely saturated is cheap insurance, not a regression of the
+    // O(N²) bug this whole method exists to prevent.
+    if (FilePaneWidget *poolPane = poolPaneForItem(item)) {
+        if (poolPane->hasTransferPool()) {
+            startNext();
+            return;
+        }
+    }
 }
 
 void TransferManager::startNext()
@@ -558,12 +572,68 @@ void TransferManager::startNext()
         if (item.status != TransferStatus::Queued)
             continue;
 
-        const QVarLengthArray<RemoteBackend *, 2> required = requiredBackendsForDispatch(item);
+        QVarLengthArray<RemoteBackend *, 2> required = requiredBackendsForDispatch(item);
         bool anyBusy = false;
         for (RemoteBackend *backend : required) {
             if (isBackendClaimed(backend)) {
                 anyBusy = true;
                 break;
+            }
+        }
+
+        // Every connection required() resolved to is busy — for a pooled
+        // site (simultaneousConnections > 1, see SavedSite's own doc
+        // comment), try growing/reusing that pane's connection pool
+        // instead of leaving this item stuck behind a single busy
+        // connection. Only the directions that resolve to exactly one
+        // backend attempt this: RemoteToRemote's two-backend claim and
+        // Move (which never reaches startNext() at all) are deliberately
+        // out of scope — see TransferItem::capturedTransferBackend's own
+        // doc comment. !item.transferBackendCaptured (not a truthiness
+        // check on capturedTransferBackend itself) guards against both
+        // re-picking on a later scan of the same still-Queued item AND
+        // silently re-picking for an item whose ORIGINAL pool member has
+        // since been torn down — see transferBackendCaptured's own doc
+        // comment for why those need to read differently.
+        //
+        // activeIndexForItem(i) < 0 is a THIRD, separate guard, and a
+        // real bug found by actually running this: an item that already
+        // has an ActiveTransfer entry (claimed moments ago, in an
+        // EARLIER iteration of THIS SAME scan or a previous one) is
+        // still nominally Queued status-wise until its own async
+        // checkExists() responds — see startNext()'s own m_scanFloor
+        // comment above for why that's expected. Without this guard,
+        // such an item reads as "anyBusy against its own prior claim,
+        // not yet transferBackendCaptured" and looks exactly like a
+        // genuinely new candidate for a pool pick — spuriously handing
+        // it a SECOND, different backend and creating a SECOND
+        // ActiveTransfer entry for the same item, while its real,
+        // already-in-flight checkExists() call is still pending against
+        // the FIRST one. Confirmed directly: without this guard, one of
+        // three items dispatched to a freshly-grown pool got stuck at
+        // InProgress/0 bytes forever, its actual network call silently
+        // orphaned on a backend nothing was tracking anymore.
+        if (anyBusy && !item.transferBackendCaptured && activeIndexForItem(i) < 0) {
+            FilePaneWidget *poolPane = poolPaneForItem(item);
+            if (poolPane) {
+                RemoteBackend *picked = poolPane->pickIdleTransferBackend(
+                    [this](RemoteBackend *b) { return isBackendClaimed(b); });
+                if (picked) {
+                    item.transferBackendCaptured = true;
+                    item.capturedTransferBackend = picked;
+                    required = requiredBackendsForDispatch(item);   // now resolves to the captured pick
+                    anyBusy = false;
+                    for (RemoteBackend *backend : required) {
+                        // Defensive — pickIdleTransferBackend() already
+                        // only returns a backend its own isClaimed
+                        // callback (this same isBackendClaimed()) judged
+                        // free, so this should never actually trip.
+                        if (isBackendClaimed(backend)) {
+                            anyBusy = true;
+                            break;
+                        }
+                    }
+                }
             }
         }
 
@@ -612,7 +682,24 @@ void TransferManager::startNext()
         // visible (no InProgress status yet, nothing dispatched to a
         // backend) — dispatchActiveItem() only runs once this comes back
         // clean, or the conflict is resolved as Overwrite.
+        //
+        // item.destPane->backend() (the pane's PRIMARY connection) is
+        // correct here for every direction EXCEPT an upload bound to a
+        // pooled extra connection — NOT a blanket swap to required's own
+        // first entry, which for a download is the SOURCE backend, not
+        // the destination this checkExists() call is actually about (a
+        // download's destination is always the local pane, never
+        // pooled). Left unfixed for the upload case, this round-trip
+        // would keep serializing through the primary connection even
+        // once the real transfer below dispatches through a different,
+        // idle pool member — defeating much of the point of pooling.
         RemoteBackend *destBackend = item.destPane->backend();
+        if (item.capturedTransferBackend
+            && (item.direction == TransferDirection::LocalToRemote
+                || item.direction == TransferDirection::LocalToLocal
+                || item.direction == TransferDirection::EditUpload)) {
+            destBackend = item.capturedTransferBackend;
+        }
         ensureExistsCheckConnected(destBackend);
         const int requestId = m_nextConflictCheckId++;
         m_pendingFileConflictChecks.insert(requestId, i);
@@ -966,6 +1053,18 @@ void TransferManager::retryItem(int id)
         item.phase = TransferPhase::Downloading;
         item.tempFilePath.clear();
     }
+    // A retry restarts fully from scratch, same as bytesDone/phase/
+    // tempFilePath above — this item is eligible for a fresh pool pick
+    // (or the primary, if that's free now) rather than staying bound to
+    // whatever it was captured against on a previous attempt. Matters
+    // most for the one case that would otherwise wedge: the previously
+    // captured pool member was torn down (its pane disconnected) since
+    // the last attempt — without this reset, transferBackendCaptured
+    // would stay true forever with capturedTransferBackend permanently
+    // null, and requiredBackendsForDispatch() has no fallback for that
+    // combination by design (see its own doc comment on why).
+    item.transferBackendCaptured = false;
+    item.capturedTransferBackend = nullptr;
     emit itemUpdated(item);
 
     startNext();
@@ -1040,6 +1139,21 @@ void TransferManager::ensureTransferSignalsConnected(RemoteBackend *backend)
             Qt::UniqueConnection);
 }
 
+FilePaneWidget *TransferManager::poolPaneForItem(const TransferItem &item) const
+{
+    switch (item.direction) {
+    case TransferDirection::LocalToRemote:
+    case TransferDirection::LocalToLocal:
+    case TransferDirection::EditUpload:
+        return item.destPane;
+    case TransferDirection::RemoteToLocal:
+    case TransferDirection::EditDownload:
+        return item.sourcePane;
+    default:
+        return nullptr;
+    }
+}
+
 QVarLengthArray<RemoteBackend *, 2> TransferManager::requiredBackendsForDispatch(const TransferItem &item) const
 {
     QVarLengthArray<RemoteBackend *, 2> result;
@@ -1051,12 +1165,31 @@ QVarLengthArray<RemoteBackend *, 2> TransferManager::requiredBackendsForDispatch
     case TransferDirection::LocalToRemote:
     case TransferDirection::LocalToLocal:
     case TransferDirection::EditUpload:
-        if (dstBackend)
+        // transferBackendCaptured, once true, always wins over a fresh
+        // dstPane->backend() lookup — see its own doc comment
+        // (TransferItem.h) for why this checks the FLAG, not
+        // capturedTransferBackend's own truthiness: this item may be
+        // bound to a POOLED extra connection, not the pane's primary
+        // one, and re-deriving here would risk picking a different (or
+        // now-busy) member than whatever startNext() actually claimed
+        // for it. If that pool member has SINCE been torn down,
+        // capturedTransferBackend reads null here too — appending
+        // nothing (not falling back to dstBackend) is deliberate, so
+        // this resolves to no backend at all rather than silently
+        // redirecting to whatever the pane's primary happens to be now.
+        if (item.transferBackendCaptured)
+            result.append(item.capturedTransferBackend);
+        else if (dstBackend)
             result.append(dstBackend);
         break;
     case TransferDirection::RemoteToLocal:
     case TransferDirection::EditDownload:
-        if (srcBackend)
+        // Same reasoning as the upload-shaped directions above, mirrored
+        // for the source side — a pooled download's item may be bound to
+        // an extra connection on the SOURCE pane instead of its primary.
+        if (item.transferBackendCaptured)
+            result.append(item.capturedTransferBackend);
+        else if (srcBackend)
             result.append(srcBackend);
         break;
     case TransferDirection::RemoteToRemote:

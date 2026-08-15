@@ -8,6 +8,29 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.24] — Simultaneous connections per site
+
+### Added
+
+- **A site can now open multiple connections to the same server**
+  (Site Manager > Simultaneous connections, 1-10, default 1 — existing
+  sites are unaffected unless you raise it). Previously, every file in
+  a batch transfer serialized through one connection no matter how many
+  were queued; this is the same gap FileZilla's and WinSCP's own
+  "simultaneous connections" setting exists to close. Connections are
+  opened lazily, only as actually needed, using the same credentials as
+  the main connection (no extra password or host-key prompts).
+
+### Fixed
+
+- A rare local-only race in the SFTP host-key trust file could, in
+  principle, cause two connections to the same never-before-seen server
+  starting at nearly the same moment to silently drop one of their
+  saved host keys. The FTPS equivalent (the trusted-certificate file)
+  had the same latent gap and is now protected the same way — worth
+  fixing now that opening several connections to one server at once is
+  a supported, common case instead of a rare coincidence.
+
 ## [0.7.23] — Fix a real freeze when sorting the transfer queue mid-transfer
 
 ### Fixed
@@ -1950,7 +1973,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.23...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.24...HEAD
+[0.7.24]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.24
 [0.7.23]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.23
 [0.7.22]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.22
 [0.7.21]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.21

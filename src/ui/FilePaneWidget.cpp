@@ -140,6 +140,38 @@ void FilePaneWidget::setBackend(RemoteBackend *backend, QThread *thread)
         }
     }
 
+    // Pool members (if any) never outlive the primary connection they
+    // were opened alongside — same teardown pattern as the primary
+    // above, once per member. Any in-flight transfer still bound to one
+    // of these (TransferItem::capturedTransferBackend) simply fails the
+    // same way a primary-backend disconnect mid-transfer already does —
+    // no special-cased resilience for pool members, matching this
+    // feature's own documented non-goals. m_poolBackendFactory is reset
+    // too: it closed over the OLD connection's credentials, which are
+    // no longer valid for whatever setBackend() is (re)establishing now
+    // — MainWindow::startConnection() calls configureTransferPool()
+    // again, with a fresh factory, right after this returns, if the new
+    // connection should keep pooling.
+    for (RemoteBackend *poolBackend : std::as_const(m_poolBackends))
+        poolBackend->deleteLater();
+    for (QThread *poolThread : std::as_const(m_poolThreads)) {
+        // A pool member built with thread=nullptr (its factory's own
+        // choice — e.g. a LocalBackend pool member would never need
+        // one, and this test file's own fakes don't either) is legitimate,
+        // matching the primary's own if (m_backendThread) guard right
+        // above — not every pool member necessarily has a thread to
+        // tear down.
+        if (!poolThread)
+            continue;
+        poolThread->quit();
+        poolThread->wait();
+        delete poolThread;
+    }
+    m_poolBackends.clear();
+    m_poolThreads.clear();
+    m_maxPoolSize = 1;
+    m_poolBackendFactory = TransferBackendFactory();
+
     m_backend = backend;
     m_backendThread = thread;
     // Reset unconditionally on every swap, not just Disconnect — a
@@ -210,6 +242,75 @@ void FilePaneWidget::setBackend(RemoteBackend *backend, QThread *thread)
     // Queued even when the backend has no thread of its own: connectToHost()
     // still shouldn't run synchronously inside setBackend() itself.
     QMetaObject::invokeMethod(m_backend, "connectToHost", Qt::QueuedConnection);
+}
+
+void FilePaneWidget::configureTransferPool(int maxSize, TransferBackendFactory factory)
+{
+    // setBackend() already reset m_maxPoolSize/m_poolBackendFactory to
+    // "no pooling" — this just installs the real values for the
+    // connection setBackend() (called immediately before this, by
+    // MainWindow::startConnection()) just established. maxSize < 1
+    // would leave the primary itself unusable as a fallback; clamped up
+    // to 1 rather than trusted, since 0 or negative isn't a meaningful
+    // "pool size" a caller could have intended.
+    m_maxPoolSize = qMax(1, maxSize);
+    m_poolBackendFactory = std::move(factory);
+}
+
+RemoteBackend *FilePaneWidget::pickIdleTransferBackend(const std::function<bool(RemoteBackend *)> &isClaimed)
+{
+    if (m_backend && !isClaimed(m_backend))
+        return m_backend;
+
+    for (RemoteBackend *poolBackend : std::as_const(m_poolBackends)) {
+        if (!isClaimed(poolBackend))
+            return poolBackend;
+    }
+
+    // Every existing connection (primary + pool) is busy — grow the
+    // pool by one more, but only up to the configured cap, and only if
+    // a factory was actually configured (configureTransferPool() was
+    // never called, or maxPoolSize is 1 — either way, "no pooling").
+    // 1 (primary) + m_poolBackends.size() is the current total; a new
+    // member is only worth building if that total is still under the
+    // cap.
+    if (!m_poolBackendFactory || 1 + m_poolBackends.size() >= m_maxPoolSize)
+        return nullptr;
+
+    const QPair<RemoteBackend *, QThread *> built = m_poolBackendFactory();
+    RemoteBackend *newBackend = built.first;
+    QThread *newThread = built.second;
+    if (!newBackend)
+        return nullptr;   // factory failed — treated the same as "pool exhausted," not an error
+
+    // Same forwarding wiring setBackend() gives the primary — a real,
+    // live-traffic pool connection's commands should show up in the
+    // Commands pane the same as the primary's, not silently vanish just
+    // because they're not the pane's "main" connection. Deliberately NOT
+    // wired to directoryListed/connectionFailed/connected/
+    // fileOperationFailed — pool members never browse, only transfer;
+    // TransferManager talks to them directly via checkExists()/
+    // downloadFile()/uploadFile() and their own transferProgress/
+    // transferFinished/transferFailed signals, none of which route
+    // through FilePaneWidget at all (see TransferManager::
+    // ensureExistsCheckConnected()/dispatchActiveItem()).
+    connect(newBackend, &RemoteBackend::commandLogged, this, &FilePaneWidget::commandLogged);
+
+    if (newThread)
+        newThread->start();
+    // No explicit connectToHost() call — every real SftpBackend/
+    // FtpBackend operation (checkExists(), downloadFile(), uploadFile())
+    // starts with ensureSession()/ensureConnected(), an idempotent
+    // lazy-connect (confirmed directly: `if (m_session && m_sftp) return
+    // true;` at the top of SftpBackend::ensureSession()). The FIRST
+    // operation TransferManager actually dispatches to this new backend
+    // connects it, on its own worker thread — not the GUI thread, and
+    // not a wasted eager connect for a pool member that ends up never
+    // being needed.
+
+    m_poolBackends.append(newBackend);
+    m_poolThreads.append(newThread);
+    return newBackend;
 }
 
 void FilePaneWidget::buildUi()

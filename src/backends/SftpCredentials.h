@@ -42,4 +42,15 @@ struct SftpCredentials {
     // used. Fixed for the connection's whole lifetime, same as proxy —
     // changing it needs a reconnect, not a live-apply mechanism.
     int bandwidthLimitKBps = 0;
+
+    // 1 (default) means "just the one connection" — every existing
+    // construction site is unaffected. When greater than 1,
+    // MainWindow::startConnection() also hands the pane a factory for
+    // building up to this many additional, independent connections to
+    // the same server, which TransferManager draws on to run that many
+    // transfers to/from this site genuinely in parallel instead of
+    // serializing every file through one connection — see
+    // FilePaneWidget::pickIdleTransferBackend()'s own doc comment for
+    // the full mechanism. Populated from SavedSite::simultaneousConnections.
+    int simultaneousConnections = 1;
 };

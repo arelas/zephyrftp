@@ -16,6 +16,7 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QLockFile>
 #include <functional>
 
 namespace {
@@ -344,6 +345,36 @@ bool FtpBackend::verifyTlsPeer(const FtpTlsSocket::PeerInfo &info, bool isDataCo
 
     const QString details = QStringLiteral("Subject: %1\nIssuer: %2\nProblem: %3")
         .arg(info.subject, info.issuer, info.verifyError);
+
+    // Guards the read-modify-write below (load ... save) against two
+    // FtpBackend instances racing on the same known_certs.json file —
+    // the exact same class of bug SftpBackend::verifyHostKey() already
+    // guards its own known_hosts file against (see that function's own
+    // doc comment for the confirmed-live regression this pattern fixes),
+    // now mirrored here rather than left as a latent gap. Was a rare,
+    // incidental race before (both panes happening to connect to the
+    // same host at once); simultaneous-connections pooling
+    // (FilePaneWidget::pickIdleTransferBackend()) makes "several
+    // connections to the same host within a tight burst" the common
+    // case instead, so this needed fixing alongside that feature, not
+    // left for later. QLockFile rather than a QMutex for the same
+    // reason SFTP's does: the race spans independent FtpBackend threads
+    // AND separate app instances sharing the same config directory.
+    // lock() (not tryLock()) blocks until available — always runs on a
+    // worker thread, never the GUI thread, so blocking here is cheap
+    // insurance, not a stall risk. Deliberately spans the trust PROMPT
+    // below too (askUserToTrustCertificate()), not just the file I/O,
+    // matching SftpBackend's own equivalent scope — a concurrent
+    // connection to a DIFFERENT, also-first-seen host briefly waiting
+    // on this one's prompt to resolve is the same accepted tradeoff
+    // that path already makes, not a new one introduced here.
+    const QString knownCertsPath = knownCertsFilePath();
+    QLockFile knownCertsLock(knownCertsPath + QStringLiteral(".lock"));
+    if (!knownCertsLock.lock()) {
+        emit commandLogged(QStringLiteral(
+            "Warning: could not lock %1 for exclusive access — a concurrent "
+            "connection may cause this certificate not to be saved.").arg(knownCertsPath));
+    }
 
     bool trusted = false;
     const QString stored = loadTrustedFingerprint(m_credentials.host, m_credentials.port);

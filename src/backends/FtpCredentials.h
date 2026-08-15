@@ -49,4 +49,8 @@ struct FtpCredentials {
     // struct's comment. Applied per-transfer in
     // FtpBackend::downloadFile()/uploadFile().
     int bandwidthLimitKBps = 0;
+
+    // Same meaning as SftpCredentials::simultaneousConnections — see
+    // that struct's comment.
+    int simultaneousConnections = 1;
 };

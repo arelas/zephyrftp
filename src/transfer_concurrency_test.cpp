@@ -31,6 +31,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QEventLoop>
+#include <QPointer>
 #include <functional>
 #include "ui/FilePaneWidget.h"
 #include "backends/LocalBackend.h"
@@ -156,8 +157,19 @@ int main(int argc, char *argv[])
         timeoutTimer.setSingleShot(true);
         QObject::connect(&timeoutTimer, &QTimer::timeout, &loop, &QEventLoop::quit);
         timeoutTimer.start(timeoutMs);
-        while (!condition() && timeoutTimer.isActive())
+        while (!condition() && timeoutTimer.isActive()) {
             loop.processEvents(QEventLoop::AllEvents, 20);
+            // A plain processEvents() call from this deeply call-stack-
+            // nested context (many lambdas deep, never returning to the
+            // top-level app.exec() loop) doesn't reliably deliver a
+            // pending deleteLater() — the same real gotcha
+            // transfer_pause_test.cpp's own waitUntil() already
+            // documents and works around. Needed here for scenario 5's
+            // pool-teardown check (a QPointer staying non-null despite
+            // deleteLater() having been called, purely because this
+            // helper never forced the deferred-delete event through).
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        }
     };
 
     QDir("/tmp/transfer_concurrency_test").removeRecursively();
@@ -165,6 +177,7 @@ int main(int argc, char *argv[])
     QDir().mkpath("/tmp/transfer_concurrency_test/b");
     QDir().mkpath("/tmp/transfer_concurrency_test/c");
     QDir().mkpath("/tmp/transfer_concurrency_test/d");
+    QDir().mkpath("/tmp/transfer_concurrency_test/pool");
 
     // ---------- Scenario 1: cross-backend concurrency + same-backend
     // serialization ----------
@@ -280,6 +293,179 @@ int main(int argc, char *argv[])
         if (item.id == sharedItem2Id) sharedItem2Status = item.status;
     });
 
+    // Scenario 5 setup — simultaneous-connections pooling (see
+    // FilePaneWidget::configureTransferPool()/pickIdleTransferBackend()):
+    // ONE pane, configured with a pool of up to 3 connections, should
+    // dispatch that many items genuinely in parallel instead of
+    // serializing every one through its single primary connection —
+    // proving the SAME cross-backend concurrency scenario 1 already
+    // proved for two independently-constructed panes, but now driven by
+    // ONE pane's own lazily-grown pool instead. Also confirms the
+    // reservation-key guard scenario 4 above proved for two independent
+    // panes still holds when the "two different backend instances" are
+    // instead two pool members of the SAME pane, and that Disconnect
+    // (setBackend() swap) tears every pool member down cleanly.
+    auto *poolPrimary = new FakeAsyncBackend();
+    auto *poolPane = new FilePaneWidget(poolPrimary);
+    QList<QPointer<RemoteBackend>> poolMembersBuilt;   // every backend the factory has ever produced, alive or not
+    poolPane->configureTransferPool(3, [&poolMembersBuilt]() -> QPair<RemoteBackend *, QThread *> {
+        auto *extra = new FakeAsyncBackend();
+        poolMembersBuilt.append(extra);
+        return {extra, nullptr};   // no real QThread — same no-thread shape every fake backend in this file already uses
+    });
+    // One shared local source pane — every item below has a distinct
+    // filename, so there's no need for a separate pane per item the way
+    // scenario 4 above needs one per side of its identical-filename
+    // collision.
+    auto *localPool = new FilePaneWidget(new LocalBackend());
+    localPool->navigateTo("/tmp/transfer_concurrency_test/pool");
+    auto *manager5 = new TransferManager(&app);
+
+    int poolItem1Id = -1, poolItem2Id = -1, poolItem3Id = -1, poolItem4Id = -1;
+    TransferStatus poolItem1Status = TransferStatus::Queued, poolItem2Status = TransferStatus::Queued,
+                   poolItem3Status = TransferStatus::Queued, poolItem4Status = TransferStatus::Queued;
+    // "pooldup.bin" is enqueued TWICE, deliberately (see runScenario5()
+    // below) — same-filename trick Scenario 4 already uses above, since
+    // two items sharing a name can't be told apart BY name. Distinguished
+    // by arrival ORDER instead: enqueue() appends and emits itemAdded
+    // synchronously, so the first call is always seen here before the
+    // second.
+    int poolDup1Id = -1, poolDup2Id = -1;
+    TransferStatus poolDup1Status = TransferStatus::Queued, poolDup2Status = TransferStatus::Queued;
+
+    QObject::connect(manager5, &TransferManager::itemAdded, &app, [&](const TransferItem &item) {
+        if (item.fileName == "pool1.bin") poolItem1Id = item.id;
+        else if (item.fileName == "pool2.bin") poolItem2Id = item.id;
+        else if (item.fileName == "pool3.bin") poolItem3Id = item.id;
+        else if (item.fileName == "pool4.bin") poolItem4Id = item.id;
+        else if (item.fileName == "pooldup.bin") {
+            if (poolDup1Id < 0)
+                poolDup1Id = item.id;
+            else if (poolDup2Id < 0)
+                poolDup2Id = item.id;
+        }
+    });
+    QObject::connect(manager5, &TransferManager::itemUpdated, &app, [&](const TransferItem &item) {
+        if (item.id == poolItem1Id) poolItem1Status = item.status;
+        else if (item.id == poolItem2Id) poolItem2Status = item.status;
+        else if (item.id == poolItem3Id) poolItem3Status = item.status;
+        else if (item.id == poolItem4Id) poolItem4Status = item.status;
+        else if (item.id == poolDup1Id) poolDup1Status = item.status;
+        else if (item.id == poolDup2Id) poolDup2Status = item.status;
+    });
+
+    // ---------- Scenario 5: simultaneous-connections pooling — real
+    // N-way parallelism through ONE pane's lazily-grown pool, pool-member
+    // reuse (not unbounded growth), the reservation-key guard still
+    // holding across pool members, and clean teardown on disconnect.
+    // Chained last since it's the newest addition, not because it's
+    // lower-priority than the others. ----------
+    auto runScenario5 = [&]() {
+        // ---- Phase A: 3 distinct-destination items against a pool
+        // capped at 3 should all reach InProgress at the same time —
+        // the same cross-backend concurrency scenario 1 proved for two
+        // independently-constructed panes, now proved for ONE pane's
+        // own pool instead. ----
+        manager5->enqueue(localPool, poolPane, "pool1.bin");
+        manager5->enqueue(localPool, poolPane, "pool2.bin");
+        manager5->enqueue(localPool, poolPane, "pool3.bin");
+
+        waitUntil([&]() {
+            return poolItem1Status == TransferStatus::InProgress
+                && poolItem2Status == TransferStatus::InProgress
+                && poolItem3Status == TransferStatus::InProgress;
+        });
+        check("scenario 5: 3 items against a pool capped at 3 all reached InProgress at the same time",
+              poolItem1Status == TransferStatus::InProgress
+              && poolItem2Status == TransferStatus::InProgress
+              && poolItem3Status == TransferStatus::InProgress);
+        // The primary (poolPrimary) covers the first; growing to 3 total
+        // needs exactly 2 more built via the factory — not 3 (the
+        // primary isn't a factory product) and not fewer (all 3 needed
+        // to be busy at once for the check just above to hold).
+        check("scenario 5: reaching 3 simultaneous connections grew the pool by exactly 2 (the primary "
+              "already counts as the first)",
+              poolMembersBuilt.size() == 2);
+
+        waitUntil([&]() {
+            return poolItem1Status == TransferStatus::Done && poolItem2Status == TransferStatus::Done
+                && poolItem3Status == TransferStatus::Done;
+        }, 3000);
+        check("scenario 5: all 3 pooled items completed normally",
+              poolItem1Status == TransferStatus::Done && poolItem2Status == TransferStatus::Done
+              && poolItem3Status == TransferStatus::Done);
+
+        // ---- Phase B: with the pool now idle again, one more item
+        // should reuse an existing member rather than growing further. ----
+        manager5->enqueue(localPool, poolPane, "pool4.bin");
+        waitUntil([&]() { return poolItem4Status == TransferStatus::InProgress; });
+        check("scenario 5: a 4th item, enqueued once the pool was idle again, started immediately "
+              "(reusing an existing member)", poolItem4Status == TransferStatus::InProgress);
+        check("scenario 5: reusing an idle pool member didn't grow the pool any further",
+              poolMembersBuilt.size() == 2);
+        waitUntil([&]() { return poolItem4Status == TransferStatus::Done; }, 3000);
+
+        // ---- Phase C: the SAME destination path, enqueued twice, must
+        // still serialize — proving destinationReservationKey() (already
+        // keyed on connectionIdentity(), not a specific backend pointer;
+        // see scenario 4 above) holds just as well when the "two
+        // different backend instances" are two pool members of the SAME
+        // pane, not two independently-connected panes. ----
+        manager5->enqueue(localPool, poolPane, "pooldup.bin");
+        manager5->enqueue(localPool, poolPane, "pooldup.bin");
+
+        waitUntil([&]() { return poolDup1Status == TransferStatus::InProgress; });
+        check("scenario 5: the first of two identical-destination items reached InProgress",
+              poolDup1Status == TransferStatus::InProgress);
+        check("scenario 5: the second — same destination, freely available OTHER pool members "
+              "notwithstanding — stayed Queued instead of racing it",
+              poolDup2Status == TransferStatus::Queued);
+
+        waitUntil([&]() { return poolDup1Status == TransferStatus::Done; }, 3000);
+        waitUntil([&]() {
+            return poolDup2Status == TransferStatus::InProgress || poolDup2Status == TransferStatus::Done;
+        }, 3000);
+        check("scenario 5: the second identical-destination item started only once the first released "
+              "the shared destination — not permanently stuck",
+              poolDup2Status == TransferStatus::InProgress || poolDup2Status == TransferStatus::Done);
+        waitUntil([&]() { return poolDup2Status == TransferStatus::Done; }, 3000);
+        check("scenario 5: the second identical-destination item also completed normally",
+              poolDup2Status == TransferStatus::Done);
+        check("scenario 5: still exactly 2 factory-built pool members after the whole scenario — "
+              "never grew past the configured cap of 3 total", poolMembersBuilt.size() == 2);
+
+        // ---- Phase D: Disconnect (a primary-backend swap, same as any
+        // real Connect/Disconnect) must tear down every pool member
+        // cleanly — no crash, no hang, no dangling thread. Each fake
+        // pool backend was built with thread=nullptr (parented to
+        // poolPane per setBackend()'s own doc comment), so a clean
+        // Qt-level deleteLater() teardown is what "cleanly" means to
+        // verify here; a real SftpBackend/FtpBackend's own thread
+        // teardown is already covered generically by every OTHER
+        // scenario in this file exercising ordinary primary-backend
+        // replacement, not something pooling changes the shape of.
+        QList<QPointer<RemoteBackend>> membersBeforeDisconnect = poolMembersBuilt;
+        poolPane->setBackend(new LocalBackend(), nullptr);
+        // deleteLater() events need an event-loop turn to actually run.
+        waitUntil([&]() {
+            for (const QPointer<RemoteBackend> &member : membersBeforeDisconnect) {
+                if (member)
+                    return false;
+            }
+            return true;
+        }, 3000);
+        bool allPoolMembersGone = true;
+        for (const QPointer<RemoteBackend> &member : membersBeforeDisconnect) {
+            if (member)
+                allPoolMembersGone = false;
+        }
+        check("scenario 5: Disconnect (primary backend swap) tore down every pool member "
+              "built during this scenario", allPoolMembersGone);
+
+        qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
+        app.exit(allPass ? 0 : 1);
+    };
+
     // ---------- Scenario 4: two DIFFERENT backend instances of the SAME
     // simulated server, both targeting the identical destination path,
     // must not run concurrently ----------
@@ -318,8 +504,7 @@ int main(int argc, char *argv[])
         waitUntil([&]() { return sharedItem2Status == TransferStatus::Done; }, 3000);
         check("scenario 4: the second item also completed normally", sharedItem2Status == TransferStatus::Done);
 
-        qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
-        app.exit(allPass ? 0 : 1);
+        runScenario5();
     };
 
     // Scenario 3 setup — a real code-review-found bug: ActiveTransfer::

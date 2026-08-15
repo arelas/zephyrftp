@@ -62,6 +62,17 @@ struct SavedSite {
     bool useHomeDirectory = true;
     QString startingDirectory;
 
+    // How many independent connections a transfer to/from this site may
+    // open at once. 1 (default) is today's exact behavior — every file
+    // serializes through one connection, same as every site saved before
+    // this field existed. A value above 1 lets TransferManager dispatch
+    // that many files genuinely in parallel instead of one at a time;
+    // see FilePaneWidget::pickIdleTransferBackend()'s own doc comment
+    // for the full mechanism. Capped at 10 in the UI (SiteManagerDialog)
+    // — not enforced here, since a hand-edited sites.json asking for more
+    // isn't worth guarding against.
+    int simultaneousConnections = 1;
+
     // Builds the right credentials for this site's protocol, wrapped in
     // a ConnectionRequest. The password is ALWAYS left empty, for every
     // protocol — the caller (SiteManagerDialog) prompts for it and fills

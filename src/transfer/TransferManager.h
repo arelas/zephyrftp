@@ -301,6 +301,19 @@ private:
     // happen for anything startNext() dispatches).
     QVarLengthArray<RemoteBackend *, 2> requiredBackendsForDispatch(const TransferItem &item) const;
 
+    // Which pane a pool pick should be attempted against for this item,
+    // if any — destPane for the upload-shaped directions, sourcePane for
+    // the download-shaped ones, nullptr for everything else
+    // (RemoteToRemote's two-backend claim and Move are out of scope; see
+    // TransferItem::capturedTransferBackend's own doc comment). Shared
+    // by startNext()'s actual pool-pick attempt and
+    // startNextIfLikelyToDispatch()'s "is a real scan even worth it"
+    // pre-check, rather than duplicating this same direction switch in
+    // both places — a real, code-review-flagged risk elsewhere in this
+    // file already (see requiredBackendsForDispatch()'s own doc comment
+    // on the two-switch duplication that used to exist here).
+    FilePaneWidget *poolPaneForItem(const TransferItem &item) const;
+
     // True if any ActiveTransfer entry has already claimed this backend
     // (see ActiveTransfer::claimedBackends) — the busy check startNext()
     // uses to decide whether a Queued item may start now.

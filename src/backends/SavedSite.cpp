@@ -23,6 +23,7 @@ ConnectionRequest SavedSite::toConnectionRequest() const
         request.sftp.privateKeyPath = privateKeyPath;
         request.sftp.useHomeDirectory = useHomeDirectory;
         request.sftp.startingDirectory = startingDirectory;
+        request.sftp.simultaneousConnections = simultaneousConnections;
         // password/passphrase left empty — deliberately; see the class doc comment.
     } else {
         request.ftp.host = host;
@@ -31,6 +32,7 @@ ConnectionRequest SavedSite::toConnectionRequest() const
         request.ftp.ftpsMode = protocolToFtpsMode(protocol);
         request.ftp.useHomeDirectory = useHomeDirectory;
         request.ftp.startingDirectory = startingDirectory;
+        request.ftp.simultaneousConnections = simultaneousConnections;
         // password left empty — same rule, no exception for FTP. Worth
         // stating explicitly because FTP has no key-based alternative,
         // so "don't store the password" means this protocol prompts on
@@ -91,6 +93,10 @@ QList<SavedSite> SiteStore::loadFromFile(const QString &path)
         // silently reinterpreting old sites as pointing at an empty path.
         site.useHomeDirectory = obj.value(QStringLiteral("useHomeDirectory")).toBool(true);
         site.startingDirectory = obj.value(QStringLiteral("startingDirectory")).toString();
+        // Absent in every sites.json written before this field existed —
+        // toInt(1) correctly defaults those to today's exact behavior
+        // (one connection), not silently opting them into pooling.
+        site.simultaneousConnections = obj.value(QStringLiteral("simultaneousConnections")).toInt(1);
 
         // Backfill an id for sites saved before `id` existed, rather than
         // silently dropping them or crashing on a lookup-by-id later.
@@ -142,6 +148,7 @@ bool SiteStore::saveToFile(const QList<SavedSite> &sites, const QString &path)
         obj[QStringLiteral("privateKeyPath")] = site.privateKeyPath;
         obj[QStringLiteral("useHomeDirectory")] = site.useHomeDirectory;
         obj[QStringLiteral("startingDirectory")] = site.startingDirectory;
+        obj[QStringLiteral("simultaneousConnections")] = site.simultaneousConnections;
         // No password field written, ever — see SavedSite's doc comment.
         array.append(obj);
     }

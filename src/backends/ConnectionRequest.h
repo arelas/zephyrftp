@@ -74,6 +74,14 @@ struct ConnectionRequest {
         return protocol == Protocol::Sftp ? sftp.startingDirectory : ftp.startingDirectory;
     }
 
+    // Same convenience as host()/port()/username() above — used by
+    // MainWindow::startConnection() to configure the target pane's
+    // transfer-connection pool without re-branching on protocol there.
+    int simultaneousConnections() const
+    {
+        return protocol == Protocol::Sftp ? sftp.simultaneousConnections : ftp.simultaneousConnections;
+    }
+
     // True when this request asked for SFTP public-key auth but never
     // actually got a key file — both MainWindow::connectViaDialog() and
     // SiteManagerDialog::onConnectClicked() need to reject exactly this

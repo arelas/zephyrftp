@@ -6,6 +6,7 @@
 #include <QStringList>
 #include <QIcon>
 #include <QPair>
+#include <functional>
 #include "../backends/RemoteBackend.h"
 #include "../backends/ConnectionDescriptor.h"
 
@@ -142,6 +143,59 @@ public:
     // LocalBackend), matching the original constructor's behavior of
     // parenting the backend directly to this widget.
     void setBackend(RemoteBackend *backend, QThread *thread = nullptr);
+
+    // A factory for building one more backend+thread pair identical to
+    // whatever setBackend() was just given (same host/credentials/proxy/
+    // bandwidth limit) — MainWindow::startConnection() builds this right
+    // after its own setBackend() call, using the exact same construction
+    // recipe. Returns null pointers on failure (never throws); the
+    // caller (pickIdleTransferBackend() below) treats that the same as
+    // "pool exhausted."
+    using TransferBackendFactory = std::function<QPair<RemoteBackend *, QThread *>()>;
+
+    // Configures this pane's transfer-connection pool: up to maxSize
+    // total connections (the primary set by setBackend() counts as one
+    // of them) may exist at once, grown lazily via factory only as
+    // TransferManager actually asks for one — see
+    // pickIdleTransferBackend()'s own doc comment. maxSize <= 1 means
+    // "no pooling," today's exact behavior, and the factory is never
+    // invoked. Called once per connection, right after setBackend();
+    // setBackend() itself clears any previously configured pool (see its
+    // own doc comment), since a torn-down connection's factory would
+    // just rebuild stale credentials.
+    void configureTransferPool(int maxSize, TransferBackendFactory factory);
+
+    // Returns whichever backend among {primary, existing pool members}
+    // isClaimed() reports as free, growing the pool by one (via the
+    // factory configureTransferPool() was given, up to its maxSize) if
+    // every existing member is currently claimed and there's still room
+    // to grow. Returns nullptr if the pool is already at its configured
+    // cap and every member is busy — the caller (TransferManager)
+    // already treats a null/no-available-backend result as "stays
+    // Queued," the exact same handling a single busy backend gets today.
+    // isClaimed is TransferManager's own isBackendClaimed(), passed in
+    // rather than called back into directly, so this pane doesn't need
+    // to know anything about TransferManager's internals beyond "can you
+    // tell me if a given backend is currently busy."
+    RemoteBackend *pickIdleTransferBackend(const std::function<bool(RemoteBackend *)> &isClaimed);
+
+    // True once configureTransferPool() has been given a maxSize above
+    // 1 — used by TransferManager::startNextIfLikelyToDispatch()'s own
+    // "is a real scan even worth it" pre-check: that heuristic's
+    // documented safety invariant (skipping is safe because whatever
+    // WOULD make an item dispatchable already re-triggers a real scan
+    // on its own) doesn't hold for a pooled pane — growing the pool is
+    // a new event type only reachable from inside an actual startNext()
+    // scan, not something a backend-release elsewhere re-triggers. This
+    // is deliberately a cheap, imprecise "is pooling enabled at all"
+    // check, not "is the pool actually not-yet-exhausted right now" —
+    // the latter would need calling pickIdleTransferBackend() itself
+    // (which has real side effects: it can construct a new backend),
+    // wrong to do from a pure pre-check. An occasional real scan that
+    // finds the pool genuinely saturated is cheap insurance, not a
+    // performance problem worth a more precise (and side-effect-prone)
+    // query for.
+    bool hasTransferPool() const { return m_maxPoolSize > 1; }
 
     // Shows/hides the filename-filter row — called by MainWindow's View
     // menu toggle on both panes at once (see AppSettings::
@@ -301,6 +355,18 @@ private:
 
     RemoteBackend *m_backend;
     QThread *m_backendThread = nullptr;   // null when backend has no thread of its own (e.g. LocalBackend)
+
+    // Extra connections to the SAME server as m_backend, for
+    // TransferManager to dispatch transfers through in parallel — see
+    // pickIdleTransferBackend()'s own doc comment. m_backend itself is
+    // NOT included in these lists; it's always the first backend
+    // pickIdleTransferBackend() tries. Empty/1 for every pane that
+    // hasn't opted into pooling (the default), which is the whole point
+    // — zero extra state for the common case.
+    QList<RemoteBackend *> m_poolBackends;
+    QList<QThread *> m_poolThreads;
+    int m_maxPoolSize = 1;
+    TransferBackendFactory m_poolBackendFactory;
     bool m_connecting = false;   // see isConnecting()'s own doc comment
     // Default-constructed (isEmpty() == true) until MainWindow's
     // startConnection() sets a real one — see connectionDescriptor()'s

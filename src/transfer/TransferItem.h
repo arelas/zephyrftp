@@ -137,6 +137,41 @@ struct TransferItem {
     // onBackendFinished()'s phase transition.
     QPointer<RemoteBackend> capturedDestBackend;
 
+    // Set at most once, at the moment startNext() first claims a backend
+    // for this item from a POOLED pane (FilePaneWidget::
+    // pickIdleTransferBackend(), simultaneousConnections > 1 on the
+    // destination site) — never touched for an unpooled pane, which is
+    // the overwhelming majority case and has zero behavior change
+    // because of that. Exists for the same reason capturedDestBackend
+    // above does: requiredBackendsForDispatch() is called more than
+    // once per item (startNext()'s busy-check, then again, independently,
+    // from dispatchActiveItem()), and picking a pool member fresh each
+    // time could disagree with whichever one was actually claimed the
+    // first time. Once set, requiredBackendsForDispatch() just returns
+    // this instead of picking again — stable across repeat calls by
+    // construction, not by re-deriving carefully. A QPointer, not a raw
+    // pointer, so a pool member torn down mid-transfer (its whole pane
+    // disconnecting) is detectable (goes null) rather than silently
+    // dangling — same reasoning as capturedDestBackend.
+    //
+    // A QPointer that's null because it was NEVER set and one that's
+    // null because the backend it pointed to was destroyed are
+    // indistinguishable by reading capturedTransferBackend alone —
+    // capturedDestBackend above avoids that ambiguity for free (phase ==
+    // Uploading structurally guarantees it was already set, so null
+    // there can only mean "went away"), but an ordinary pooled item has
+    // no such guarantee: it may genuinely never have needed a pool pick
+    // at all (the primary was free). transferBackendCaptured resolves
+    // that: true the moment capturedTransferBackend is first assigned,
+    // regardless of whether it later goes null. requiredBackendsForDispatch()
+    // uses it to tell "never pooled — fall back to a live pane->backend()
+    // lookup" (false) apart from "WAS bound to a pool member that's since
+    // been torn down — resolve to no backend at all, not a silent
+    // fallback to whatever the pane's primary happens to be now" (true,
+    // capturedTransferBackend null).
+    bool transferBackendCaptured = false;
+    QPointer<RemoteBackend> capturedTransferBackend;
+
     // Set by TransferManager::resumeItem(), consumed (and reset to
     // false) by startNext() at the moment this item is actually
     // dispatched. Skips startNext()'s usual destination-conflict

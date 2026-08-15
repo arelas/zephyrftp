@@ -96,6 +96,7 @@ private:
     QComboBox *m_protocolCombo;
     QLineEdit *m_hostEdit;
     QSpinBox *m_portSpin;
+    QSpinBox *m_simultaneousConnectionsSpin;
     QLineEdit *m_usernameEdit;
     QRadioButton *m_passwordAuthRadio;
     QRadioButton *m_keyAuthRadio;
