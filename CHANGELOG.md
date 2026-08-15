@@ -8,6 +8,14 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.25] — Fix a visual height mismatch in Site Manager
+
+### Fixed
+
+- The new "Simultaneous connections" field in Site Manager (added in
+  0.7.24) rendered visibly taller than every other field in the form.
+  Cosmetic only — the value itself was always correct.
+
 ## [0.7.24] — Simultaneous connections per site
 
 ### Added
@@ -1973,7 +1981,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.24...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.25...HEAD
+[0.7.25]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.25
 [0.7.24]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.24
 [0.7.23]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.23
 [0.7.22]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.22

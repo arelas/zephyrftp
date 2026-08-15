@@ -2444,6 +2444,16 @@ to drive FileZilla itself for a same-desktop comparison.
   global per-site connection registry shared across both panes; and no
   new resilience for a pool member's connection dropping mid-transfer
   beyond what a primary-connection loss already gets.
+  **A small follow-up visual bug (v0.7.25), caught only by actually
+  screenshotting `SiteManagerDialog`** (a disposable, non-committed
+  `QWidget::grab()` probe, same established technique as elsewhere in
+  this file) rather than trusting the layout code alone: the new
+  "Simultaneous connections" spinbox rendered visibly taller than every
+  other field in the form — confirmed numerically (33px vs. its own
+  36px `sizeHint()`), the exact same spin-button-reserved-height
+  mismatch `m_portSpin`'s own comment right above it already documents
+  and works around, just not yet applied to this newer sibling field.
+  Fixed with the same `setFixedHeight()` treatment.
   **`RemoteToRemote` (server-to-server) is staged through a local temp
   file** — neither backend has a direct way to move a file straight to
   another server, so `dispatchActiveItem()` runs it in two phases:

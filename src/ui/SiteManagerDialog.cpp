@@ -187,6 +187,13 @@ void SiteManagerDialog::buildUi()
     m_simultaneousConnectionsSpin = new QSpinBox(this);
     m_simultaneousConnectionsSpin->setRange(1, 10);
     m_simultaneousConnectionsSpin->setValue(1);
+    // Same real, visible height mismatch m_portSpin's own comment above
+    // already documents (QAbstractSpinBox's sizeHint() reserves space
+    // for the spin-button area beyond a sibling QLineEdit's own height)
+    // — caught the same way, by actually screenshotting the dialog, not
+    // assumed just because m_portSpin's own fix was already sitting
+    // right above this.
+    m_simultaneousConnectionsSpin->setFixedHeight(m_hostEdit->sizeHint().height());
     connect(m_simultaneousConnectionsSpin, &QSpinBox::editingFinished, this, &SiteManagerDialog::onFieldEdited);
 
     m_usernameEdit = new QLineEdit(this);
