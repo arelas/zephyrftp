@@ -157,6 +157,14 @@ void TransferQueueWidget::onVerifyChecksumRequested(int itemId)
     dialog->setAutoClose(false);
     dialog->setAutoReset(false);
     dialog->setValue(0);
+    // QProgressDialog sizes itself from the progress bar/button row, not
+    // the label — confirmed via a real screenshot (this project's own
+    // established verification technique), the label text ran straight
+    // off the right edge with zero margin for an ordinary filename, and
+    // would only be worse for a longer one. A fixed minimum width gives
+    // the label real room without needing to touch its (not directly
+    // exposed) word-wrap setting.
+    dialog->setMinimumWidth(420);
     m_verifyDialogs.insert(itemId, dialog);
 
     connect(dialog, &QProgressDialog::canceled, this, [this, itemId]() {

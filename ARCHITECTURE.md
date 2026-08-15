@@ -2546,6 +2546,22 @@ to drive FileZilla itself for a same-desktop comparison.
   write, bypassing SFTP entirely) and confirmed the mismatch was
   correctly caught — proving this against real libssh2 I/O, not just the
   fake backend.
+  **A follow-up visual bug, caught only by actually screenshotting the
+  new UI** — same discipline as the Site Manager spinbox check above,
+  applied to this feature immediately after it shipped: the in-flight
+  `QProgressDialog`'s label text (`Verifying "filename"...`) ran
+  straight off the dialog's right edge with zero margin, for an
+  ordinary, not-especially-long filename — `QProgressDialog` sizes
+  itself from its progress bar/button row, not its label, so a short
+  label produces a dialog too narrow for a longer one. Neither
+  `checksum-verification-test`'s headless assertions nor the live-SFTP
+  probe's `fprintf` output could have caught this — both only checked
+  that the signals/hashes were correct, never that the dialog rendered
+  legibly. Fixed with an explicit `setMinimumWidth(420)`, confirmed by
+  re-running the same disposable screenshot probe before and after. The
+  two `QMessageBox` result dialogs (match and mismatch) and the
+  context-menu item itself were screenshotted the same way and rendered
+  correctly the first time — no fix needed there.
   **`RemoteToRemote` (server-to-server) is staged through a local temp
   file** — neither backend has a direct way to move a file straight to
   another server, so `dispatchActiveItem()` runs it in two phases:
