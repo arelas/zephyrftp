@@ -8,6 +8,18 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.26] — Fix a compressed field in Site Manager at its default size
+
+### Fixed
+
+- The "Starting directory" field in Site Manager rendered compressed
+  at the dialog's default size (fine once you resized the window
+  larger). The dialog's fixed default size hadn't been grown to
+  account for the "Simultaneous connections" row added in 0.7.24, so
+  Qt's layout engine squeezed this one field to make everything else
+  fit. Grown with real headroom this time, so the next field added to
+  this dialog doesn't reopen the same bug.
+
 ## [0.7.25] — Fix a visual height mismatch in Site Manager
 
 ### Fixed
@@ -1981,7 +1993,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.25...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.26...HEAD
+[0.7.26]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.26
 [0.7.25]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.25
 [0.7.24]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.24
 [0.7.23]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.23

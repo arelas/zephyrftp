@@ -1634,6 +1634,31 @@ to drive FileZilla itself for a same-desktop comparison.
   `m_portSpin->setFixedHeight(m_hostEdit->sizeHint().height())` —
   matched to a sibling field's actual height rather than a hardcoded
   pixel count, so it stays correct if the theme's font/padding changes.
+  **The same squeeze bug recurred (live-reported, v0.7.26)**: the
+  "Simultaneous connections" row added in v0.7.24 pushed the dialog's
+  own real `sizeHint()` past the fixed `resize(700, 520)` again (to
+  694x527, confirmed directly) — the starting-directory field was the
+  one Qt's layout engine reached for again to absorb the shortfall
+  (26px against its own 33px `sizeHint()` at height 520, full height
+  once actually resized larger, matching the user's own report almost
+  exactly: "I can resize the site manager dialog, and it will be
+  correct"). Root cause, confirmed empirically, not just inferred from
+  the symptom repeating: `dirFieldColumn` (the starting-directory
+  radio-buttons-plus-lineedit field) is the one row in this form that's
+  a `QVBoxLayout` passed to `QFormLayout::addRow()`, not a plain
+  widget — every other row's `QLineEdit` has a `Fixed` vertical size
+  policy `QFormLayout` won't shrink below `sizeHint()` even when the
+  dialog is a few pixels short overall, but a nested layout used as a
+  row's "field" doesn't get that same hard floor, so it's what silently
+  absorbs the deficit instead. Fixed by growing the dialog again, this
+  time to `resize(700, 540)` — deliberately past the bare 527px
+  `sizeHint()` with real headroom, specifically so the *next* row this
+  dialog gains doesn't reopen the identical bug a third time before
+  someone happens to resize the window and notice. Confirmed via the
+  same disposable, non-committed `QWidget::grab()` probe technique as
+  the v0.7.25 spinbox-height fix above: measured 26px before, 33px
+  (matching `sizeHint()` exactly) after, at the dialog's own default
+  construction-time size.
   **Five real bugs found by a dedicated code review of this file and
   `CredentialStore`, all fixed:**
   1. **Deleting a saved site never removed its stored secret.**

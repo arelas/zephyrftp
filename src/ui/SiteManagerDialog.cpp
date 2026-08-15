@@ -43,7 +43,22 @@ SiteManagerDialog::SiteManagerDialog(QWidget *parent)
     // field to fit — confirmed directly (440: compressed to 20px
     // against its own 33px sizeHint; 520: renders at its full natural
     // height) rather than guessed at.
-    resize(700, 520);
+    //
+    // Recurred (live-reported, v0.7.26): the "Simultaneous connections"
+    // row added in v0.7.24 pushed the form's own real sizeHint() past
+    // 520 again (694x527, confirmed directly, not guessed) — this
+    // dialog's own QVBoxLayout-as-a-form-row (dirFieldColumn, the
+    // starting-directory radio-buttons-plus-lineedit field) is
+    // apparently the one row Qt's layout engine reaches for first to
+    // absorb ANY shortfall between this fixed resize() and the form's
+    // actual needed height, shrinking the line edit specifically (26px
+    // against its own 33px sizeHint at height 520) rather than the
+    // deficit being spread across the form or refused outright. Bumped
+    // with real headroom (540, not the bare 527 sizeHint) specifically
+    // so the NEXT row this dialog gains doesn't silently reopen the
+    // exact same bug a third time before someone happens to resize the
+    // window and notice.
+    resize(700, 540);
 
     m_sites = SiteStore::load();
     buildUi();
