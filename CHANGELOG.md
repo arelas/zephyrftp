@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.30] — Implicit FTPS
+
 ### Added
 
 - **Implicit FTPS.** A fourth protocol choice, alongside SFTP/FTP/FTPS,
@@ -2048,7 +2050,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.29...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.30...HEAD
+[0.7.30]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.30
 [0.7.29]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.29
 [0.7.28]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.28
 [0.7.27]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.27
