@@ -8,6 +8,25 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Added
+
+- **Implicit FTPS.** A fourth protocol choice, alongside SFTP/FTP/FTPS,
+  in the Connect... dialog and Site Manager — TLS from the very first
+  byte of the control connection (no `AUTH TLS` command, no plaintext
+  phase at all), conventionally on port 990, for the older servers that
+  only offer that mode rather than explicit FTPS. Not reachable via
+  Quick Connect's URL scheme — `ftps://` still means explicit FTPS only;
+  use Connect... or Site Manager for implicit.
+
+### Fixed
+
+- Site Manager's port field never auto-updated when switching the
+  protocol dropdown on a new, unsaved site — unlike the Connect...
+  dialog, which already did this. Pre-existing for FTP/FTPS too, but
+  went unnoticed since every existing protocol's default port (21 or
+  22) was close enough to fail quietly; implicit FTPS's very different
+  990 made it worth fixing now.
+
 ## [0.7.29] — Recent Connections
 
 ### Added

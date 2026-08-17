@@ -1,0 +1,65 @@
+# Real vsftpd running IMPLICIT FTPS (TLS from the very first byte of the
+# control connection, no AUTH TLS command) — closes the gap that this
+# project's other vsftpd/proftpd/pyftpdlib test servers only ever
+# exercise EXPLICIT FTPS. pyftpdlib's TLS_FTPHandler has no "TLS from
+# accept" mode at all (confirmed by reading its source before choosing
+# vsftpd here instead); vsftpd genuinely supports it via a real,
+# documented directive — confirmed directly from vsftpd's own man page
+# (`man 5 vsftpd.conf`, `implicit_ssl`), not assumed: "If enabled, an
+# SSL handshake is the first thing expect on all connections (the FTPS
+# protocol). To support explicit SSL and/or plain text too, a separate
+# vsftpd listener process should be run" — which is exactly why this is
+# its own separate container/config rather than a flag added to the
+# existing Containerfile.vsftpd's own vsftpd.conf.
+#
+# Otherwise a near-duplicate of Containerfile.vsftpd — same base image,
+# same virtual-user/PAM setup, same throwaway CA — deliberately NOT
+# factored into a shared base image or ARG-selected conf file: this
+# project already has an established preference for duplication over an
+# abstraction that would obscure which concrete thing is running (see
+# FtpCredentials/SftpCredentials' own doc comment on exactly this
+# tradeoff) — a second, fully self-contained ~90-line file that's
+# obviously and independently a complete implicit-FTPS server is easier
+# to reason about than one shared Containerfile with a build-time
+# branch. See vsftpd-implicit.conf for the actual mode-specific
+# settings (listen_port 990, implicit_ssl=YES).
+FROM fedora:44
+
+RUN dnf install -y --setopt=install_weak_deps=False vsftpd gdbm openssl && dnf clean all
+
+# Same virtual-user-via-pam_userdb setup as Containerfile.vsftpd — see
+# that file's own comment for the two real, strace-confirmed gotchas
+# (GDBM not Berkeley DB; db= used as an exact, unsuffixed path).
+RUN useradd -m -d /srv/ftp -s /sbin/nologin vsftpuser \
+    && mkdir -p /srv/ftp/uploads \
+    && echo "hello from the local implicit-FTPS vsftpd test server" > /srv/ftp/sample.txt \
+    && chown -R vsftpuser:vsftpuser /srv/ftp \
+    && echo "store vsftpuser vsftppass" | gdbmtool /etc/vsftpd/virtual_users \
+    && chmod 600 /etc/vsftpd/virtual_users
+
+COPY vsftpd-implicit.conf /etc/vsftpd/vsftpd.conf
+COPY pam-vsftpd-virtual /etc/pam.d/vsftpd.virtual
+
+# Same throwaway CA + leaf cert approach as Containerfile.vsftpd — see
+# that file's own comment for the full reasoning (10-year validity,
+# SAN IP:127.0.0.1, only the CA cert leaves the container).
+RUN openssl genrsa -out /etc/vsftpd/ftps-ca-key.pem 2048 \
+    && openssl req -x509 -new -key /etc/vsftpd/ftps-ca-key.pem -days 3650 \
+        -out /etc/vsftpd/ftps-ca-cert.pem -subj "/CN=ZephyrFTP vsftpd Implicit-FTPS Test CA" \
+    && openssl genrsa -out /etc/vsftpd/ftps-key.pem 2048 \
+    && openssl req -new -key /etc/vsftpd/ftps-key.pem \
+        -out /tmp/ftps-server.csr -subj "/CN=127.0.0.1" \
+    && printf "subjectAltName=IP:127.0.0.1" > /tmp/ftps-san.ext \
+    && openssl x509 -req -in /tmp/ftps-server.csr \
+        -CA /etc/vsftpd/ftps-ca-cert.pem -CAkey /etc/vsftpd/ftps-ca-key.pem -CAcreateserial \
+        -out /etc/vsftpd/ftps-cert.pem -days 3650 -extfile /tmp/ftps-san.ext \
+    && chmod 600 /etc/vsftpd/ftps-key.pem /etc/vsftpd/ftps-ca-key.pem \
+    && rm -f /tmp/ftps-server.csr /tmp/ftps-san.ext
+
+# Same log-file pre-creation gotcha as Containerfile.vsftpd — see that
+# file's own comment.
+RUN touch /var/log/vsftpd.log && chmod 666 /var/log/vsftpd.log
+
+EXPOSE 990 2201-2210
+
+CMD ["/usr/sbin/vsftpd", "/etc/vsftpd/vsftpd.conf"]

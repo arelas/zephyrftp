@@ -163,10 +163,13 @@ void SiteManagerDialog::buildUi()
 
     m_protocolCombo = new QComboBox(this);
     ProtocolCombo::populate(m_protocolCombo);
-    // Two connections, deliberately: onProtocolChanged() updates which
-    // fields are visible, onFieldEdited() persists the change. Folding
-    // both into one slot would tangle "what the form looks like" with
-    // "what's written to disk".
+    // Two connections here, deliberately: onProtocolChanged() updates
+    // which fields are visible, onFieldEdited() persists the change.
+    // Folding both into one slot would tangle "what the form looks like"
+    // with "what's written to disk". A third connection on this same
+    // signal — the port-auto-follow behavior — is added further down,
+    // right after m_portSpin exists (see the comment there for why it's
+    // kept separate from both of these).
     connect(m_protocolCombo, &QComboBox::currentIndexChanged, this, &SiteManagerDialog::onProtocolChanged);
     connect(m_protocolCombo, &QComboBox::currentIndexChanged, this, &SiteManagerDialog::onFieldEdited);
 
@@ -192,6 +195,33 @@ void SiteManagerDialog::buildUi()
     // correct if the theme's font/padding ever changes.
     m_portSpin->setFixedHeight(m_hostEdit->sizeHint().height());
     connect(m_portSpin, &QSpinBox::editingFinished, this, &SiteManagerDialog::onFieldEdited);
+    // See m_portManuallyEdited's own doc comment — same technique
+    // ConnectionDialog's identical member uses. Connected AFTER the
+    // setValue() above (no subscriber yet regardless) so this never
+    // fires for that one; every LATER programmatic setValue() call
+    // (loadSiteIntoForm()'s, the port-auto-follow lambda below) is
+    // wrapped in a QSignalBlocker specifically so only genuine user
+    // edits ever reach here.
+    connect(m_portSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this]() {
+        m_portManuallyEdited = true;
+    });
+    // The actual auto-follow behavior — a THIRD connection on the same
+    // signal as onProtocolChanged()/onFieldEdited() above, deliberately
+    // kept separate from onProtocolChanged() itself: that method is also
+    // called directly (not just via this signal) from loadSiteIntoForm(),
+    // which already set the port to the SAVED site's own value a few
+    // lines earlier — this connection only fires for a REAL signal
+    // emission, and loadSiteIntoForm() wraps its own m_protocolCombo
+    // change in a QSignalBlocker specifically so this can't accidentally
+    // stomp on a just-loaded site's stored port. Matches ConnectionDialog's
+    // identical port-follows-protocol behavior otherwise.
+    connect(m_protocolCombo, &QComboBox::currentIndexChanged, this, [this]() {
+        if (m_portManuallyEdited)
+            return;
+        const Protocol selected = Protocol(m_protocolCombo->currentData().toInt());
+        const QSignalBlocker blocker(m_portSpin);
+        m_portSpin->setValue(defaultPortFor(selected));
+    });
 
     // 1-10: a small, bounded range where up/down nudging is genuinely
     // useful (unlike Port's much wider range above), so the default
@@ -510,6 +540,14 @@ void SiteManagerDialog::loadSiteIntoForm(const SavedSite &site)
     // CredentialStore::remove() side effect, which is only meant to
     // fire on a real, deliberate uncheck by the person using the dialog.
     const QSignalBlocker b14(m_savePasswordCheck);
+
+    // A manual port edit made while viewing one site must not suppress
+    // auto-follow for a completely different site (or a fresh "New Site"
+    // scratch state) loaded next — see m_portManuallyEdited's own doc
+    // comment. m_portSpin itself is signal-blocked above (b3), so the
+    // setValue() a few lines down can't retrigger this flag on its own;
+    // it's reset here explicitly, once, per load.
+    m_portManuallyEdited = false;
 
     m_nameEdit->setText(site.name);
     m_groupCombo->setCurrentText(site.group);

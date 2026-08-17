@@ -266,7 +266,8 @@ void ScriptRunner::runOpen(const ScriptCommand &cmd)
         break;
     }
     case Protocol::Ftp:
-    case Protocol::Ftps: {
+    case Protocol::Ftps:
+    case Protocol::FtpsImplicit: {
         FtpCredentials creds = request.ftp;
         creds.proxy = m_settings->resolvedProxyConfig();
         creds.bandwidthLimitKBps = m_settings->bandwidthLimitKBps();

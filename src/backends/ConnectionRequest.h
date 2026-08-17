@@ -98,10 +98,15 @@ struct ConnectionRequest {
     }
 };
 
-// Explicit TLS for FTPS, none for plain FTP. The single place this
-// translation lives — see Protocol.h's comment on why the enum keeps
-// them separate.
+// Explicit TLS for Ftps, implicit TLS for FtpsImplicit, none for plain
+// Ftp (or Sftp, which never reaches this — see toConnectionRequest()'s
+// own if/else on protocol == Sftp). The single place this translation
+// lives — see Protocol.h's comment on why the enum keeps them separate.
 inline FtpsMode protocolToFtpsMode(Protocol protocol)
 {
-    return protocol == Protocol::Ftps ? FtpsMode::Explicit : FtpsMode::None;
+    switch (protocol) {
+    case Protocol::Ftps:         return FtpsMode::Explicit;
+    case Protocol::FtpsImplicit: return FtpsMode::Implicit;
+    default:                     return FtpsMode::None;
+    }
 }

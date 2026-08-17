@@ -28,7 +28,7 @@ do
 done
 
 if command -v podman >/dev/null 2>&1; then
-    for container in zephyrftp-test-vsftpd zephyrftp-test-proftpd zephyrftp-test-dropbear zephyrftp-test-tinyproxy; do
+    for container in zephyrftp-test-vsftpd zephyrftp-test-vsftpd-implicit zephyrftp-test-proftpd zephyrftp-test-dropbear zephyrftp-test-tinyproxy; do
         if podman container exists "$container" 2>/dev/null; then
             podman rm -f "$container" >/dev/null && echo "Stopped container $container"
         fi

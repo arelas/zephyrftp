@@ -38,10 +38,15 @@ class CertificateVerifier;
 // parseListLine()'s own comment in the .cpp for exactly what's covered
 // and what isn't.
 //
-// FTPS: explicit mode only (AUTH TLS on the normal port, upgrading an
-// existing plaintext connection) — see FtpCredentials.h. Certificate
-// verification is a real trust-on-first-use (TOFU) model, the same
-// shape as SftpBackend's host-key TOFU: an unverifiable certificate
+// FTPS: both explicit (AUTH TLS on the normal port, upgrading an
+// existing plaintext connection) and implicit (TLS from the first byte
+// of the control connection, on its own conventional port) — see
+// FtpCredentials.h's FtpsMode doc comment for exactly where the two
+// modes' connection sequences diverge, and usesTls() below for the
+// "either encrypted mode" check every TLS-vs-plain decision in this
+// class goes through. Certificate verification is a real
+// trust-on-first-use (TOFU) model, the same shape as SftpBackend's
+// host-key TOFU: an unverifiable certificate
 // (self-signed, unknown CA, ...) is NOT silently accepted or silently
 // rejected — it's routed to certificateVerifier (a GUI-thread object)
 // via a blocking cross-thread call, so a real person makes that call.
@@ -67,7 +72,8 @@ class CertificateVerifier;
 // existed.
 //
 // FTPS (and plain FTP) against real vendor servers (vsftpd, proftpd) is
-// exercised end to end by verify-ftp-vendors/verify-ftps-trust against
+// exercised end to end by verify-ftp-vendors/verify-ftps-trust
+// (explicit FTPS) and verify-ftps-implicit (implicit) against
 // real local containers (tools/local-test-servers/) — see
 // ARCHITECTURE.md's Known Gaps entry for the full story, including the
 // one real, permanent, server-side limitation found there (vsftpd's
@@ -149,6 +155,22 @@ private:
 
     void teardown();
 
+    // True for EITHER encrypted mode (Explicit or Implicit) — the single
+    // check every TLS-vs-plain decision in this class goes through
+    // (control-socket type, data-channel socket type, active-mode
+    // server's rawForTls flag). A real, security-relevant bug found
+    // while adding implicit FTPS: four call sites each independently
+    // re-checked `ftpsMode == FtpsMode::Explicit` before this helper
+    // existed — left that way, implicit mode's CONTROL connection would
+    // have been correctly encrypted while every DATA connection silently
+    // used a non-TLS-capable socket, since m_dataProtected (set once
+    // PBSZ 0/PROT P succeed, identically for both modes) would be true
+    // but finalizeDataChannel()'s dynamic_cast<FtpTlsSocket*> would fail
+    // against a plain QtSocketAdapter — a hard failure on every data
+    // transfer, not a silent downgrade. One helper, not four independent
+    // checks that could drift out of sync again later.
+    bool usesTls() const { return m_credentials.ftpsMode != FtpsMode::None; }
+
     // Built once per connect/data-channel attempt from m_credentials.proxy
     // — QNetworkProxy::NoProxy (a no-op when passed to setProxy()) when
     // proxy.type is ProxyType::None, so every call site can apply this
@@ -166,13 +188,19 @@ private:
     bool performRename(const QString &oldPath, const QString &newPath, QString *errorReason);
 
     // Establishes the control connection if not already up: TCP
-    // connect, (if FTPS) AUTH TLS + PBSZ 0 + PROT P, USER/PASS login,
-    // TYPE I (binary mode, always — this app has no use for FTP's
-    // ASCII/text transfer mode, which would corrupt anything that isn't
-    // plain text). Safe to call repeatedly; a no-op if already
-    // connected. Returns false and emits connectionFailed() on any
-    // failure, leaving the connection torn down rather than in a
-    // half-initialized state.
+    // connect, then — depending on ftpsMode — either nothing (plain
+    // FTP), AUTH TLS after the plaintext welcome banner (Explicit), or
+    // an immediate TLS handshake BEFORE any read at all, welcome banner
+    // included (Implicit — the server's very first bytes back are the
+    // TLS handshake, not a plaintext banner; there's no AUTH TLS command
+    // in this mode, the server never expects one). Either way: PBSZ 0 +
+    // PROT P once encrypted (identical for both modes — RFC 4217
+    // doesn't distinguish there), USER/PASS login, TYPE I (binary mode,
+    // always — this app has no use for FTP's ASCII/text transfer mode,
+    // which would corrupt anything that isn't plain text). Safe to call
+    // repeatedly; a no-op if already connected. Returns false and emits
+    // connectionFailed() on any failure, leaving the connection torn
+    // down rather than in a half-initialized state.
     bool ensureConnected();
 
     // Sends "text\r\n" on the control connection, then reads and returns

@@ -120,7 +120,14 @@ int main(int argc, char *argv[])
         if (portSpin)
             check("port is 21 for explicit FTPS (not implicit-FTPS 990)", portSpin->value() == 21);
 
-        // --- and back to SFTP: the port must follow, not stay stuck at 21 ---
+        // --- switching to implicit FTPS: 990, its own conventional port ---
+        dialog.setProtocol(Protocol::FtpsImplicit);
+        check("protocol reads back as FtpsImplicit after setProtocol",
+              dialog.protocol() == Protocol::FtpsImplicit);
+        if (portSpin)
+            check("port auto-updates to 990 on switch to implicit FTPS", portSpin->value() == 990);
+
+        // --- and back to SFTP: the port must follow, not stay stuck at 990 ---
         dialog.setProtocol(Protocol::Sftp);
         if (portSpin)
             check("port returns to 22 when switching back to SFTP", portSpin->value() == 22);
@@ -229,6 +236,15 @@ int main(int argc, char *argv[])
             check("plain FTP sets FtpsMode::None (no accidental TLS claim)",
                   ftpRequest.ftp.ftpsMode == FtpsMode::None);
 
+            dialog.setProtocol(Protocol::FtpsImplicit);
+            const ConnectionRequest implicitRequest = dialog.connectionRequest();
+            check("implicit FTPS request is tagged FtpsImplicit",
+                  implicitRequest.protocol == Protocol::FtpsImplicit);
+            check("implicit FTPS request populates the FTP credential struct, not the SFTP one",
+                  implicitRequest.ftp.host == "ftp.example.com" && implicitRequest.sftp.host.isEmpty());
+            check("implicit FTPS request sets FtpsMode::Implicit (not Explicit)",
+                  implicitRequest.ftp.ftpsMode == FtpsMode::Implicit);
+
             dialog.setProtocol(Protocol::Sftp);
             const ConnectionRequest sftpRequest = dialog.connectionRequest();
             check("SFTP request populates the SFTP credential struct, not the FTP one",
@@ -301,6 +317,14 @@ int main(int argc, char *argv[])
         ftpsSite.port = 21;
         ftpsSite.username = QStringLiteral("alice");
 
+        SavedSite implicitSite;
+        implicitSite.id = QStringLiteral("id-ftps-implicit");
+        implicitSite.name = QStringLiteral("An implicit-FTPS site");
+        implicitSite.protocol = Protocol::FtpsImplicit;
+        implicitSite.host = QStringLiteral("implicit.example.com");
+        implicitSite.port = 990;
+        implicitSite.username = QStringLiteral("eve");
+
         SavedSite sftpSite;
         sftpSite.id = QStringLiteral("id-sftp");
         sftpSite.name = QStringLiteral("An SFTP site");
@@ -309,16 +333,18 @@ int main(int argc, char *argv[])
         sftpSite.port = 22;
         sftpSite.username = QStringLiteral("bob");
 
-        const bool saved = SiteStore::save({ftpsSite, sftpSite});
+        const bool saved = SiteStore::save({ftpsSite, implicitSite, sftpSite});
         check("SiteStore::save() succeeded", saved);
 
         const QList<SavedSite> loaded = SiteStore::load();
-        check("both sites loaded back", loaded.size() == 2);
-        if (loaded.size() == 2) {
+        check("all three sites loaded back", loaded.size() == 3);
+        if (loaded.size() == 3) {
             check("FTPS site's protocol survived the round-trip",
                   loaded[0].protocol == Protocol::Ftps);
+            check("implicit-FTPS site's protocol survived the round-trip (not misread as explicit)",
+                  loaded[1].protocol == Protocol::FtpsImplicit);
             check("SFTP site's protocol survived the round-trip",
-                  loaded[1].protocol == Protocol::Sftp);
+                  loaded[2].protocol == Protocol::Sftp);
         }
 
         // The mapping into a ConnectionRequest.
@@ -330,6 +356,14 @@ int main(int argc, char *argv[])
         check("a saved FTPS site's password is still empty after mapping "
               "(no-secrets-on-disk rule holds for FTP too)",
               ftpsRequest.ftp.password.isEmpty());
+
+        const ConnectionRequest implicitRequest = implicitSite.toConnectionRequest();
+        check("a saved implicit-FTPS site maps into the FTP credential struct with FtpsMode::Implicit",
+              implicitRequest.protocol == Protocol::FtpsImplicit
+              && implicitRequest.ftp.host == "implicit.example.com"
+              && implicitRequest.ftp.ftpsMode == FtpsMode::Implicit);
+        check("a saved implicit-FTPS site's password is still empty after mapping",
+              implicitRequest.ftp.password.isEmpty());
     }
 
     // ===================================================================

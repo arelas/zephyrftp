@@ -12,19 +12,22 @@
 // Qt6::Widgets) — a QComboBox dependency there would break those builds.
 namespace ProtocolCombo {
 
-// Populates combo with all three Protocol values, in enum-declaration
+// Populates combo with all four Protocol values, in enum-declaration
 // order, using Protocol.h's own displayNameFor() for the label and the
 // enum value itself (not the row index) as the item data — the pattern
 // ConnectionDialog, SiteManagerDialog, and PreferencesDialog each
 // hand-wrote identically, a real duplication found by code review: a
-// fourth Protocol value would otherwise need the same addItem() line
+// new Protocol value would otherwise need the same addItem() line
 // added by hand at three separate call sites, and missing one would
-// silently leave that dialog's combo out of sync with the enum.
+// silently leave that dialog's combo out of sync with the enum. Exactly
+// this happened once already, when FtpsImplicit was added — a single
+// new line here, nothing to touch in any of the three dialogs.
 inline void populate(QComboBox *combo)
 {
-    combo->addItem(displayNameFor(Protocol::Sftp), QVariant::fromValue(int(Protocol::Sftp)));
-    combo->addItem(displayNameFor(Protocol::Ftp),  QVariant::fromValue(int(Protocol::Ftp)));
-    combo->addItem(displayNameFor(Protocol::Ftps), QVariant::fromValue(int(Protocol::Ftps)));
+    combo->addItem(displayNameFor(Protocol::Sftp),         QVariant::fromValue(int(Protocol::Sftp)));
+    combo->addItem(displayNameFor(Protocol::Ftp),          QVariant::fromValue(int(Protocol::Ftp)));
+    combo->addItem(displayNameFor(Protocol::Ftps),         QVariant::fromValue(int(Protocol::Ftps)));
+    combo->addItem(displayNameFor(Protocol::FtpsImplicit), QVariant::fromValue(int(Protocol::FtpsImplicit)));
 }
 
 }

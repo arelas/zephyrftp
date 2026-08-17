@@ -1009,15 +1009,17 @@ void MainWindow::startConnection(const ConnectionRequest &request, FilePaneWidge
         break;
     }
     case Protocol::Ftp:
-    case Protocol::Ftps: {
+    case Protocol::Ftps:
+    case Protocol::FtpsImplicit: {
         // m_certificateVerifier is FTPS's equivalent of m_hostKeyVerifier:
         // an unverifiable server certificate (self-signed, unknown CA, ...)
         // goes through the same real trust-on-first-use prompt a changed
         // SSH host key would, rather than being silently accepted or
         // silently, permanently refused. Harmless to pass for plain FTP
-        // too — FtpBackend only ever calls into it when ftpsMode is
-        // Explicit. Plain FTP itself still authenticates the server not at
-        // all, which is exactly what "unencrypted" means, and why the
+        // too — FtpBackend only ever calls into it when ftpsMode isn't
+        // None (both Explicit and Implicit — see FtpBackend::usesTls()).
+        // Plain FTP itself still authenticates the server not at all,
+        // which is exactly what "unencrypted" means, and why the
         // connection dialog labels it that way rather than leaving the
         // user to infer it.
         FtpCredentials creds = request.ftp;
@@ -1035,7 +1037,7 @@ void MainWindow::startConnection(const ConnectionRequest &request, FilePaneWidge
     }
 
     if (!backend) {
-        // Unreachable while Protocol has exactly the three values above,
+        // Unreachable while Protocol has exactly the four values above,
         // but an unhandled future enum value silently connecting to
         // nothing would be far worse than a visible message.
         statusBar()->showMessage(tr("Unsupported protocol — cannot connect."), 5000);

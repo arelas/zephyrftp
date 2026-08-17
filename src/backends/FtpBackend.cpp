@@ -415,13 +415,17 @@ bool FtpBackend::ensureConnected()
     if (m_connected)
         return true;
 
-    const bool isFtps = m_credentials.ftpsMode == FtpsMode::Explicit;
+    const bool isExplicit = m_credentials.ftpsMode == FtpsMode::Explicit;
+    const bool isImplicit = m_credentials.ftpsMode == FtpsMode::Implicit;
 
-    if (isFtps) {
+    if (usesTls()) {
         // FtpTlsSocket (raw OpenSSL, forced to TLS 1.2) — needed so the
         // control connection's session is genuinely reusable by its data
         // connections; see FtpTlsSocket.h's own doc comment for why
-        // QSslSocket can't do this.
+        // QSslSocket can't do this. Same for both Explicit and Implicit
+        // — connectToHost() here is always just the raw TCP connect,
+        // never a TLS handshake of its own; see the isImplicit branch
+        // right below for where that actually happens.
         m_controlSocket = new FtpTlsSocket();
         auto *tlsSocket = static_cast<FtpTlsSocket *>(m_controlSocket);
         tlsSocket->setProxy(m_credentials.proxy);
@@ -451,6 +455,36 @@ bool FtpBackend::ensureConnected()
         qtSocket->setSocketOption(QAbstractSocket::LowDelayOption, 1);
     }
 
+    if (isImplicit) {
+        // The defining difference from Explicit: the server's very
+        // FIRST bytes back are the TLS handshake itself, not a
+        // plaintext welcome banner — there's no AUTH TLS command in
+        // this mode, the server never expects one, so the handshake
+        // has to happen here, before ANY read, rather than after the
+        // (Explicit-only) plaintext welcome-banner read below. No
+        // session to reuse yet — this is the control connection's own
+        // first handshake; it's what DATA connections reuse afterward
+        // (see finalizeDataChannel()).
+        auto *tlsSocket = static_cast<FtpTlsSocket *>(m_controlSocket);
+        FtpTlsSocket::PeerInfo peerInfo;
+        QString tlsError;
+        const bool handshakeOk = tlsSocket->handshake(nullptr, &peerInfo, &tlsError)
+            && verifyTlsPeer(peerInfo, /*isDataConnection=*/false, &tlsError);
+        if (!handshakeOk) {
+            emit connectionFailed(QStringLiteral(
+                "TLS handshake failed: %1. ZephyrFTP will not connect to a server whose "
+                "certificate it cannot verify without your explicit confirmation.").arg(tlsError));
+            teardown();
+            return false;
+        }
+    }
+
+    // For plain FTP and Explicit FTPS, this is still plaintext (Explicit
+    // hasn't upgraded yet — that happens right below). For Implicit,
+    // this is the first read AFTER the handshake above, so it's already
+    // reading over TLS, transparently — readReply()/sendCommand() don't
+    // know or care which mode is in play, only m_controlSocket's own
+    // concrete type matters, and that's already correct by this point.
     const FtpReply welcome = readReply();
     if (!welcome.isValid() || welcome.code >= 400) {
         emit connectionFailed(QStringLiteral("Server did not send a valid welcome banner"));
@@ -458,7 +492,7 @@ bool FtpBackend::ensureConnected()
         return false;
     }
 
-    if (isFtps) {
+    if (isExplicit) {
         const FtpReply authReply = sendCommand(QStringLiteral("AUTH TLS"));
         if (!authReply.isValid() || authReply.code != 234) {
             emit connectionFailed(QStringLiteral("Server refused AUTH TLS: %1").arg(authReply.text));
@@ -468,11 +502,10 @@ bool FtpBackend::ensureConnected()
 
         // Upgrades the EXISTING plaintext connection in place — this is
         // what makes explicit FTPS "explicit" (as opposed to implicit
-        // FTPS, which is TLS from the very first byte on a separate
-        // port — not implemented here, see the class doc comment). No
-        // session to reuse yet — this is the control connection's own
-        // first handshake; it's what DATA connections reuse afterward
-        // (see finalizeDataChannel()).
+        // FTPS just above, which handshakes before ever reading
+        // anything at all). No session to reuse yet — this is the
+        // control connection's own first handshake; it's what DATA
+        // connections reuse afterward (see finalizeDataChannel()).
         auto *tlsSocket = static_cast<FtpTlsSocket *>(m_controlSocket);
         FtpTlsSocket::PeerInfo peerInfo;
         QString tlsError;
@@ -507,12 +540,13 @@ bool FtpBackend::ensureConnected()
     }
     // else: 230 directly, no password needed — proceed.
 
-    if (isFtps) {
+    if (usesTls()) {
         // Protects the DATA channel too, not just control — required by
-        // RFC 4217 for a properly-encrypted FTPS session. Treated as a
-        // hard failure rather than silently falling back to unprotected
-        // data connections: someone who explicitly asked for FTPS
-        // should never get a plaintext data channel without being told.
+        // RFC 4217 for a properly-encrypted FTPS session, identically
+        // for Explicit and Implicit. Treated as a hard failure rather
+        // than silently falling back to unprotected data connections:
+        // someone who explicitly asked for FTPS should never get a
+        // plaintext data channel without being told.
         const FtpReply pbszReply = sendCommand(QStringLiteral("PBSZ 0"));
         if (!pbszReply.isValid() || pbszReply.code >= 400) {
             emit connectionFailed(QStringLiteral("Server refused PBSZ 0: %1").arg(pbszReply.text));
@@ -634,10 +668,10 @@ bool FtpBackend::openDataChannel(DataChannel *channel, QString *errorOut)
         .arg(octets[0]).arg(octets[1]).arg(octets[2]).arg(octets[3]);
     const quint16 dataPort = static_cast<quint16>((octets[4] << 8) | octets[5]);
 
-    // TLS handshake (FTPS only) is deferred to finalizeDataChannel() —
-    // see that method's own doc comment for why, same for both PASV and
-    // active/PORT.
-    if (m_credentials.ftpsMode == FtpsMode::Explicit) {
+    // TLS handshake (FTPS only, either mode) is deferred to
+    // finalizeDataChannel() — see that method's own doc comment for
+    // why, same for both PASV and active/PORT.
+    if (usesTls()) {
         auto *tlsSocket = new FtpTlsSocket();
         tlsSocket->setProxy(m_credentials.proxy);
         QString connectError;
@@ -696,7 +730,7 @@ bool FtpBackend::openActiveDataChannel(DataChannel *channel, QString *errorOut)
         return false;
     }
 
-    auto *server = new SslAcceptingTcpServer(/*rawForTls=*/m_credentials.ftpsMode == FtpsMode::Explicit);
+    auto *server = new SslAcceptingTcpServer(/*rawForTls=*/usesTls());
     if (!server->listen(localAddress)) {
         if (errorOut) *errorOut = QStringLiteral("Could not open a local port for active mode: %1")
             .arg(server->errorString());
@@ -723,7 +757,7 @@ bool FtpBackend::openActiveDataChannel(DataChannel *channel, QString *errorOut)
 
 FtpSocket *FtpBackend::finalizeDataChannel(DataChannel *channel, QString *errorOut)
 {
-    const bool isFtps = m_credentials.ftpsMode == FtpsMode::Explicit;
+    const bool isFtps = usesTls();
     FtpSocket *rawSocket = nullptr;
 
     if (channel->active) {

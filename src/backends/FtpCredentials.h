@@ -17,12 +17,21 @@
 // "AUTH TLS" to upgrade the existing control connection to TLS before
 // logging in, then "PBSZ 0" + "PROT P" to also encrypt data connections.
 // This is what "FTPS" means in most modern clients (FileZilla defaults
-// to this) and is the only encrypted mode this app supports for now —
-// implicit FTPS (an entirely separate TLS-from-the-start port,
-// historically 990) is legacy and not implemented.
+// to this) and is the mode most servers actually offer.
+// Implicit: TLS from the very first byte of the control connection, on
+// its own conventional port (990 by default) — no "AUTH TLS" command at
+// all, since the server never expects a plaintext phase. Legacy, lower
+// real-world demand than Explicit, but still genuinely offered by some
+// older/embedded FTP servers. "PBSZ 0"/"PROT P" for the data channel
+// are still required identically to Explicit — RFC 4217 doesn't
+// distinguish there. See FtpBackend::ensureConnected() for exactly
+// where the two modes' connection sequences diverge, and
+// FtpBackend::usesTls() for the "either encrypted mode" check every
+// TLS-vs-plain decision in that class goes through.
 enum class FtpsMode {
     None,
-    Explicit
+    Explicit,
+    Implicit
 };
 
 struct FtpCredentials {

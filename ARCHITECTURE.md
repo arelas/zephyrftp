@@ -1124,7 +1124,8 @@ to drive FileZilla itself for a same-desktop comparison.
   `verify-sftp-move`, and `verify-remote-to-remote-live` (two real
   servers, exercising both the port-qualification fix #2's actual
   scenario and, repeatedly, fix #6's) all still pass.
-- `FtpBackend` (`src/backends/FtpBackend.h/.cpp`) — FTP and explicit FTPS,
+- `FtpBackend` (`src/backends/FtpBackend.h/.cpp`) — FTP and both FTPS
+  variants (explicit and implicit — see the dedicated entry below),
   hand-rolled directly on `QTcpSocket`/`QSslSocket`. Implements the full
   `RemoteBackend` interface and runs on a dedicated worker thread under
   the same threading contract as `SftpBackend`. Also uses the same
@@ -1153,8 +1154,11 @@ to drive FileZilla itself for a same-desktop comparison.
   P is active, regardless of which side dialed the TCP connection) is
   opened and the server told to connect back to it via `PORT`. This is a
   fallback, not a mode toggle — PASV's NAT-friendly default behavior is
-  unchanged for every server that accepts it. FTPS is explicit only
-  (`AUTH TLS` upgrading an existing plaintext control connection).
+  unchanged for every server that accepts it. Both explicit FTPS
+  (`AUTH TLS` upgrading an existing plaintext control connection) and
+  implicit FTPS (TLS from the connection's first byte) are supported —
+  see the dedicated entry below for the handshake-timing split and a
+  real bug this addition found and fixed.
   **Certificate verification is a real trust-on-first-use (TOFU) model**
   — the SSH-host-key shape (see `SftpBackend`'s entry above and
   `HostKeyVerifier`), not the old fail-closed-only behavior: an
@@ -1237,13 +1241,86 @@ to drive FileZilla itself for a same-desktop comparison.
   all, directly exercising fix #1's new branch) and `verify-ftps-trust`
   (first-sighting trust prompt, silent match on an unchanged certificate,
   and a real mismatch warning on a genuinely changed one) all still pass.
+- **Implicit FTPS** — `Protocol::FtpsImplicit` (a fourth peer value, not
+  a mode flag on `Ftps` — see the `Protocol`/`ConnectionRequest` entry
+  below for why) and `FtpsMode::Implicit`. The real difference from
+  explicit FTPS is handshake timing, isolated entirely in
+  `FtpBackend::ensureConnected()`: explicit connects on the plain port,
+  reads a plaintext welcome banner, sends `AUTH TLS`, then handshakes;
+  implicit handshakes **immediately** after the raw TCP connect — no
+  plaintext phase at all, no `AUTH TLS` command — and only then reads
+  the welcome banner, now over TLS. `FtpTlsSocket` itself needed zero
+  changes: its `connectToHost()` was already just a raw TCP connect with
+  no assumption of prior plaintext traffic. Everything after login
+  (`PBSZ 0`/`PROT P`, `TYPE I`, starting-directory resolution) is
+  unchanged and shared between both modes.
+  **A real, security-relevant bug found by reading the code directly
+  during planning, not from initial exploration, and fixed before this
+  ever shipped**: four separate call sites in this file (`ensureConnected()`,
+  `openDataChannel()`, `openActiveDataChannel()`, `finalizeDataChannel()`)
+  each independently re-checked `m_credentials.ftpsMode ==
+  FtpsMode::Explicit` to decide whether a socket should be TLS-capable.
+  Left as-is, implicit mode's control connection would have encrypted
+  correctly while every DATA connection (list/upload/download) got a
+  plain, non-TLS-capable socket — `finalizeDataChannel()`'s own
+  `dynamic_cast<FtpTlsSocket*>` would then fail closed on every transfer,
+  not silently downgrade, but still a real correctness gap for a mode
+  whose entire point is "encrypted from the first byte." Fixed by
+  extracting `bool FtpBackend::usesTls() const { return
+  m_credentials.ftpsMode != FtpsMode::None; }` and replacing all four
+  occurrences — makes correctness automatic at every call site instead
+  of four independent edits that could silently drift apart later.
+  **Test-server research, confirmed hands-on rather than assumed**: the
+  project's existing FTP/FTPS test server (`ftp_server.py`, pyftpdlib)
+  cannot do implicit mode at all — its `TLS_FTPHandler` only supports
+  explicit `AUTH TLS`. Confirmed via a throwaway `podman` container
+  running Fedora that real vsftpd (a separate, independently-implemented
+  server) supports implicit FTPS through its own documented
+  `implicit_ssl=YES`/`listen_port` directives (read directly from
+  vsftpd's own man page inside the container, not assumed from
+  secondhand knowledge), and that a single vsftpd process cannot serve
+  both explicit and implicit simultaneously — confirmed the project
+  needed, and now has, a second dedicated container
+  (`Containerfile.vsftpd-implicit`, `start-vsftpd-implicit.sh`,
+  `127.0.0.1:2128`) alongside the existing vsftpd one used for explicit
+  FTPS vendor testing. New permanent live target `verify-ftps-implicit`
+  (handshake, login, `listDirectory()`, and a real upload/download
+  round-trip with content verification) proved non-vacuous via a
+  `git stash`/rebuild/rerun/`git stash pop` cycle: reverting just the
+  `usesTls()` fix causes it to fail (the control connection hangs,
+  attempting a plaintext read against a server speaking TLS from byte
+  one); restoring the fix passes all assertions again.
+  **A pre-existing, unrelated UI bug found by this addition's own
+  mandated visual check, not caused by it**: `SiteManagerDialog`'s port
+  field never auto-followed the protocol combo (`ConnectionDialog`, a
+  fresh one-shot dialog every time, already had this via
+  `onProtocolChanged()`'s own `defaultPortFor()` call gated on a
+  `m_portManuallyEdited` dirty flag; `SiteManagerDialog` never called
+  `defaultPortFor()` at all, for any protocol — confirmed via a
+  `git stash` before/after check that this was true before implicit FTPS
+  existed too, just far less likely to bite anyone when every protocol's
+  default port was 21 or 22). Implicit FTPS's 990 made the gap
+  materially worse (a stale port silently pointed at the wrong service
+  instead of a usually-harmless off-by-one). Fixed with the same
+  `m_portManuallyEdited` pattern, but as a THIRD, separate `connect()` on
+  `m_protocolCombo`'s `currentIndexChanged` signal rather than folded
+  into `onProtocolChanged()` itself: `SiteManagerDialog` is a single
+  long-lived instance reused across every site in the tree, and
+  `loadSiteIntoForm()` calls `onProtocolChanged()` directly (bypassing
+  its own `QSignalBlocker`-protected combo update) purely to refresh
+  field visibility — folding the auto-follow logic into that method
+  would have overwritten a freshly-loaded existing site's own stored
+  port the instant it was clicked. The flag is also reset to `false`
+  inside `loadSiteIntoForm()` on every load, so a manual edit made while
+  viewing one site can't suppress auto-follow for a different site
+  selected next.
 - `Protocol` / `ConnectionRequest` (`src/backends/Protocol.h`,
   `ConnectionRequest.h`) — the seam between "the user picked a protocol"
-  and "construct the matching backend." `Protocol` is a three-value enum
-  (Sftp/Ftp/Ftps) with small helpers hanging off it: the conventional
-  port, the combo-box label, whether key auth applies, and stable string
-  keys for JSON. `ConnectionRequest` pairs a `Protocol` tag with both
-  credential structs, only the relevant one populated.
+  and "construct the matching backend." `Protocol` is a four-value enum
+  (Sftp/Ftp/Ftps/FtpsImplicit) with small helpers hanging off it: the
+  conventional port, the combo-box label, whether key auth applies, and
+  stable string keys for JSON. `ConnectionRequest` pairs a `Protocol` tag
+  with both credential structs, only the relevant one populated.
   Deliberately NOT one merged credentials struct: `SftpCredentials` and
   `FtpCredentials` genuinely diverge (key path, passphrase and auth
   method are meaningless for FTP; `FtpsMode` is meaningless for SFTP),

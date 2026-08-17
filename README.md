@@ -93,7 +93,11 @@ tracks what's changed between them.
   server whose certificate can't be automatically verified (a self-signed
   one, for example), you're shown its fingerprint and asked to trust it.
   That decision is remembered for next time, and you get a clear warning
-  if the certificate ever changes.
+  if the certificate ever changes. Covers both FTPS variants — explicit
+  (upgrades a plaintext connection via `AUTH TLS`, the common case, still
+  the default) and implicit (TLS from the very first byte, conventionally
+  port 990, offered as its own choice in the Connect... dialog and Site
+  Manager for servers that only speak that older mode).
 - **Drag-and-drop or multi-select transfers — whole folders too, not just
   files.** Drag a folder from one pane to the other (or select several,
   mixing files and folders freely) and everything inside gets recreated
@@ -328,11 +332,12 @@ rather than being half-implemented:
   ones so far — not yet a production server out in the wild.** Connecting,
   browsing, and transferring files over plain FTP, active-mode fallback,
   the legacy `LIST` directory-listing fallback, and a full encrypted
-  transfer over FTPS (including trusting a certificate and reusing that
-  trust) have all been confirmed against real, independently-implemented
-  FTP/FTPS server software (vsftpd and proftpd, not just this project's
-  own test stand-in), not just tested in isolation. Still newer and less
-  battle-tested than SFTP; expect some rough edges against servers this
+  transfer over both FTPS variants (explicit and implicit, including
+  trusting a certificate and reusing that trust) have all been confirmed
+  against real, independently-implemented FTP/FTPS server software
+  (vsftpd and proftpd, not just this project's own test stand-in), not
+  just tested in isolation. Still newer and less battle-tested than SFTP;
+  expect some rough edges against servers this
   hasn't specifically been tried against.
 - **Server-to-server transfers are now supported, but staged through a
   local temporary file rather than moving directly between the two

@@ -87,6 +87,22 @@ private:
     // noticeable amount of time, directly on the UI thread.
     QHash<QString, bool> m_hasSecretCache;
 
+    // Same real bug/fix as ConnectionDialog's identically-named member:
+    // without tracking a genuine user edit directly, the port field has
+    // no reliable way to tell "the user deliberately typed this" apart
+    // from "this is just whatever the previous protocol's default
+    // happened to be" — found via a visual check right after implicit
+    // FTPS was added (990 vs. 21/22 makes the gap far more likely to
+    // actually bite someone), but the underlying gap already existed for
+    // plain FTP/FTPS switching too, confirmed by reading the pre-existing
+    // code directly. Unlike ConnectionDialog (always a fresh, one-off
+    // dialog instance), this one instance is reused across every site
+    // clicked in the tree, so this flag is explicitly reset in
+    // loadSiteIntoForm() — a manual edit made while looking at site A
+    // must not suppress the auto-follow behavior for a completely
+    // different site B selected afterward.
+    bool m_portManuallyEdited = false;
+
     QTreeWidget *m_tree;
     QPushButton *m_duplicateButton;
     QPushButton *m_deleteButton;

@@ -1214,6 +1214,22 @@ qt_add_executable(verify-ftps-trust EXCLUDE_FROM_ALL
 target_include_directories(verify-ftps-trust PRIVATE src)
 target_link_libraries(verify-ftps-trust PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent ${OPENSSL_TARGET})
 
+# --- Implicit FTPS against a REAL server (vsftpd, implicit_ssl=YES) —
+# closes the gap that every other FTPS verification here only ever
+# exercises explicit AUTH TLS. See src/verify_ftps_implicit.cpp's own
+# header comment.
+qt_add_executable(verify-ftps-implicit EXCLUDE_FROM_ALL
+    src/verify_ftps_implicit.cpp
+    src/ui/CertificateVerifier.cpp
+    src/backends/FtpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
+    src/backends/FtpTlsSocket.cpp
+    src/backends/ProxyConnect.cpp
+    src/backends/RemoteBackend.h
+)
+target_include_directories(verify-ftps-implicit PRIVATE src)
+target_link_libraries(verify-ftps-implicit PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent ${OPENSSL_TARGET})
+
 # --- Real vendor-diversity verification: actual vsftpd/proftpd, not
 # pyftpdlib — see src/verify_ftp_vendors.cpp's own header comment. Needs
 # tools/local-test-servers/start-vsftpd.sh/start-proftpd.sh's podman

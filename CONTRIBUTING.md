@@ -1323,6 +1323,34 @@ and checking the returned `RemoteEntry::permissions` string, since
 `SftpBackend`'s own `LIST`/attribute parsing (unlike `FtpBackend`'s)
 already reports real bits.
 
+Implicit FTPS needs a genuinely different server than everything above:
+pyftpdlib's `TLS_FTPHandler` (`ftp_server.py`) only supports explicit
+`AUTH TLS`, with no "TLS from accept" mode at all — confirmed by reading
+its own source, not assumed. vsftpd does support implicit mode, via its
+own `implicit_ssl=YES`/`listen_port` directives (confirmed directly from
+vsftpd's own man page, read inside a throwaway container), but a single
+vsftpd process can't serve both explicit and implicit at once, so this
+is a second, separate vsftpd container from the one `start-vsftpd.sh`
+above runs:
+
+```
+tools/local-test-servers/start-vsftpd-implicit.sh
+
+cmake --build build --target verify-ftps-implicit
+QT_QPA_PLATFORM=offscreen ./build/verify-ftps-implicit
+
+tools/local-test-servers/stop-all.sh
+```
+
+Real handshake (TLS from the first byte, no `AUTH TLS`), login, a real
+`listDirectory()`, and a full upload/download round trip with content
+verification against `127.0.0.1:2128`. Proved non-vacuous the same way
+this project always does — a `git stash` on just the
+`FtpBackend.h`/`.cpp` fix, rebuild, rerun: it genuinely fails (the
+control connection hangs, attempting a plaintext read against a server
+that's already speaking TLS) without the fix, and passes cleanly with it
+restored.
+
 Proxy support (SOCKS5/HTTP CONNECT) gets its own two harnesses, each
 proving `SftpBackend`, plain `FtpBackend`, and FTPS all genuinely
 tunnel through a real proxy — not just that `ProxyConfig`/

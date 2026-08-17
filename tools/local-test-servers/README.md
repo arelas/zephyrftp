@@ -36,9 +36,10 @@ third-party pre-built images, no host system packages installed, fully
 start/stop at will.
 
 ```
-tools/local-test-servers/start-vsftpd.sh   # real vsftpd, 127.0.0.1:2126 — never implements MLSD at all
-tools/local-test-servers/start-proftpd.sh  # real proftpd, 127.0.0.1:2127 — MLSD explicitly denied (550)
-tools/local-test-servers/start-dropbear.sh # real Dropbear SFTP, 127.0.0.1:2223 — password auth
+tools/local-test-servers/start-vsftpd.sh          # real vsftpd, 127.0.0.1:2126 — never implements MLSD at all
+tools/local-test-servers/start-vsftpd-implicit.sh # real vsftpd, IMPLICIT FTPS, 127.0.0.1:2128
+tools/local-test-servers/start-proftpd.sh         # real proftpd, 127.0.0.1:2127 — MLSD explicitly denied (550)
+tools/local-test-servers/start-dropbear.sh        # real Dropbear SFTP, 127.0.0.1:2223 — password auth
 ```
 
 `start-vsftpd.sh` is the single highest-value addition: vsftpd has never
@@ -144,7 +145,7 @@ unit-tested against crafted sample data.
 
 ```
 cmake --build build --target verify-sftp-pubkey verify-ftp-live verify-sftp-pause-cancel \
-    verify-ftps-trust verify-ftp-vendors verify-sftp-vendors
+    verify-ftps-trust verify-ftps-implicit verify-ftp-vendors verify-sftp-vendors
 
 QT_QPA_PLATFORM=offscreen SFTP_TEST_SCRATCH=/tmp/zephyrftp-local-test-servers/sftp \
     ./build/verify-sftp-pubkey
@@ -156,6 +157,8 @@ QT_QPA_PLATFORM=offscreen SFTP_TEST_SCRATCH=/tmp/zephyrftp-local-test-servers/sf
     ./build/verify-sftp-pause-cancel
 
 QT_QPA_PLATFORM=offscreen ./build/verify-ftps-trust
+
+QT_QPA_PLATFORM=offscreen ./build/verify-ftps-implicit  # needs start-vsftpd-implicit.sh
 
 QT_QPA_PLATFORM=offscreen ./build/verify-ftp-vendors    # needs start-vsftpd.sh + start-proftpd.sh
 QT_QPA_PLATFORM=offscreen ./build/verify-sftp-vendors   # needs start-dropbear.sh
@@ -170,21 +173,28 @@ That used to be a documented, expected failure — see
 `ARCHITECTURE.md`'s Known gaps entry for the fix (`FtpTlsSocket`, raw
 OpenSSL) and the investigation that found it.
 
-All six drive the real backend classes directly
+All seven drive the real backend classes directly
 (`src/verify_sftp_pubkey.cpp`, `src/verify_ftp_live.cpp`,
 `src/verify_sftp_pause_cancel.cpp`, `src/verify_ftps_trust.cpp`,
-`src/verify_ftp_vendors.cpp`, `src/verify_sftp_vendors.cpp`) — real
-connect, list, download, upload, cancel, pause, and resume, with content
-checked both client-side and (where the server is a native process with
-a host-visible scratch directory) by reading files back directly off
-the server's own disk. `verify-ftp-live` needs `start-ftp.sh`, `start-ftps.sh`,
+`src/verify_ftps_implicit.cpp`, `src/verify_ftp_vendors.cpp`,
+`src/verify_sftp_vendors.cpp`) — real connect, list, download, upload,
+cancel, pause, and resume, with content checked both client-side and
+(where the server is a native process with a host-visible scratch
+directory) by reading files back directly off the server's own disk.
+`verify-ftp-live` needs `start-ftp.sh`, `start-ftps.sh`,
 `start-ftp-legacy-list.sh`, `start-ftps-trusted.sh`, and
 `start-ftp-active-only.sh` all running (five phases, one per server).
 `verify-ftps-trust` needs `start-ftps.sh` and drives the real
 `CertificateVerifier` trust-on-first-use prompt end to end — same
 "auto-accept the real modal dialog" technique `verify-sftp-pubkey` uses
 for the SSH host-key prompt, so it's fully automated despite popping a
-real `QMessageBox`. `verify-sftp-pause-cancel` generates a real
+real `QMessageBox`. `verify-ftps-implicit` needs
+`start-vsftpd-implicit.sh` (a real vsftpd, not pyftpdlib — see
+`containers/` above for why implicit mode needs a genuinely different
+server) and confirms the handshake-timing difference actually works:
+TLS from the connection's first byte, no `AUTH TLS`, a real
+`listDirectory()`, and a full upload/download round trip with content
+verified both ways. `verify-sftp-pause-cancel` generates a real
 (~300MB) local file on first use and reuses it afterward
 (`/tmp/zephyrftp_verify_pause_source.bin`), needed so the transfer runs
 long enough for a cancel/pause request to land reliably mid-flight
