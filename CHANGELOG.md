@@ -8,7 +8,7 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
-## [0.7.34] — Fix a Windows crash from Write Into onto an existing folder tree
+## [0.7.35] — Fix a Windows crash from Write Into onto an existing folder tree
 
 ### Fixed
 
@@ -2089,8 +2089,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.34...HEAD
-[0.7.34]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.34
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.35...HEAD
+[0.7.35]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.35
 [0.7.33]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.33
 [0.7.31]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.31
 [0.7.30]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.30
