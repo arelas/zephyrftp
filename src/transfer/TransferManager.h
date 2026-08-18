@@ -612,12 +612,16 @@ private:
     QSet<QString> m_reservedDestinationKeys;
 
     // Conflict resolution — "remembered" choices reset back to Ask
-    // whenever the queue fully drains (see startNext()'s "nothing left
-    // to run" path), so a fresh batch of transfers gets fresh decisions
-    // rather than silently inheriting a choice from an unrelated earlier
-    // transfer. File and directory conflicts are tracked independently,
-    // matching the two separate checkboxes/decisions the person actually
-    // gets asked about.
+    // whenever the queue fully drains AND no folder/file root-conflict
+    // check is still in flight (see startNext()'s "nothing left to run"
+    // path — m_pendingFolderConflictChecks/m_pendingFileConflictChecks
+    // must be empty too, not just m_active, or a fast-finishing folder
+    // could reset this before a later dropped folder's own still-pending
+    // root check gets to read it), so a fresh batch of transfers gets
+    // fresh decisions rather than silently inheriting a choice from an
+    // unrelated earlier transfer. File and directory conflicts are
+    // tracked independently, matching the two separate checkboxes/
+    // decisions the person actually gets asked about.
     enum class ConflictResolution { Ask, AlwaysOverwrite, AlwaysSkip };
     ConflictResolution m_fileConflictResolution = ConflictResolution::Ask;
     ConflictResolution m_directoryConflictResolution = ConflictResolution::Ask;
@@ -687,6 +691,46 @@ private:
     // remains outstanding.
     ConflictResolution m_moveFileConflictResolution = ConflictResolution::Ask;
     ConflictResolution m_moveDirectoryConflictResolution = ConflictResolution::Ask;
+
+    // Guards askConflict()'s QMessageBox::exec() against a real,
+    // reported bug: exec() pumps the WHOLE app's event queue, not just
+    // events for its own dialog, so a SECOND, unrelated checkExists()
+    // reply already queued at the time it opens (e.g. a second top-level
+    // folder dropped in the same batch — enqueueFolder() is called for
+    // each dropped folder in one synchronous loop, see
+    // m_pendingFolderConflictChecks' own comment) gets delivered and
+    // processed WHILE the first dialog is still open. Un-guarded, that
+    // second reply saw the resolution still at Ask (the first dialog
+    // hadn't been answered yet) and opened its OWN independent dialog,
+    // stacked on top of the first — "Write Into/Overwrite asked for
+    // every top-level dir" instead of the first answer (even "apply to
+    // all") being honored for the rest of the batch, since a dialog that
+    // had already opened before that answer was given has no way to see
+    // it. Set for the duration of every askConflict() call.
+    bool m_conflictDialogInProgress = false;
+
+    // Stashed here instead of being processed immediately whenever
+    // onDestinationExistsChecked() is reentered while
+    // m_conflictDialogInProgress is set — replayed in original arrival
+    // order once the in-progress dialog closes, via
+    // drainDeferredExistsChecks(). A replayed call that ALSO needs its
+    // own dialog (a genuinely different conflict, not covered by
+    // whatever "apply to all" was just chosen) re-enters askConflict()
+    // and re-sets the guard for its own duration — so at most one dialog
+    // is ever open at a time, sequential rather than stacked, exactly
+    // like every other conflict in this codebase already resolves one
+    // at a time.
+    struct DeferredExistsCheck {
+        QString path;
+        bool exists = false;
+        bool isDir = false;
+        int requestId = 0;
+    };
+    QList<DeferredExistsCheck> m_deferredExistsChecks;
+
+    // See m_deferredExistsChecks' own comment above for what this
+    // replays and why. Called once askConflict()'s dialog closes.
+    void drainDeferredExistsChecks();
 
     // Resets m_moveFileConflictResolution/m_moveDirectoryConflictResolution
     // back to Ask once every Move-related bookkeeping structure is empty

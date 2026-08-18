@@ -451,6 +451,57 @@ that way, it's flagged explicitly rather than left implied.
   rather than guessing from the symptom alone, then reverted once the
   cause was confirmed. Fixed with the same `QDir(base).removeRecursively()`
   its siblings already use; confirmed 5/5 clean runs afterward.
+  **A fourth, real, live-reported bug — a genuine dialog-stacking
+  reentrancy, fixed (Phase F):** "Write Into/Overwrite is asked for
+  every top-level dir. The first choice made should be honored for the
+  rest of the transfer." `MainWindow::enqueueEntries()` calls
+  `enqueueFolder()` for every dropped top-level folder in one
+  synchronous loop, queuing all their `checkExists()` calls together
+  before any reply arrives. `askConflict()`'s `QMessageBox::exec()`
+  pumps the WHOLE app's event queue while its own dialog is still
+  open — including a SECOND folder's own already-queued `checkExists()`
+  reply. Since that reply's own `onDestinationExistsChecked()` call ran
+  with `m_directoryConflictResolution` still at `Ask` (the first
+  dialog hadn't been answered yet), it opened its OWN independent
+  dialog, stacked on top of the first, with no way for the person's
+  first answer — even "apply to all" — to reach a dialog that had
+  already opened before that answer was given. Fixed with a new
+  `m_conflictDialogInProgress` guard set for the duration of every
+  `askConflict()` call: any `onDestinationExistsChecked()` invocation
+  that arrives while it's set is stashed (`m_deferredExistsChecks`)
+  instead of processed immediately, then replayed in original order via
+  `drainDeferredExistsChecks()` — called from each of the three call
+  sites (folder root, Move root, ordinary file) AFTER that branch's own
+  resolution state is updated from `applyToAll`, not from inside
+  `askConflict()` itself (an earlier draft of this fix drained too
+  early, before the caller had applied the checkbox's answer, and the
+  replayed check saw the stale `Ask` state and popped its own dialog
+  anyway — caught by the test below, not assumed fixed). At most one
+  dialog is ever open at a time now, sequential rather than stacked.
+  New Phase F (`src/conflict_resolution_test.cpp`) reproduces this
+  deterministically — not a timing gamble: it fires `enqueueFolder()`
+  for two top-level folders back-to-back, synchronously, matching
+  `enqueueEntries()`'s own real loop exactly, then confirms no second
+  dialog ever appears for the second folder and that its file still
+  transfers correctly (the remembered "apply to all, Write Into"
+  choice genuinely applied, not just silently skipped). Proved
+  non-vacuous via `git stash` on just the `TransferManager` fix,
+  rebuild, rerun: the pre-fix code genuinely fails (a second dialog
+  opens, and the first folder's own file never transfers because the
+  wrong dialog gets clicked); restoring the fix passes cleanly again.
+  A separate, narrower related bug fixed alongside this one:
+  `startNext()`'s "nothing left to run" reset of
+  `m_fileConflictResolution`/`m_directoryConflictResolution` only ever
+  checked `m_active.isEmpty()`, not whether a folder/file root-conflict
+  check was still in flight (`m_pendingFolderConflictChecks`/
+  `m_pendingFileConflictChecks`) — a SEPARATE, sequential (not
+  reentrant) scenario where one dropped folder's own transfer finishes
+  fast enough to fully drain `m_active` while a LATER dropped folder's
+  own root-conflict check is still outstanding would have silently
+  discarded the remembered choice before that later folder's own prompt
+  could benefit from it. Same class of premature-reset bug Move already
+  hit and fixed for its own separate resolution state — see
+  `maybeResetMoveConflictResolution()`'s own comment.
 
 - **FTP's directory-listing parsers are verified directly, in isolation
   from any network I/O.** `src/ftp_parsing_test.cpp` (built via the

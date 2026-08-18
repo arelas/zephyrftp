@@ -8,6 +8,17 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Dropping several top-level folders at once could ask Write Into/
+  Overwrite separately for each one, instead of honoring the first
+  answer (including "apply to all") for the rest of the batch.** A real
+  dialog-stacking reentrancy: the first folder's conflict dialog pumps
+  the whole app's event loop while it's open, which could deliver a
+  second folder's own conflict check before the first dialog was
+  answered — popping its own independent dialog on top rather than
+  waiting its turn.
+
 ## [0.7.31] — Fix Transfers/Commands panes vanishing after minimize on Windows
 
 ### Fixed

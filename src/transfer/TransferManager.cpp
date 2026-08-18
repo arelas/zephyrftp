@@ -752,7 +752,24 @@ void TransferManager::startNext()
     // too, not just "no Queued items": an item can be claimed and mid
     // conflict-check (no ActiveTransfer removed yet) without being
     // Queued anymore.
-    if (m_active.isEmpty()) {
+    //
+    // m_pendingFolderConflictChecks/m_pendingFileConflictChecks must ALSO
+    // be empty — a real, reported bug without this: enqueueFolder()'s own
+    // root-conflict check (multiple top-level folders dropped at once,
+    // each with its own in-flight checkExists()) is tracked entirely
+    // separately from m_active (see enqueueFolder()'s own comment — it
+    // deliberately runs BEFORE any per-file items exist at all). If the
+    // first folder's own files finished transferring fast enough to drain
+    // m_active back to empty WHILE a second/third dropped folder's own
+    // root-conflict check was still in flight, this reset fired early and
+    // silently discarded the "apply to all" choice before the next
+    // folder's own prompt could benefit from it — asking Write Into/
+    // Overwrite again for every top-level folder instead of honoring the
+    // first answer for the rest of the batch. Same class of bug Move
+    // already hit and fixed for its own separate resolution state — see
+    // maybeResetMoveConflictResolution()'s own comment.
+    if (m_active.isEmpty() && m_pendingFileConflictChecks.isEmpty()
+        && m_pendingFolderConflictChecks.isEmpty()) {
         m_fileConflictResolution = ConflictResolution::Ask;
         m_directoryConflictResolution = ConflictResolution::Ask;
     }
@@ -1326,8 +1343,27 @@ void TransferManager::ensureMoveConnected(RemoteBackend *backend)
             Qt::UniqueConnection);
 }
 
+void TransferManager::drainDeferredExistsChecks()
+{
+    // Copy-and-clear first: onDestinationExistsChecked() below can itself
+    // append MORE deferred entries (if a replayed check needs its own
+    // fresh dialog, that call re-enters askConflict(), which re-sets
+    // m_conflictDialogInProgress for its own duration) — iterating a live
+    // m_deferredExistsChecks while also appending to it would be unsound.
+    const QList<DeferredExistsCheck> deferred = m_deferredExistsChecks;
+    m_deferredExistsChecks.clear();
+    for (const DeferredExistsCheck &d : deferred)
+        onDestinationExistsChecked(d.path, d.exists, d.isDir, d.requestId);
+}
+
 bool TransferManager::askConflict(const QString &name, bool isDirectory, bool &applyToAll)
 {
+    // See this flag's own doc comment (TransferManager.h) for the real
+    // reentrancy bug this closes: QMessageBox::exec() below pumps the
+    // whole app's event queue, which can deliver another, unrelated
+    // checkExists() reply while this dialog is still open.
+    m_conflictDialogInProgress = true;
+
     QMessageBox box(qobject_cast<QWidget *>(parent()));
     box.setIcon(QMessageBox::Question);
     box.setWindowTitle(isDirectory ? tr("Folder Already Exists") : tr("File Already Exists"));
@@ -1348,12 +1384,35 @@ bool TransferManager::askConflict(const QString &name, bool isDirectory, bool &a
     box.exec();
 
     applyToAll = checkbox->isChecked();
-    return box.clickedButton() == proceedButton;
+    const bool proceed = box.clickedButton() == proceedButton;
+
+    // Cleared here (exec() has now genuinely returned, so nothing else
+    // can be delivered reentrantly regardless of this flag's state) but
+    // deliberately NOT drained here — every caller still needs to apply
+    // applyToAll to its own resolution state (m_directoryConflictResolution/
+    // m_fileConflictResolution/the Move equivalents) FIRST, or a deferred
+    // reply replayed from inside this call would see the OLD resolution
+    // (still Ask) and open a dialog of its own regardless of what was
+    // just chosen. See each call site's own drainDeferredExistsChecks()
+    // call, placed after that update.
+    m_conflictDialogInProgress = false;
+
+    return proceed;
 }
 
 void TransferManager::onDestinationExistsChecked(const QString &path, bool exists, bool isDir, int requestId)
 {
-    Q_UNUSED(path);
+    // See m_conflictDialogInProgress's own doc comment (TransferManager.h)
+    // for the real reentrancy bug this guards against: a conflict dialog
+    // currently open elsewhere on the call stack (inside askConflict()'s
+    // QMessageBox::exec(), which pumps the whole event queue) means THIS
+    // reply — for a genuinely different file/folder — must wait, not open
+    // its own independent, stacked dialog before the first one is even
+    // answered. Replayed later, in order, by drainDeferredExistsChecks().
+    if (m_conflictDialogInProgress) {
+        m_deferredExistsChecks.append({path, exists, isDir, requestId});
+        return;
+    }
     Q_UNUSED(isDir);   // a genuine type mismatch (e.g. uploading a file where a folder of that
                        // name already exists) isn't specifically detected here — it surfaces as
                        // a normal backend error when the transfer is actually attempted, same as
@@ -1385,6 +1444,12 @@ void TransferManager::onDestinationExistsChecked(const QString &path, bool exist
                 m_directoryConflictResolution =
                     proceed ? ConflictResolution::AlwaysOverwrite : ConflictResolution::AlwaysSkip;
             }
+            // Only now, AFTER m_directoryConflictResolution above is
+            // already updated — a deferred reply replayed any earlier
+            // would see the OLD resolution (still Ask) and open a
+            // dialog of its own regardless of what was just chosen. See
+            // m_conflictDialogInProgress's own doc comment.
+            drainDeferredExistsChecks();
         }
 
         if (proceed)
@@ -1426,6 +1491,9 @@ void TransferManager::onDestinationExistsChecked(const QString &path, bool exist
             proceed = askConflict(name, isFolder, applyToAll);
             if (applyToAll)
                 resolution = proceed ? ConflictResolution::AlwaysOverwrite : ConflictResolution::AlwaysSkip;
+            // See the folder-conflict branch above's identical comment —
+            // must run AFTER resolution is updated.
+            drainDeferredExistsChecks();
         }
 
         if (!proceed) {
@@ -1498,20 +1566,25 @@ void TransferManager::onDestinationExistsChecked(const QString &path, bool exist
             // here is captured across this call for that reason;
             // activeIndexForItem(itemIndex) below is looked up fresh.
             // Deliberately no `TransferItem &` held across this call
-            // either — with real concurrency, another item's own
-            // checkExists() response can arrive and run reentrantly
-            // while this dialog is up, and some of those paths
-            // (e.g. a Move-into-a-non-empty-folder failure just below,
-            // or a folder enumeration's own enqueue() continuing) append
-            // a new item to m_items. m_items reallocating on append
-            // would dangle any reference into it taken before this call;
-            // only a plain QString copy is read beforehand instead.
+            // either: even though another checkExists() reply arriving
+            // while this dialog is up now gets DEFERRED rather than
+            // processed immediately (see m_conflictDialogInProgress's own
+            // doc comment), other reentrant paths reachable from this
+            // same pumped event loop (e.g. a Move-into-a-non-empty-folder
+            // failure, or a folder enumeration's own enqueue() continuing)
+            // can still append a new item to m_items. m_items
+            // reallocating on append would dangle any reference into it
+            // taken before this call; only a plain QString copy is read
+            // beforehand instead.
             const QString destFileName = QFileInfo(m_items[itemIndex].destPath).fileName();
             proceed = askConflict(destFileName, /*isDirectory=*/false, applyToAll);
             if (applyToAll) {
                 m_fileConflictResolution =
                     proceed ? ConflictResolution::AlwaysOverwrite : ConflictResolution::AlwaysSkip;
             }
+            // See the folder-conflict branch's identical comment above —
+            // must run AFTER resolution is updated.
+            drainDeferredExistsChecks();
         }
 
         if (proceed) {

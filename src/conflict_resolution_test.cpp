@@ -331,23 +331,101 @@ int main(int argc, char *argv[])
                   sawReentrancyResolvedCorrectly);
             check("Phase E: destination reentrancy.txt was left untouched (skip really applied, to the right item)",
                   readFile(base + "/dst/reentrancy.txt") == "OLD reentrancy");
-
-            qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
-            app.exit(allPass ? 0 : 1);
+            // NOT exiting here — Phase F below still needs to run. See its
+            // own final block (and the combined safety net after it) for
+            // where this test actually ends now.
         }
     });
 
-    // Safety net, not the primary mechanism — same reasoning
-    // remote_to_remote_test.cpp's own equivalent deadline uses: if a real
-    // bug ever breaks the expected sequence, this turns an indefinite
-    // hang into a clear, fast, informative failure instead of tying up a
-    // CI job until its outer timeout.
+    // Safety net for Phase E specifically — does NOT exit the test (Phase F
+    // still needs to run either way); just records the failure so it shows
+    // up in the final verdict even if Phase F's own completion is what
+    // actually ends app.exec().
     QTimer::singleShot(20000, &app, [&]() {
         if (sawReentrancyResolvedCorrectly)
             return;
-        check("test timed out waiting for reentrancy.txt's own resolution", false);
-        qDebug() << "[test] AT LEAST ONE FAILURE";
-        app.exit(1);
+        check("Phase E: test timed out waiting for reentrancy.txt's own resolution", false);
+    });
+
+    // ===================================================================
+    // Phase F: regression test for a real, live-reported bug — multiple
+    // top-level folders dropped in the same batch ("Write Into/Overwrite
+    // is asked for every top-level dir. The first choice made should be
+    // honored for the rest of the transfer"). enqueueFolder()'s own
+    // root-conflict check (m_pendingFolderConflictChecks) runs entirely
+    // separately from m_active/m_items — so once the FIRST folder's own
+    // transfer finished and fully drained m_active back to empty,
+    // startNext()'s "nothing left to run, reset conflict decisions" path
+    // fired and silently discarded the "apply to all, Write Into" choice
+    // BEFORE a second top-level folder's own root-conflict check ever got
+    // to benefit from it, prompting again instead of honoring the first
+    // answer.
+    //
+    // folderY's own enqueueFolder() call is made SYNCHRONOUSLY, in the
+    // SAME callback that answers folderX's dialog — not after waiting for
+    // folderX's transfer to actually finish. This is deliberate, not
+    // sloppy sequencing: it guarantees folderY's checkExists() request is
+    // inserted into m_pendingFolderConflictChecks before control ever
+    // returns to the event loop, so folderX's own async chain (dialog
+    // exec() unwinding, transfer dispatch, file copy, m_active draining)
+    // cannot possibly run first and empty m_active before folderY's
+    // request exists — a deterministic reproduction of the real
+    // precondition, not a timing gamble. It also mirrors MainWindow's own
+    // real drag-drop handling, which calls enqueueFolder() for every
+    // dropped top-level folder in one synchronous loop before any of
+    // their checkExists() calls resolve (see m_pendingFolderConflictChecks'
+    // own header comment).
+    // ===================================================================
+    QTimer::singleShot(7200, &app, [&]() {
+        QDir().mkpath(base + "/src/folderX");
+        writeFile(base + "/src/folderX/x.txt", "new folderX file");
+        QDir().mkpath(base + "/dst/folderX");
+        writeFile(base + "/dst/folderX/existing.txt", "already in folderX");
+        QDir().mkpath(base + "/src/folderY");
+        writeFile(base + "/src/folderY/y.txt", "new folderY file");
+        QDir().mkpath(base + "/dst/folderY");
+        writeFile(base + "/dst/folderY/existing.txt", "already in folderY");
+
+        // Matches MainWindow::enqueueEntries()'s own real loop over a
+        // multi-folder drop/selection EXACTLY: both calls back-to-back,
+        // synchronously, before either's checkExists() reply arrives.
+        manager->enqueueFolder(srcPane, dstPane, "folderX");
+        manager->enqueueFolder(srcPane, dstPane, "folderY");
+    });
+
+    QTimer::singleShot(7700, &app, [&]() {
+        const bool clicked = clickConflictDialog(/*checkApplyToAll=*/true, "Write Into");
+        check("Phase F: folder conflict dialog appeared for folderX", clicked);
+    });
+
+    QTimer::singleShot(8500, &app, [&]() {
+        check("Phase F: folderX's new file was transferred in",
+              readFile(base + "/dst/folderX/x.txt") == "new folderX file");
+    });
+
+    QTimer::singleShot(9000, &app, [&]() {
+        const bool dialogOpen = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()) != nullptr;
+        check("Phase F: NO second dialog for folderY — folderX's apply-to-all Write Into choice "
+              "was honored instead of being reset while a second folder's own root-conflict "
+              "check was effectively still part of the same batch", !dialogOpen);
+    });
+
+    // Plain timer-based check with a generous margin, same proven pattern
+    // Phase D above already uses — NOT folderTransferFinished, which fires
+    // right after enumeration issues its enqueue() calls, not after the
+    // actual file transfer completes (see startFolderEnumeration()'s own
+    // comment: fileCount == 0 for an all-empty-subdirectory tree is a
+    // valid, non-error outcome specifically because that signal isn't
+    // tied to real completion at all).
+    QTimer::singleShot(9800, &app, [&]() {
+        check("Phase F: folderY's new file really landed on disk (its resolution was honored, "
+              "not silently dropped)",
+              readFile(base + "/dst/folderY/y.txt") == "new folderY file");
+        check("Phase F: folderY's pre-existing file was left alone (merge, not replace)",
+              readFile(base + "/dst/folderY/existing.txt") == "already in folderY");
+
+        qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
+        app.exit(allPass ? 0 : 1);
     });
 
     return app.exec();
