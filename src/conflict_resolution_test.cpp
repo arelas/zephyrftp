@@ -456,7 +456,14 @@ int main(int argc, char *argv[])
     // fileOperationFailed in the first place, so there's nothing for
     // Phase H's reentrancy guard below to even need to defer here.
     // ===================================================================
-    QTimer::singleShot(14000, &app, [&]() {
+    // Wider gaps than Phase F above — v0.7.34's own first release CI run
+    // failed "Phase G: folder conflict dialog appeared for crashdir" on
+    // one of five platforms with the original (500ms-ish) margins, while
+    // repeated local runs (both native and in a matching podman
+    // container) passed clean every time — the same class of CI-runner-
+    // load timing issue Phase F's own margins already needed widening
+    // for once before (see that phase's own comment).
+    QTimer::singleShot(15000, &app, [&]() {
         QDir().mkpath(base + "/src/crashdir/a/b");
         QDir().mkpath(base + "/src/crashdir/c/d");
         QDir().mkpath(base + "/src/crashdir/e");
@@ -470,12 +477,12 @@ int main(int argc, char *argv[])
         manager->enqueueFolder(srcPane, dstPane, "crashdir");
     });
 
-    QTimer::singleShot(14700, &app, [&]() {
+    QTimer::singleShot(16200, &app, [&]() {
         const bool clicked = clickConflictDialog(/*checkApplyToAll=*/false, "Write Into");
         check("Phase G: folder conflict dialog appeared for crashdir", clicked);
     });
 
-    QTimer::singleShot(16500, &app, [&]() {
+    QTimer::singleShot(18500, &app, [&]() {
         const bool dialogOpen = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()) != nullptr;
         check("Phase G: NO 'Create folder failed' dialog appeared for any already-existing "
               "nested subdirectory (the actual crash trigger) — ignoreAlreadyExists silently "
@@ -499,7 +506,7 @@ int main(int argc, char *argv[])
     // createDirectory() calls fired back-to-back, synchronously, before
     // any of their replies arrive.
     // ===================================================================
-    QTimer::singleShot(17500, &app, [&]() {
+    QTimer::singleShot(19500, &app, [&]() {
         for (int i = 0; i < 6; ++i)
             writeFile(base + QString("/dst/typeconflict%1").arg(i), "a file, not a directory");
 
@@ -510,6 +517,13 @@ int main(int argc, char *argv[])
         }
     });
 
+    // The polling loop itself is already patient (keeps retrying every
+    // 250ms with no fixed timeout of its own, only stopping once all 6
+    // are shown) — widened here is the delay before the FIRST poll
+    // (giving the burst above more time to actually be dispatched and
+    // its first failure reply delivered) and the final deadline check
+    // below, same CI-runner-load reasoning as Phase G's own widening
+    // just above.
     auto warningsShown = std::make_shared<int>(0);
     auto clickNextWarning = std::make_shared<std::function<void()>>();
     *clickNextWarning = [&app, warningsShown, clickNextWarning]() {
@@ -518,11 +532,11 @@ int main(int argc, char *argv[])
             box->accept();
         }
         if (*warningsShown < 6)
-            QTimer::singleShot(150, &app, *clickNextWarning);
+            QTimer::singleShot(250, &app, *clickNextWarning);
     };
-    QTimer::singleShot(18000, &app, *clickNextWarning);
+    QTimer::singleShot(20500, &app, *clickNextWarning);
 
-    QTimer::singleShot(20500, &app, [&]() {
+    QTimer::singleShot(25000, &app, [&]() {
         check("Phase H: all 6 genuine createDirectory failures were shown and dismissed, one "
               "at a time, without crashing (the reentrancy guard actually works)",
               *warningsShown == 6);
