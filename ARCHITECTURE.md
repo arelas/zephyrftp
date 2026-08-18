@@ -4453,6 +4453,50 @@ to drive FileZilla itself for a same-desktop comparison.
   progress UI for a large recursive delete (matches this project's
   existing multi-delete UX, which already has none).
 
+  **A real, live-reported performance regression from the Write Into
+  crash fix above, found the same way the crash itself was — a real
+  user's report, not assumed:** "when I go to transfer a large set of
+  data, the app hangs and says preparing transfer" (SFTP, ~10 seconds,
+  window stayed responsive — accumulated round-trip latency, not a true
+  GUI-thread freeze). Root cause: `TransferManager::
+  startFolderFileTransfers()`'s directory-creation loop passed
+  `ignoreAlreadyExists=true` to `createDirectory()` UNCONDITIONALLY, for
+  every directory in the enumerated tree, regardless of whether the
+  transfer was even a Write Into merge. That parameter is not free —
+  `SftpBackend`'s implementation does a real, synchronous
+  `libssh2_sftp_stat()` round trip before every `mkdir`; `FtpBackend`'s
+  does a full parent-directory LISTING — so a folder with many
+  subdirectories paid one full network round trip per directory before
+  its first `mkdir` even started. For a genuinely NEW top-level
+  destination folder (`rootAlreadyExists == false`, confirmed by
+  `enqueueFolder()`'s own upfront existence check before enumeration
+  even begins) that check can never do anything but waste time: a
+  nested path cannot exist unless its parent does, so nothing inside a
+  provably-new folder can possibly already exist either — the exact
+  same "verify rather than assume" reasoning this project already
+  applies to code review applies here structurally, by the nature of a
+  hierarchical namespace, not by probability. Fixed by passing
+  `rootAlreadyExists` itself as the argument instead of a hardcoded
+  `true` — the existence check now runs only for an actual Write Into
+  merge, where a nested directory genuinely might already exist, and is
+  skipped entirely otherwise, restoring the pre-crash-fix behavior for
+  the overwhelmingly common (non-merge) case. The fix applies uniformly
+  to `SftpBackend` and `FtpBackend` both, from the one call site, even
+  though only SFTP had been tested live when reported.
+
+  No new required-suite target was added for this fix: it changes
+  timing, not behavior, and `LocalBackend`'s own version of the
+  existence check has no round-trip cost to observe either way, so no
+  local backend (real or a new fake/spy one) could actually demonstrate
+  the regression or its fix — a new argument-value-spy test would only
+  re-assert the one-line diff itself. Instead verified via the existing
+  `conflict-resolution-test`'s Phase D/G (which drive the
+  `rootAlreadyExists == true` path directly and confirm it still
+  receives `ignoreAlreadyExists == true`, unaffected by this change) and
+  `folder-transfer-test` (confirms `rootAlreadyExists == false` folder
+  transfers still complete correctly end-to-end against a real nested
+  tree), plus the full 25-target required suite, all passing.
+
   **Scripting/automation (CLI mode)** — WinSCP's own flagship
   differentiator, picked as the next v2 target once sync/mirror browsing
   was fully shipped (both halves). `--script=<path>` (new

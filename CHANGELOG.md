@@ -8,6 +8,22 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A real performance regression from the previous crash fix: a folder
+  transfer over SFTP (and equally, FTP/FTPS) could sit on "Preparing to
+  transfer..." for several seconds before starting, for an entirely
+  ordinary transfer into a brand-new destination folder.** The crash
+  fix's `ignoreAlreadyExists` existence check was being paid for every
+  single directory in the tree, unconditionally — a real network round
+  trip each (`SftpBackend`: a `libssh2_sftp_stat()` call; `FtpBackend`:
+  a full parent-directory listing) — even though a genuinely new
+  top-level destination folder can't possibly already contain anything,
+  making the check provably unnecessary in that case. Now only paid for
+  an actual Write Into merge onto an existing folder, where it's
+  actually needed; skipped entirely otherwise, same as before the crash
+  fix.
+
 ## [0.7.36] — Recursive delete, with a warning
 
 ### Added

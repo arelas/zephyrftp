@@ -490,8 +490,8 @@ void TransferManager::startFolderFileTransfers(FilePaneWidget *sourcePane, FileP
     // OTHER directory (e.g. the destination happens to already have some
     // of this structure — expected now that Write Into is an explicit,
     // deliberate choice) is NOT treated as an error, via
-    // ignoreAlreadyExists=true below — see that parameter's own doc
-    // comment (RemoteBackend.h) for the real crash this fixes.
+    // ignoreAlreadyExists below — see that parameter's own doc comment
+    // (RemoteBackend.h) for the real crash this fixes.
     // **CORRECTION, found by an actual crash report, not assumed**: an
     // earlier version of this comment claimed "already exists" for a
     // nested directory was harmless because createDirectory()'s
@@ -511,10 +511,29 @@ void TransferManager::startFolderFileTransfers(FilePaneWidget *sourcePane, FileP
     // (STATUS_STACK_OVERFLOW) on Windows.
     // The root item (FolderEnumerator's own first result, relativePath
     // == folderName) is still skipped entirely when the caller already
-    // confirmed it exists (rootAlreadyExists) — a harmless, redundant
-    // optimization now that ignoreAlreadyExists covers this case too,
-    // kept as-is rather than removed during a crash fix that doesn't
-    // need to touch it.
+    // confirmed it exists (rootAlreadyExists).
+    //
+    // **A second real bug, this one a live-reported performance
+    // regression from the crash fix above, not assumed either**:
+    // ignoreAlreadyExists was passed unconditionally (always true) —
+    // but SftpBackend's implementation of it does a real, synchronous
+    // libssh2_sftp_stat() round trip BEFORE every mkdir, and FtpBackend's
+    // does a full parent-directory LISTING. For a genuinely NEW
+    // top-level folder (rootAlreadyExists == false, confirmed by
+    // enqueueFolder()'s own upfront existence check) NOTHING inside it
+    // can possibly already exist either — there is no destination tree
+    // to merge into — so that extra round trip can never do anything
+    // but waste time, one full network round trip per directory, for
+    // every ordinary (non-Write-Into) folder transfer. A real user
+    // reported the exact resulting symptom: a real SFTP folder transfer
+    // with many subdirectories sitting on "Preparing to transfer..." for
+    // about ten seconds before actually starting — consistent with
+    // dozens of avoidable round trips at ordinary network latency. Now
+    // passed as rootAlreadyExists itself: true only for the one case
+    // where a nested directory genuinely might already exist (an actual
+    // Write Into merge), false otherwise, which skips the redundant
+    // check entirely and goes straight to mkdir, same as before the
+    // crash fix, for the overwhelmingly common case.
     for (const EnumeratedItem &item : items) {
         if (!item.isDir)
             continue;
@@ -522,7 +541,7 @@ void TransferManager::startFolderFileTransfers(FilePaneWidget *sourcePane, FileP
             continue;
         const QString destDirPath = joinPath(destPane->currentDirectory(), item.relativePath);
         QMetaObject::invokeMethod(dstBackend, "createDirectory", Qt::QueuedConnection,
-                                   Q_ARG(QString, destDirPath), Q_ARG(bool, true));
+                                   Q_ARG(QString, destDirPath), Q_ARG(bool, rootAlreadyExists));
     }
 
     // Every file goes through the ordinary enqueue() — its existing
