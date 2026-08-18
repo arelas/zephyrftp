@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.31] — Fix Transfers/Commands panes vanishing after minimize on Windows
+
 ### Fixed
 
 - **Windows: the Transfers and Commands panes went missing after
@@ -2059,7 +2061,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.30...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.31...HEAD
+[0.7.31]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.31
 [0.7.30]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.30
 [0.7.29]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.29
 [0.7.28]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.28
