@@ -4439,6 +4439,43 @@ to drive FileZilla itself for a same-desktop comparison.
   fixed, real before/after screenshots confirmed a genuine, correctly-
   colored dark-to-light switch — see the session history for the actual
   captured images.
+  **Real, reported bug, fixed: Transfers/Commands panes went missing
+  after restoring the window from minimized on Windows, and re-checking
+  them via the View menu didn't stick.** Root cause: the View menu's
+  Transfers/Commands entries are hand-wired, two-way-bound `QAction`s
+  (see this entry's own comment on why they can't just reuse
+  `toggleViewAction()` — the icon-bleeding problem) —
+  `toggled -> setVisible` one direction, `visibilityChanged -> setChecked`
+  the other. `QDockWidget::visibilityChanged` also fires when the WHOLE
+  main window is minimized (confirmed directly: a disposable probe
+  driving a real `MainWindow` through `showMinimized()`/`showNormal()`
+  showed it firing with `visible=false`), and `QAction::setChecked()`
+  emits `toggled()` by default whenever the checked state actually
+  changes — so the minimize-driven `visibilityChanged(false)` drove
+  `setChecked(false)`, which re-emitted `toggled(false)`, which called
+  `m_transfersDock->setVisible(false)` for real. That's the critical
+  difference: minimizing only hides a dock IMPLICITLY (an ancestor
+  became invisible), which Qt automatically reverses once the window is
+  restored — but this explicit `setVisible(false)` call set
+  `WA_WState_ExplicitShowHide`, which restoring the window does NOT
+  reverse, so the dock (and its menu checkmark) stayed hidden for good
+  after every minimize/restore, and manually re-checking it only lasted
+  until the next transient hide re-triggered the same loop. Fixed by
+  wrapping the `visibilityChanged -> setChecked` sync in a
+  `QSignalBlocker` — that direction only ever needs to keep the
+  checkmark's VISUAL state honest, never to re-drive `setVisible()`
+  itself, so it must never re-emit `toggled()`. Confirmed directly, not
+  assumed: the disposable probe reproduced the exact bug against the
+  pre-fix code (`WA_WState_ExplicitShowHide` flips to `true` after
+  minimize, dock stays hidden after `showNormal()`) and confirmed the
+  fix across two consecutive minimize/restore cycles
+  (`WA_WState_ExplicitShowHide` stays `false`, dock and checkmark both
+  correctly reappear). The toolbar's own Transfers/Commands buttons,
+  which reuse each dock's real `toggleViewAction()`, were never affected —
+  Qt's own internal implementation connects to `triggered()` (real user
+  clicks only), not `toggled()` (any programmatic state change), which
+  is exactly the distinction this fix restores for the hand-wired menu
+  actions too.
 
 ## Design system
 

@@ -8,6 +8,15 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows: the Transfers and Commands panes went missing after
+  restoring the window from minimized, and re-enabling them via the
+  View menu didn't stick.** A feedback loop in the View menu's
+  Transfers/Commands toggles converted the transient, harmless hiding
+  that happens on minimize into a permanent one that restoring the
+  window couldn't undo.
+
 ## [0.7.30] — Implicit FTPS
 
 ### Added

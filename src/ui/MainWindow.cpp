@@ -42,6 +42,7 @@
 #include <QThread>
 #include <QMessageBox>
 #include <QDockWidget>
+#include <QSignalBlocker>
 #include <QCloseEvent>
 #include <QLineEdit>
 #include <QComboBox>
@@ -179,18 +180,41 @@ void MainWindow::buildMenuBar()
     // way a dock's visibility can change — the toolbar button, restoreState(),
     // or a floating dock's native WM-drawn close button) keeps the
     // checkmark honest.
+    //
+    // A real, shipped bug lived here: visibilityChanged ALSO fires when
+    // the whole main window is minimized (confirmed directly — a
+    // disposable probe showed it firing twice on showMinimized(), with
+    // isVisible() going false), which — without the QSignalBlocker below —
+    // drove setChecked(false), which (setChecked emits toggled() by
+    // default) re-triggered the OTHER connection, calling
+    // m_transfersDock->setVisible(false) explicitly. That's the critical
+    // difference: minimizing only hides a dock IMPLICITLY (an ancestor
+    // became invisible), which Qt automatically reverses when the window
+    // is restored — but an explicit setVisible(false) call sets
+    // WA_WState_ExplicitShowHide, which restoring the window does NOT
+    // reverse, so the dock (and its toolbar/menu checkmark) stayed
+    // permanently hidden after every minimize/restore. The
+    // QSignalBlocker breaks the loop: this connection only needs to keep
+    // the checkmark's VISUAL state honest, never to re-drive setVisible()
+    // itself, so it must never re-emit toggled().
     QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
     QAction *transfersViewToggle = viewMenu->addAction(tr("&Transfers"));
     transfersViewToggle->setCheckable(true);
     transfersViewToggle->setChecked(m_transfersDock->isVisible());
     connect(transfersViewToggle, &QAction::toggled, m_transfersDock, &QDockWidget::setVisible);
-    connect(m_transfersDock, &QDockWidget::visibilityChanged, transfersViewToggle, &QAction::setChecked);
+    connect(m_transfersDock, &QDockWidget::visibilityChanged, transfersViewToggle, [transfersViewToggle](bool visible) {
+        const QSignalBlocker blocker(transfersViewToggle);
+        transfersViewToggle->setChecked(visible);
+    });
 
     QAction *commandsViewToggle = viewMenu->addAction(tr("&Commands"));
     commandsViewToggle->setCheckable(true);
     commandsViewToggle->setChecked(m_commandsDock->isVisible());
     connect(commandsViewToggle, &QAction::toggled, m_commandsDock, &QDockWidget::setVisible);
-    connect(m_commandsDock, &QDockWidget::visibilityChanged, commandsViewToggle, &QAction::setChecked);
+    connect(m_commandsDock, &QDockWidget::visibilityChanged, commandsViewToggle, [commandsViewToggle](bool visible) {
+        const QSignalBlocker blocker(commandsViewToggle);
+        commandsViewToggle->setChecked(visible);
+    });
 
     // NOT a toggleViewAction() — m_quickConnectToolBar (not a
     // QDockWidget) is what actually gets shown/hidden here; see its own
