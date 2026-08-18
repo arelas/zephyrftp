@@ -393,17 +393,32 @@ int main(int argc, char *argv[])
         manager->enqueueFolder(srcPane, dstPane, "folderY");
     });
 
-    QTimer::singleShot(7700, &app, [&]() {
+    // Wider gaps than the phases above (1000-1800ms, not 500-800ms) —
+    // this step alone does 4 mkpath()/writeFile() calls plus TWO
+    // enqueueFolder() dispatches (two separate checkExists() round trips)
+    // before the first dialog can even appear, meaningfully more work
+    // than any single-folder phase above. A real, CI-only failure
+    // confirmed this margin actually matters, not just theoretically:
+    // v0.7.32's own initial release CI run failed this exact check on 3
+    // of 5 platforms (macOS, and both Fedora-container Linux jobs) with
+    // the original 500ms gap, while a local podman container matching
+    // those exact jobs passed 5/5 clean runs — a slower/more-contended
+    // CI runner, not a logic bug (same class of lesson Phase D's own
+    // comment already documents, and the same diagnostic technique
+    // project_ci_containerized_debugging's own memory describes: confirm
+    // a clean local repro in the SAME container first, before concluding
+    // it's a margin issue rather than a real regression).
+    QTimer::singleShot(8700, &app, [&]() {
         const bool clicked = clickConflictDialog(/*checkApplyToAll=*/true, "Write Into");
         check("Phase F: folder conflict dialog appeared for folderX", clicked);
     });
 
-    QTimer::singleShot(8500, &app, [&]() {
+    QTimer::singleShot(10200, &app, [&]() {
         check("Phase F: folderX's new file was transferred in",
               readFile(base + "/dst/folderX/x.txt") == "new folderX file");
     });
 
-    QTimer::singleShot(9000, &app, [&]() {
+    QTimer::singleShot(11200, &app, [&]() {
         const bool dialogOpen = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()) != nullptr;
         check("Phase F: NO second dialog for folderY — folderX's apply-to-all Write Into choice "
               "was honored instead of being reset while a second folder's own root-conflict "
@@ -417,7 +432,7 @@ int main(int argc, char *argv[])
     // comment: fileCount == 0 for an all-empty-subdirectory tree is a
     // valid, non-error outcome specifically because that signal isn't
     // tied to real completion at all).
-    QTimer::singleShot(9800, &app, [&]() {
+    QTimer::singleShot(13000, &app, [&]() {
         check("Phase F: folderY's new file really landed on disk (its resolution was honored, "
               "not silently dropped)",
               readFile(base + "/dst/folderY/y.txt") == "new folderY file");
