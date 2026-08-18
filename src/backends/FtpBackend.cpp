@@ -1562,10 +1562,28 @@ QString FtpBackend::connectionIdentity() const
         .arg(m_credentials.port);
 }
 
-void FtpBackend::createDirectory(const QString &path)
+void FtpBackend::createDirectory(const QString &path, bool ignoreAlreadyExists)
 {
     if (!ensureConnected())
         return;
+
+    if (ignoreAlreadyExists) {
+        // Same listing-based existence/type check checkExists() already
+        // uses — FTP has no single command that cleanly reports both
+        // existence and type for an arbitrary path.
+        const int lastSlash = path.lastIndexOf(QLatin1Char('/'));
+        const QString parentPath = lastSlash > 0 ? path.left(lastSlash) : QStringLiteral("/");
+        const QString name = path.mid(lastSlash + 1);
+        bool ok = false;
+        QString error;
+        const QList<RemoteEntry> entries = listDirectoryInternal(parentPath, &ok, &error);
+        if (ok) {
+            for (const RemoteEntry &entry : entries) {
+                if (entry.name == name && entry.isDir)
+                    return;   // already exactly what was wanted — a benign no-op, not an error
+            }
+        }
+    }
 
     const FtpReply reply = sendCommand(QStringLiteral("MKD %1").arg(path));
     if (!reply.isValid() || reply.code >= 400) {

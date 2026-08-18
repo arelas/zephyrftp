@@ -382,9 +382,12 @@ void LocalBackend::moveEntry(const QString &oldPath, const QString &newPath, int
     emit entryMoved(requestId);
 }
 
-void LocalBackend::createDirectory(const QString &path)
+void LocalBackend::createDirectory(const QString &path, bool ignoreAlreadyExists)
 {
-    if (QFileInfo::exists(path)) {
+    const QFileInfo info(path);
+    if (info.exists()) {
+        if (ignoreAlreadyExists && info.isDir())
+            return;   // already exactly what was wanted — a benign no-op, not an error
         emit fileOperationFailed(QStringLiteral("Create folder"), path,
             QStringLiteral("Something with that name already exists"));
         return;

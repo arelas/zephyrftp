@@ -489,20 +489,32 @@ void TransferManager::startFolderFileTransfers(FilePaneWidget *sourcePane, FileP
     // FIFO ordering alone is sufficient here. "Already exists" for any
     // OTHER directory (e.g. the destination happens to already have some
     // of this structure — expected now that Write Into is an explicit,
-    // deliberate choice) is not treated as an error for this bulk path —
-    // createDirectory()'s fileOperationFailed signal for that case simply
-    // isn't listened to HERE at all, unlike the single right-click "New
-    // Folder" action. The root item (FolderEnumerator's own first result,
-    // relativePath == folderName) is skipped entirely when the caller
-    // already confirmed it exists (rootAlreadyExists) — unlike a nested
-    // subdirectory's "already exists", which is silently fine because
-    // nothing else is watching for it, the root's own creation call would
-    // ALWAYS fail in that case, and FilePaneWidget's own unconditional
-    // fileOperationFailed handling (shared with the single "New Folder"
-    // UI action, which very much does want to see real failures) would
-    // pop a real, confusing "Create folder failed" dialog for something
-    // that isn't actually an error — a real bug found and fixed while
-    // stabilizing this exact scenario's own test coverage.
+    // deliberate choice) is NOT treated as an error, via
+    // ignoreAlreadyExists=true below — see that parameter's own doc
+    // comment (RemoteBackend.h) for the real crash this fixes.
+    // **CORRECTION, found by an actual crash report, not assumed**: an
+    // earlier version of this comment claimed "already exists" for a
+    // nested directory was harmless because createDirectory()'s
+    // fileOperationFailed signal "simply isn't listened to HERE at
+    // all" — true only in the narrow sense that TransferManager itself
+    // has no listener of its own, but FilePaneWidget's OWN, separate,
+    // unconditional connection to that same signal (shared with the
+    // right-click "New Folder" action) reacts regardless of who
+    // triggered it, popping a real QMessageBox::warning() dialog. A
+    // Write Into merge onto a destination with many pre-existing nested
+    // subdirectories — an entirely normal, expected case — burst-
+    // dispatched one createDirectory() failure per directory, and a
+    // real user hit the exact resulting crash: QMessageBox::exec()
+    // pumps the whole event queue, so one failure's dialog could
+    // deliver the next already-queued failure while still open, nesting
+    // dialogs indefinitely until the stack overflowed for real
+    // (STATUS_STACK_OVERFLOW) on Windows.
+    // The root item (FolderEnumerator's own first result, relativePath
+    // == folderName) is still skipped entirely when the caller already
+    // confirmed it exists (rootAlreadyExists) — a harmless, redundant
+    // optimization now that ignoreAlreadyExists covers this case too,
+    // kept as-is rather than removed during a crash fix that doesn't
+    // need to touch it.
     for (const EnumeratedItem &item : items) {
         if (!item.isDir)
             continue;
@@ -510,7 +522,7 @@ void TransferManager::startFolderFileTransfers(FilePaneWidget *sourcePane, FileP
             continue;
         const QString destDirPath = joinPath(destPane->currentDirectory(), item.relativePath);
         QMetaObject::invokeMethod(dstBackend, "createDirectory", Qt::QueuedConnection,
-                                   Q_ARG(QString, destDirPath));
+                                   Q_ARG(QString, destDirPath), Q_ARG(bool, true));
     }
 
     // Every file goes through the ordinary enqueue() — its existing

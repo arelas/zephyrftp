@@ -471,6 +471,45 @@ private:
     // at once, each producing its own refresh.
     int m_pendingFileOpRefreshes = 0;
 
+    // Guards against a real, live-reported crash: QMessageBox::warning()
+    // (called from onFileOperationFailed()) pumps the whole app's event
+    // queue while its own dialog is open, same as
+    // TransferManager::askConflict()'s own QMessageBox::exec() already
+    // did before its own identical fix. A burst of many failed
+    // createDirectory() calls (e.g. TransferManager's own Write Into
+    // merge dispatching one per nested directory, several of which fail
+    // for genuinely different reasons than "already exists" — a
+    // permission error, a full disk, a dropped connection partway
+    // through) could deliver a SECOND, already-queued failure while the
+    // first one's dialog was still open, opening its own dialog nested
+    // inside the first, and so on — an unbounded, genuinely nested (not
+    // sequential) call stack that crashed with a real Windows stack
+    // overflow on a real user's machine. Set for the duration of every
+    // warning dialog; any onFileOperationFailed() invocation that
+    // arrives while it's set is stashed in m_deferredFailureWarnings
+    // instead of opening its own dialog immediately, then shown after
+    // the in-progress one closes — see onFileOperationFailed()'s own
+    // body for where that replay happens, in a loop rather than
+    // recursively so the drain itself can't become unbounded stack
+    // depth either. The specific "already exists during a Write Into
+    // merge" trigger is ALSO fixed at its source — see
+    // RemoteBackend::createDirectory()'s own ignoreAlreadyExists
+    // parameter — but this guard closes the same crash risk for any
+    // OTHER bulk-failure scenario too, not just that one trigger.
+    bool m_warningDialogInProgress = false;
+    struct DeferredFailureWarning {
+        QString operation;
+        QString path;
+        QString reason;
+    };
+    QList<DeferredFailureWarning> m_deferredFailureWarnings;
+
+    // Shows one real QMessageBox::warning() for a file-operation
+    // failure — factored out of onFileOperationFailed() purely so both
+    // the immediate-show path and the deferred-drain loop share one
+    // implementation, not two copies that could drift apart.
+    void showFailureWarning(const QString &operation, const QString &path, const QString &reason);
+
     // Non-owning — outlives this pane (MainWindow owns it for the app's
     // whole lifetime). Null in every test that constructs a pane directly.
     AppSettings *m_settings;

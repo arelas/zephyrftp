@@ -8,6 +8,19 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A real Windows crash (stack overflow) after choosing Write Into for
+  a folder that already has nested subdirectories at the destination —
+  a completely normal case, since Write Into means "merge into
+  whatever's already there".** Every already-existing nested directory
+  popped its own "Create folder failed" dialog, and those dialogs could
+  stack up unboundedly instead of showing one at a time, crashing the
+  app. Fixed at the source (an already-existing directory during a
+  Write Into merge is no longer treated as an error at all) and with a
+  general safeguard against any other burst of dialogs stacking the
+  same way.
+
 ## [0.7.33] — Fix Write Into/Overwrite asked separately for every top-level folder
 
 ### Fixed

@@ -502,6 +502,92 @@ that way, it's flagged explicitly rather than left implied.
   could benefit from it. Same class of premature-reset bug Move already
   hit and fixed for its own separate resolution state — see
   `maybeResetMoveConflictResolution()`'s own comment.
+  **A fifth, real, live-reported bug — a genuine Windows crash, fixed
+  (Phase G/H):** a real user testing the Phase F fix above hit a
+  `STATUS_STACK_OVERFLOW` (confirmed from an actual Windows Application
+  Error / WER event log, not a hypothetical) after choosing Write Into —
+  the app spawned "a large number of 'Create folder' dialogs" and then
+  crashed. Root cause, in two parts:
+  1. **The actual trigger**: `TransferManager::startFolderFileTransfers()`
+     dispatches one `createDirectory()` call per directory in the
+     enumerated tree, unconditionally — its own doc comment already
+     claimed "already exists" for a nested directory (an entirely
+     normal, expected case: Write Into means "merge into whatever's
+     already there") "isn't treated as an error for this bulk path...
+     createDirectory()'s fileOperationFailed signal for that case simply
+     isn't listened to HERE at all." **That claim was false in
+     practice** — `FilePaneWidget`'s OWN, separate, unconditional
+     connection to that same signal (shared with the right-click "New
+     Folder" action) reacts regardless of who triggered it, popping a
+     real `QMessageBox::warning()`. A Write Into merge onto a
+     destination that already has many nested subdirectories (which is
+     the ordinary case, not an edge case) burst-dispatched one real
+     failure per already-existing directory.
+  2. **What turned those failures into a crash, not just annoying
+     dialogs**: `QMessageBox::warning()`'s own `exec()` pumps the whole
+     app's event queue while its dialog is open, same mechanism as
+     Phase F's own bug — a SECOND, already-queued failure reply could be
+     delivered and opened its OWN dialog nested inside the first, and so
+     on for every failing directory, an unbounded, genuinely nested (not
+     sequential) call stack of `QMessageBox::exec()` calls that
+     genuinely overflowed the stack for real.
+  Fixed with two independent, complementary changes:
+  - **The semantic root cause**: `RemoteBackend::createDirectory()`
+    gained a new `bool ignoreAlreadyExists = false` parameter (all three
+    backends implement it: `LocalBackend` checks `QFileInfo::exists()`+
+    `isDir()` directly; `SftpBackend` does a synchronous
+    `libssh2_sftp_stat()`, matching its own `checkExists()`'s pattern
+    and fitting its already-blocking-call worker-thread style;
+    `FtpBackend` reuses `checkExists()`'s own listing-based existence/
+    type check, since FTP has no single command that cleanly reports
+    both). `TransferManager`'s own directory-creation dispatch now
+    passes `true` for every call. A genuine TYPE conflict (a FILE
+    already at that path, not a directory) still fails normally either
+    way — silently proceeding as if a same-named file were the wanted
+    directory would be wrong. `QMetaObject::invokeMethod`-by-name
+    correctly resolves BOTH the old 1-arg calls (every other existing
+    caller — the right-click "New Folder" action, `ScriptRunner`'s
+    `mkdir`, `CompareSyncExecutor`'s own directory creation — all
+    unaffected, still get a real error if the target's already taken)
+    and the new 2-arg call, confirmed directly via a disposable probe
+    calling both shapes against a real `LocalBackend`, not assumed from
+    reading MOC's own default-argument-overload documentation alone.
+  - **General defense-in-depth**: `FilePaneWidget::onFileOperationFailed()`
+    gained the exact same `QMessageBox::exec()` reentrancy guard Phase
+    F's own `TransferManager::askConflict()` fix already established —
+    a `m_warningDialogInProgress` flag plus a
+    `m_deferredFailureWarnings` queue, drained in a LOOP (not
+    recursively — a burst of many failures must not become unbounded
+    C++ call-stack depth either, even the much lighter kind a plain
+    function-call loop would produce instead of nested `exec()` calls).
+    This closes the same crash risk for ANY OTHER bulk-failure scenario
+    (a permission error, a full disk, a dropped connection partway
+    through a large tree) — not just the one confirmed trigger above.
+  New Phase G (`src/conflict_resolution_test.cpp`) reproduces the actual
+  trigger: Write Into onto a destination with several pre-existing
+  nested subdirectories must show ZERO "Create folder failed" dialogs.
+  New Phase H directly exercises the reentrancy guard itself: six
+  genuine, unavoidable type-conflict failures (a file already at each
+  target path — deliberately NOT suppressed by `ignoreAlreadyExists`)
+  fired back-to-back must all be shown and dismissed one at a time
+  without hanging or crashing. Proved non-vacuous the same way as
+  always: `git stash` on just the fix files (both backends and
+  `FilePaneWidget`) reproduced Phase G's own failure against the pre-fix
+  code (the expected "Write Into" dialog never appeared in time, and the
+  new file never landed — consistent with the transfer getting stuck
+  behind unclicked dialogs); Phase H's own 2-arg `invokeMethod` call
+  necessarily has no pre-fix equivalent to compare against (the API
+  itself is what's new), so it's validated on its own logical parity
+  with Phase F's already-proven identical guard pattern instead. Seven
+  existing fake/mock `RemoteBackend` subclasses across the required
+  suite (`queue_persistence_test.cpp`, `checksum_verification_test.cpp`,
+  `remote_to_remote_test.cpp`, `sort_and_commands_test.cpp`,
+  `move_entry_test.cpp`, `transfer_pause_test.cpp`,
+  `transfer_concurrency_test.cpp`) plus `smoke_test.cpp` needed their own
+  `createDirectory()` override signature updated to match — caught
+  immediately as real compile failures (an abstract-class instantiation
+  error, not a silent runtime gap) the first time the full required
+  suite was rebuilt after this change, not discovered later.
 
 - **FTP's directory-listing parsers are verified directly, in isolation
   from any network I/O.** `src/ftp_parsing_test.cpp` (built via the

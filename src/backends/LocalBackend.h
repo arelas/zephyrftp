@@ -25,7 +25,7 @@ public:
     void deleteEntry(const QString &path, bool isDirectory) override;
     void renameEntry(const QString &oldPath, const QString &newPath) override;
     void moveEntry(const QString &oldPath, const QString &newPath, int requestId) override;
-    void createDirectory(const QString &path) override;
+    void createDirectory(const QString &path, bool ignoreAlreadyExists = false) override;
     void createFile(const QString &path) override;
     void setPermissions(const QString &path, int mode) override;
     void listDirectoryForEnumeration(const QString &path, int requestId) override;

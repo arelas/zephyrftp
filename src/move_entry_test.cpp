@@ -93,7 +93,7 @@ public slots:
     void uploadFile(const QString &, const QString &, qint64 = 0) override {}
     void deleteEntry(const QString &, bool) override {}
     void renameEntry(const QString &, const QString &) override {}
-    void createDirectory(const QString &) override {}
+    void createDirectory(const QString &, bool = false) override {}
     void createFile(const QString &) override {}
     void setPermissions(const QString &, int) override {}
 

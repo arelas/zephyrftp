@@ -20,6 +20,8 @@
 #include <QMessageBox>
 #include <QCheckBox>
 #include <QAbstractButton>
+#include <functional>
+#include <memory>
 #include "ui/FilePaneWidget.h"
 #include "backends/LocalBackend.h"
 #include "transfer/TransferManager.h"
@@ -438,6 +440,92 @@ int main(int argc, char *argv[])
               readFile(base + "/dst/folderY/y.txt") == "new folderY file");
         check("Phase F: folderY's pre-existing file was left alone (merge, not replace)",
               readFile(base + "/dst/folderY/existing.txt") == "already in folderY");
+    });
+
+    // ===================================================================
+    // Phase G: regression test for a real, live-reported CRASH (a
+    // Windows STATUS_STACK_OVERFLOW, confirmed via an actual Application
+    // Error/WER event log from a real user testing v0.7.33's own Write
+    // Into fix). Write Into onto a destination that already has SEVERAL
+    // pre-existing nested subdirectories — an entirely normal, expected
+    // case, since Write Into means "merge into whatever's already
+    // there" — must show ZERO "Create folder failed" dialogs, not one
+    // per already-existing directory. Proves the ignoreAlreadyExists fix
+    // (RemoteBackend::createDirectory()) at the actual semantic root:
+    // with it, none of these already-existing directories ever emits
+    // fileOperationFailed in the first place, so there's nothing for
+    // Phase H's reentrancy guard below to even need to defer here.
+    // ===================================================================
+    QTimer::singleShot(14000, &app, [&]() {
+        QDir().mkpath(base + "/src/crashdir/a/b");
+        QDir().mkpath(base + "/src/crashdir/c/d");
+        QDir().mkpath(base + "/src/crashdir/e");
+        writeFile(base + "/src/crashdir/newfile.txt", "brand new");
+        // The destination ALREADY has the entire nested structure —
+        // exactly what triggered the real crash.
+        QDir().mkpath(base + "/dst/crashdir/a/b");
+        QDir().mkpath(base + "/dst/crashdir/c/d");
+        QDir().mkpath(base + "/dst/crashdir/e");
+
+        manager->enqueueFolder(srcPane, dstPane, "crashdir");
+    });
+
+    QTimer::singleShot(14700, &app, [&]() {
+        const bool clicked = clickConflictDialog(/*checkApplyToAll=*/false, "Write Into");
+        check("Phase G: folder conflict dialog appeared for crashdir", clicked);
+    });
+
+    QTimer::singleShot(16500, &app, [&]() {
+        const bool dialogOpen = qobject_cast<QMessageBox *>(QApplication::activeModalWidget()) != nullptr;
+        check("Phase G: NO 'Create folder failed' dialog appeared for any already-existing "
+              "nested subdirectory (the actual crash trigger) — ignoreAlreadyExists silently "
+              "handled all of them", !dialogOpen);
+        check("Phase G: the new file was still transferred into the existing nested structure",
+              readFile(base + "/dst/crashdir/newfile.txt") == "brand new");
+    });
+
+    // ===================================================================
+    // Phase H: regression test for the SECOND, independent half of the
+    // crash fix — FilePaneWidget::onFileOperationFailed()'s own
+    // reentrancy guard. Fires several genuine, UNAVOIDABLE
+    // createDirectory failures back-to-back (a FILE already exists at
+    // each target path — a real TYPE conflict ignoreAlreadyExists
+    // deliberately does NOT suppress, unlike Phase G's already-exists-
+    // as-a-directory case, which is a benign no-op instead of an error)
+    // and confirms they're all shown and dismissed successfully — one at
+    // a time, not the unbounded NESTED QMessageBox::exec() call stack
+    // that crashed for real on Windows. Mirrors
+    // startFolderFileTransfers()'s own real dispatch shape: many
+    // createDirectory() calls fired back-to-back, synchronously, before
+    // any of their replies arrive.
+    // ===================================================================
+    QTimer::singleShot(17500, &app, [&]() {
+        for (int i = 0; i < 6; ++i)
+            writeFile(base + QString("/dst/typeconflict%1").arg(i), "a file, not a directory");
+
+        for (int i = 0; i < 6; ++i) {
+            QMetaObject::invokeMethod(dstPane->backend(), "createDirectory", Qt::QueuedConnection,
+                                       Q_ARG(QString, base + QString("/dst/typeconflict%1").arg(i)),
+                                       Q_ARG(bool, true));
+        }
+    });
+
+    auto warningsShown = std::make_shared<int>(0);
+    auto clickNextWarning = std::make_shared<std::function<void()>>();
+    *clickNextWarning = [&app, warningsShown, clickNextWarning]() {
+        if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+            ++*warningsShown;
+            box->accept();
+        }
+        if (*warningsShown < 6)
+            QTimer::singleShot(150, &app, *clickNextWarning);
+    };
+    QTimer::singleShot(18000, &app, *clickNextWarning);
+
+    QTimer::singleShot(20500, &app, [&]() {
+        check("Phase H: all 6 genuine createDirectory failures were shown and dismissed, one "
+              "at a time, without crashing (the reentrancy guard actually works)",
+              *warningsShown == 6);
 
         qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
         app.exit(allPass ? 0 : 1);

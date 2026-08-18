@@ -1045,10 +1045,22 @@ QString SftpBackend::connectionIdentity() const
         .arg(m_credentials.port);
 }
 
-void SftpBackend::createDirectory(const QString &path)
+void SftpBackend::createDirectory(const QString &path, bool ignoreAlreadyExists)
 {
     if (!ensureSession())
         return;
+
+    if (ignoreAlreadyExists) {
+        // Same synchronous libssh2_sftp_stat() checkExists() already
+        // uses — this backend's own worker thread is already doing
+        // blocking libssh2 calls throughout, so a synchronous check here
+        // fits its existing style rather than needing anything async.
+        LIBSSH2_SFTP_ATTRIBUTES attrs;
+        if (libssh2_sftp_stat(m_sftp, path.toUtf8().constData(), &attrs) == 0
+            && LIBSSH2_SFTP_S_ISDIR(attrs.permissions)) {
+            return;   // already exactly what was wanted — a benign no-op, not an error
+        }
+    }
 
     emit commandLogged(QStringLiteral("Command: MKDIR %1").arg(path));
 

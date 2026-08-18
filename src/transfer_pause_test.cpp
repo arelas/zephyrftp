@@ -141,7 +141,7 @@ public slots:
     void moveEntry(const QString &, const QString &, int requestId) override {
         emit entryMoveFailed(QStringLiteral("Not implemented"), requestId);
     }
-    void createDirectory(const QString &) override {}
+    void createDirectory(const QString &, bool = false) override {}
     void createFile(const QString &) override {}
     void setPermissions(const QString &, int) override {}
     void listDirectoryForEnumeration(const QString &, int) override {}

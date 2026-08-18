@@ -121,7 +121,43 @@ public slots:
     // need to re-check that themselves.
     virtual void moveEntry(const QString &oldPath, const QString &newPath, int requestId) = 0;
 
-    virtual void createDirectory(const QString &path) = 0;
+    // ignoreAlreadyExists: when true, a directory already present at path
+    // is treated as a benign no-op (fileOperationFailed is NOT emitted)
+    // instead of a real failure — used by TransferManager's own folder-
+    // transfer "Write Into" merge, where a nested subdirectory already
+    // existing at the destination is the expected, common case (Write
+    // Into means "merge into whatever's already there"), not something
+    // to report as an error. A genuine TYPE conflict (something with
+    // that name exists but ISN'T a directory) still fails normally
+    // either way — silently proceeding as if a same-named FILE were the
+    // directory that was wanted would be wrong. Default false preserves
+    // every other existing caller's own real-error behavior unchanged
+    // (e.g. the right-click "New Folder" UI action, which should report
+    // a clear error if the target name is already taken).
+    //
+    // A REAL, LIVE-REPORTED CRASH is the reason this parameter exists:
+    // before it, TransferManager's own folder-transfer directory-
+    // creation loop (see its own doc comment) assumed an "already
+    // exists" failure for a nested directory was harmless because
+    // TransferManager itself doesn't listen for it — but
+    // FilePaneWidget's OWN, separate, unconditional connection to
+    // fileOperationFailed (shared with the "New Folder" UI action) DOES
+    // react to every emission regardless of who triggered it, popping a
+    // real QMessageBox::warning() dialog. Write Into onto a destination
+    // that already has many nested subdirectories (a completely normal,
+    // expected case) burst-dispatched one createDirectory() call per
+    // directory, each one failing — and since QMessageBox::exec() pumps
+    // the whole app's event queue, one failure's dialog could deliver
+    // the NEXT already-queued failure reply while still open, opening
+    // ITS OWN dialog nested inside the first, and so on for every
+    // failing directory — an unbounded, genuinely nested (not
+    // sequential) call stack of QMessageBox::exec() calls that crashed
+    // with a real Windows stack overflow (STATUS_STACK_OVERFLOW) on a
+    // real user's machine. See FilePaneWidget::onFileOperationFailed()'s
+    // own doc comment for the second, independent half of this fix (a
+    // reentrancy guard closing the SAME crash risk for any OTHER bulk-
+    // failure scenario, not just this specific "already exists" trigger).
+    virtual void createDirectory(const QString &path, bool ignoreAlreadyExists = false) = 0;
     // Creates an empty (zero-byte) file. Fails if a file already exists
     // at that path rather than silently truncating it — both backends
     // treat "the name is already taken" as an error to report, not

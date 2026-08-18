@@ -1015,11 +1015,42 @@ void FilePaneWidget::onFileOperationFailed(const QString &operation, const QStri
     // onDirectoryListed() would otherwise consume — decrement here so
     // m_pendingFileOpRefreshes doesn't stay permanently inflated and start
     // misclassifying a later, unrelated navigation response as a refresh.
+    // Unconditional, regardless of whether this specific failure's own
+    // dialog shows immediately or gets deferred below — the dispatch
+    // this call answers for is resolved the moment this callback runs,
+    // not whenever its dialog eventually appears.
     if (m_pendingFileOpRefreshes > 0)
         --m_pendingFileOpRefreshes;
+
+    // See m_warningDialogInProgress's own doc comment (FilePaneWidget.h)
+    // for the real crash this guards against.
+    if (m_warningDialogInProgress) {
+        m_deferredFailureWarnings.append({operation, path, reason});
+        return;
+    }
+
+    showFailureWarning(operation, path, reason);
+
+    // Drain anything that arrived while that dialog was open — a LOOP,
+    // not recursion, so a burst of many failures (the exact scenario
+    // this whole mechanism exists for) can't itself become unbounded
+    // C++ call-stack depth. Re-checks isEmpty() each iteration rather
+    // than snapshotting once: a fresh failure can still arrive live
+    // (QMessageBox::warning()'s own exec() pumps the event queue) while
+    // an earlier DEFERRED one's own dialog is showing here.
+    while (!m_deferredFailureWarnings.isEmpty()) {
+        const DeferredFailureWarning next = m_deferredFailureWarnings.takeFirst();
+        showFailureWarning(next.operation, next.path, next.reason);
+    }
+}
+
+void FilePaneWidget::showFailureWarning(const QString &operation, const QString &path, const QString &reason)
+{
+    m_warningDialogInProgress = true;
     QMessageBox::warning(this, operation,
                           tr("%1 failed for \"%2\":\n%3")
                               .arg(operation, QFileInfo(path).fileName(), reason));
+    m_warningDialogInProgress = false;
 }
 
 void FilePaneWidget::goBack()
