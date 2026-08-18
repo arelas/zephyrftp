@@ -992,10 +992,11 @@ void FilePaneWidget::confirmAndDelete(const QList<RemoteEntry> &entries, const Q
     pathsAndIsDir.reserve(entries.size());
     for (const RemoteEntry &entry : entries)
         pathsAndIsDir.append({joinPath(directory, entry.name), entry.isDir});
-    deleteEntriesAt(pathsAndIsDir);
+    deleteEntriesAt(pathsAndIsDir, /*offerRecursiveDeleteOnFailure=*/true);
 }
 
-void FilePaneWidget::deleteEntriesAt(const QList<QPair<QString, bool>> &pathsAndIsDir)
+void FilePaneWidget::deleteEntriesAt(const QList<QPair<QString, bool>> &pathsAndIsDir,
+                                      bool offerRecursiveDeleteOnFailure)
 {
     // One invokeMethod() call per entry, queued in order — the backend
     // lives on (at most) one thread of its own, so Qt's queue processes
@@ -1004,6 +1005,8 @@ void FilePaneWidget::deleteEntriesAt(const QList<QPair<QString, bool>> &pathsAnd
     // the next deletion starts. No race between them.
     for (const auto &pathAndIsDir : pathsAndIsDir) {
         ++m_pendingFileOpRefreshes;   // see its own doc comment — one per entry, each gets its own refresh
+        if (offerRecursiveDeleteOnFailure && pathAndIsDir.second)
+            m_recursiveDeleteCandidates.insert(pathAndIsDir.first);
         QMetaObject::invokeMethod(m_backend, "deleteEntry", Qt::QueuedConnection,
                                    Q_ARG(QString, pathAndIsDir.first), Q_ARG(bool, pathAndIsDir.second));
     }
@@ -1022,35 +1025,174 @@ void FilePaneWidget::onFileOperationFailed(const QString &operation, const QStri
     if (m_pendingFileOpRefreshes > 0)
         --m_pendingFileOpRefreshes;
 
-    // See m_warningDialogInProgress's own doc comment (FilePaneWidget.h)
-    // for the real crash this guards against.
-    if (m_warningDialogInProgress) {
-        m_deferredFailureWarnings.append({operation, path, reason});
+    // A "Delete" failure for a path this pane itself opted into the
+    // recursive-delete offer for (see deleteEntriesAt()'s own doc
+    // comment) gets a chance to become something recoverable instead of
+    // a plain dead end — everything else (files, CompareSyncExecutor's
+    // own directory deletes, which never populate the set) behaves
+    // exactly as before.
+    if (operation == QStringLiteral("Delete") && m_recursiveDeleteCandidates.remove(path)) {
+        runOrDeferModalAction([this, path, reason]() { offerRecursiveDelete(path, reason); });
         return;
     }
 
-    showFailureWarning(operation, path, reason);
+    runOrDeferModalAction([this, operation, path, reason]() {
+        showFailureWarning(operation, path, reason);
+    });
+}
 
-    // Drain anything that arrived while that dialog was open — a LOOP,
-    // not recursion, so a burst of many failures (the exact scenario
-    // this whole mechanism exists for) can't itself become unbounded
-    // C++ call-stack depth. Re-checks isEmpty() each iteration rather
-    // than snapshotting once: a fresh failure can still arrive live
-    // (QMessageBox::warning()'s own exec() pumps the event queue) while
-    // an earlier DEFERRED one's own dialog is showing here.
-    while (!m_deferredFailureWarnings.isEmpty()) {
-        const DeferredFailureWarning next = m_deferredFailureWarnings.takeFirst();
-        showFailureWarning(next.operation, next.path, next.reason);
+void FilePaneWidget::runOrDeferModalAction(std::function<void()> action)
+{
+    // See m_modalDialogInProgress's own doc comment (FilePaneWidget.h)
+    // for the real crash this guards against.
+    if (m_modalDialogInProgress) {
+        m_deferredDialogActions.append(std::move(action));
+        return;
+    }
+
+    action();
+
+    // Drain anything that arrived while that action's own dialog was
+    // open — a LOOP, not recursion, so a burst of many failures (the
+    // exact scenario this whole mechanism exists for) can't itself
+    // become unbounded C++ call-stack depth. Re-checks isEmpty() each
+    // iteration rather than snapshotting once: a fresh action can still
+    // arrive live (a modal dialog's own exec() pumps the event queue)
+    // while an earlier DEFERRED one's own dialog is showing here.
+    while (!m_deferredDialogActions.isEmpty()) {
+        const auto next = m_deferredDialogActions.takeFirst();
+        next();
     }
 }
 
 void FilePaneWidget::showFailureWarning(const QString &operation, const QString &path, const QString &reason)
 {
-    m_warningDialogInProgress = true;
+    m_modalDialogInProgress = true;
     QMessageBox::warning(this, operation,
                           tr("%1 failed for \"%2\":\n%3")
                               .arg(operation, QFileInfo(path).fileName(), reason));
-    m_warningDialogInProgress = false;
+    m_modalDialogInProgress = false;
+}
+
+void FilePaneWidget::offerRecursiveDelete(const QString &path, const QString &reason)
+{
+    const QString folderName = QFileInfo(path).fileName();
+    auto *enumerator = new FolderEnumerator(m_backend, path, folderName, this);
+
+    connect(enumerator, &FolderEnumerator::finished, this,
+            [this, enumerator, path, folderName](const QList<EnumeratedItem> &items) {
+        enumerator->deleteLater();
+
+        // items includes the root folder itself (relativePath ==
+        // folderName, confirmed by TransferManager.cpp's own comment on
+        // FolderEnumerator's output) — exclude it and count the rest.
+        int fileCount = 0;
+        int dirCount = 0;
+        for (const EnumeratedItem &item : items) {
+            if (item.relativePath == folderName)
+                continue;
+            if (item.isDir) ++dirCount; else ++fileCount;
+        }
+
+        if (fileCount == 0 && dirCount == 0) {
+            // Genuinely empty by the time this walk finished — a race
+            // (something else emptied it between the failed plain
+            // delete and this enumeration completing). Nothing to
+            // offer; fall back to the original failure.
+            runOrDeferModalAction([this, path]() {
+                showFailureWarning(tr("Delete"), path,
+                                    tr("Could not remove folder — it may not be empty"));
+            });
+            return;
+        }
+
+        runOrDeferModalAction([this, path, folderName, items, fileCount, dirCount]() {
+            // No i18n loading infrastructure exists in this project yet
+            // (see ARCHITECTURE.md's own Known-limitations entry) —
+            // plain count == 1 branching, matching confirmAndDelete()'s
+            // own identical singular/plural handling, rather than
+            // reaching for Qt's %n mechanism for translations that
+            // can't be loaded yet anyway.
+            const QString filesPart = fileCount == 1 ? tr("1 file") : tr("%1 files").arg(fileCount);
+            const QString foldersPart = dirCount == 1 ? tr("1 folder") : tr("%1 folders").arg(dirCount);
+            QString contentsDescription;
+            if (fileCount > 0 && dirCount > 0)
+                contentsDescription = tr("%1 and %2").arg(filesPart, foldersPart);
+            else if (dirCount > 0)
+                contentsDescription = foldersPart;
+            else
+                contentsDescription = filesPart;
+
+            m_modalDialogInProgress = true;
+            const auto reply = QMessageBox::warning(
+                this, tr("Delete"),
+                tr("\"%1\" isn't empty — it contains %2. Deleting it will permanently "
+                   "delete everything inside, including all subfolders. This can't be undone.")
+                    .arg(folderName, contentsDescription),
+                QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+            m_modalDialogInProgress = false;
+
+            if (reply != QMessageBox::Yes)
+                return;
+
+            runRecursiveDelete(path, items);
+        });
+    });
+
+    connect(enumerator, &FolderEnumerator::failed, this,
+            [this, enumerator, path](const QString &enumReason) {
+        enumerator->deleteLater();
+        runOrDeferModalAction([this, path, enumReason]() {
+            showFailureWarning(tr("Delete"), path,
+                                tr("Couldn't check what's inside this folder: %1").arg(enumReason));
+        });
+    });
+
+    enumerator->start();
+}
+
+void FilePaneWidget::runRecursiveDelete(const QString &path, const QList<EnumeratedItem> &items)
+{
+    const QString root = QFileInfo(path).path();
+
+    // Same two-phase, deepest-first pattern CompareSyncExecutor::
+    // deleteSelected() already established for its own bottom-up
+    // delete: every file goes first (any depth, order doesn't matter),
+    // then every directory sorted deepest-first by relative-path '/'
+    // count — the root folder's own relativePath has zero slashes, so
+    // it sorts naturally last, no special-casing needed. By the time
+    // each directory's turn comes up, everything that was ever inside
+    // it (files and deeper subdirectories alike) is already gone.
+    QList<QPair<QString, bool>> filePairs;
+    QList<EnumeratedItem> dirItems;
+    for (const EnumeratedItem &item : items) {
+        if (item.isDir)
+            dirItems.append(item);
+        else
+            filePairs.append({joinPath(root, item.relativePath), false});
+    }
+
+    std::sort(dirItems.begin(), dirItems.end(), [](const EnumeratedItem &a, const EnumeratedItem &b) {
+        return a.relativePath.count(QLatin1Char('/')) > b.relativePath.count(QLatin1Char('/'));
+    });
+
+    QList<QPair<QString, bool>> dirPairs;
+    dirPairs.reserve(dirItems.size());
+    for (const EnumeratedItem &item : dirItems)
+        dirPairs.append({joinPath(root, item.relativePath), true});
+
+    // Two separate calls, not merged, so Qt's per-backend queued-
+    // connection FIFO ordering keeps every file delete dispatched
+    // before the first directory delete is even queued — same
+    // reasoning CompareSyncExecutor::deleteSelected()'s own comment
+    // documents. offerRecursiveDeleteOnFailure=true again deliberately:
+    // a nested directory that unexpectedly fails its own turn (a
+    // genuine race, not the common case) gets the identical recursive
+    // offer instead of just failing inconsistently with its siblings.
+    if (!filePairs.isEmpty())
+        deleteEntriesAt(filePairs, /*offerRecursiveDeleteOnFailure=*/true);
+    if (!dirPairs.isEmpty())
+        deleteEntriesAt(dirPairs, /*offerRecursiveDeleteOnFailure=*/true);
 }
 
 void FilePaneWidget::goBack()

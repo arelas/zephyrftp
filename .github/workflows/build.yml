@@ -91,6 +91,7 @@ jobs:
           script-runner-test
           checksum-verification-test
           connection-history-test
+          recursive-delete-test
           -- -j$(nproc)
 
       # windeployqt isn't packaged for this cross toolchain at all (and
@@ -236,6 +237,7 @@ jobs:
           run_test script-runner-test
           run_test checksum-verification-test
           run_test connection-history-test
+          run_test recursive-delete-test
 
       # Single-config generator (mingw64-cmake defaults to Unix
       # Makefiles) — unlike the old MSVC/Ninja multi-config setup, the
@@ -301,6 +303,7 @@ jobs:
           script-runner-test
           checksum-verification-test
           connection-history-test
+          recursive-delete-test
           -- -j$(nproc)
 
       # Runs directly, no wine/xvfb — these are native Linux binaries, and
@@ -359,6 +362,7 @@ jobs:
           ./script-runner-test
           ./checksum-verification-test
           ./connection-history-test
+          ./recursive-delete-test
 
       # Just the binary — this is the "plain tarball" approach, not a
       # bundled/portable build: it dynamically links against system
@@ -444,6 +448,7 @@ jobs:
           script-runner-test
           checksum-verification-test
           connection-history-test
+          recursive-delete-test
           -- -j$(nproc)
 
       # Same reasoning as build-linux's own test-suite step: a genuinely
@@ -503,6 +508,7 @@ jobs:
           ./script-runner-test
           ./checksum-verification-test
           ./connection-history-test
+          ./recursive-delete-test
 
       - name: Build .rpm package
         run: |
@@ -567,6 +573,7 @@ jobs:
           script-runner-test
           checksum-verification-test
           connection-history-test
+          recursive-delete-test
           -- -j$(nproc)
 
       # Same reasoning as build-linux-rpm's own test-suite step: a
@@ -622,6 +629,7 @@ jobs:
           ./script-runner-test
           ./checksum-verification-test
           ./connection-history-test
+          ./recursive-delete-test
 
       - name: Build AppImage
         run: |
@@ -716,6 +724,7 @@ jobs:
           script-runner-test
           checksum-verification-test
           connection-history-test
+          recursive-delete-test
           -- -j$(sysctl -n hw.ncpu)
 
       # Native binaries on native hardware, same reasoning as
@@ -774,6 +783,7 @@ jobs:
           ./script-runner-test
           ./checksum-verification-test
           ./connection-history-test
+          ./recursive-delete-test
 
           ./verify-credential-store
 

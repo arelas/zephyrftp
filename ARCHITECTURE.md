@@ -4356,6 +4356,103 @@ to drive FileZilla itself for a same-desktop comparison.
   handling beyond whatever the existing `RemoteEntry` pipeline already
   reports.
 
+  **Recursive delete, with a warning** — David asked directly for this
+  project's own "worth revisiting explicitly if 'delete this folder and
+  everything in it' turns out to be something people actually want"
+  note (see `RemoteBackend::deleteEntry()`'s own doc comment) to
+  actually be revisited. Researched how the three established
+  competitors (FileZilla, Cyberduck, WinSCP) handle this before
+  designing, rather than assuming: all three recurse unconditionally
+  once a plain "Delete this?" is confirmed, with no distinct, content-
+  aware warning — and WinSCP users have a long-standing, still-
+  unimplemented feature request in WinSCP's own tracker asking for
+  exactly that distinction ("this directory is NOT EMPTY, remove dir &
+  all its contents?") instead of the same generic message every time,
+  confirming this really is a still-open gap worth doing better on, not
+  a solved problem to copy verbatim. Discussed two shapes with David —
+  proactive (scan every selected folder's contents up front, one
+  combined warning) vs. reactive (keep the plain confirmation
+  unchanged, add a second, more specific warning only when a folder
+  turns out to have contents) — and he chose reactive: simpler, lower-
+  risk, and matching this exact codebase's own established precedent
+  (`CompareSyncExecutor`'s own delete flow, immediately above, already
+  uses a deliberate two-gate confirmation specifically because a bulk
+  delete can affect more than a single click implies — same reasoning,
+  reused here).
+
+  The backend primitive itself is UNCHANGED — `RemoteBackend::
+  deleteEntry()` still fails cleanly on a non-empty directory, across
+  all three backends, exactly as before. Recursive delete is built
+  entirely as a higher-level `FilePaneWidget` orchestration out of that
+  same unchanged primitive, reusing `CompareSyncExecutor::
+  deleteSelected()`'s own bottom-up pattern (files first, then
+  directories sorted deepest-first by relative-path `/` count) rather
+  than inventing a second one: `deleteEntriesAt()` gained one new opt-in
+  parameter, `offerRecursiveDeleteOnFailure` (default `false` — every
+  existing caller, right now only `CompareSyncExecutor`, is completely
+  unaffected; `confirmAndDelete()` is the one caller that opts in, kept
+  deliberately separate so a Compare-driven delete can never be offered
+  a recursive escape hatch for a directory that turns out to still
+  contain something identical on both sides, which would silently
+  delete more than the diff actually determined was "extra"). When set,
+  every dispatched directory path is tracked in a new
+  `m_recursiveDeleteCandidates` set; a `"Delete"` failure for a tracked
+  path routes to a new `offerRecursiveDelete()` instead of the plain
+  failure warning — which walks the whole tree via `FolderEnumerator`
+  (same construction/lifecycle `TransferManager::
+  startFolderEnumeration()` already established), then shows a content-
+  aware warning ("isn't empty — it contains 12 files and 3 folders...")
+  built from the real enumerated count, and — only on Yes — deletes
+  everything via two `deleteEntriesAt(..., true)` calls (files, then
+  deepest-first directories) built from the already-enumerated list, no
+  re-walk needed. Passing `true` again on that second dispatch is
+  deliberate, not an oversight: a nested directory that unexpectedly
+  fails its own turn (a genuine race, not the common case) gets the
+  identical recursive offer instead of just failing inconsistently with
+  its siblings.
+
+  **The reentrancy guard from the Write Into crash fix (see the
+  `RemoteBackend::createDirectory()`/`ignoreAlreadyExists` entry
+  earlier) was generalized, not duplicated, for this feature.** That
+  guard (`m_warningDialogInProgress`/`m_deferredFailureWarnings`) only
+  ever protected `onFileOperationFailed()`'s own plain warning against
+  `QMessageBox::exec()`'s event-queue-pumping reentrancy hazard. This
+  feature introduces a SECOND, distinct kind of modal (the recursive-
+  delete confirmation) with the identical hazard — and, with two kinds
+  live, they could reenter EACH OTHER, which two separate, uncoordinated
+  guards would not have caught. Widened instead:
+  `m_modalDialogInProgress` plus a generic `m_deferredDialogActions`
+  (`QList<std::function<void()>>`, replacing the old fixed 3-string
+  struct) and a shared `runOrDeferModalAction()` helper, so at most one
+  modal dialog from this class is ever open at a time regardless of
+  which kind — the exact same "future hand-wired dialog reentrancy needs
+  the same guard" lesson the earlier fix's own doc comment already
+  anticipated, now actually applied a second time.
+
+  New required-suite target `recursive-delete-test` (25th) drives the
+  real `QMessageBox` via `deleteEntriesAt()` directly — the same public
+  entry point `CompareSyncExecutor` already uses — rather than
+  simulating the context menu, matching how `file-operations-test`
+  already tests `deleteEntry()` at the lower, unmodified backend-
+  primitive level instead. 18 assertions: empty folder and single file
+  both unaffected (no new dialog); declining leaves a non-empty
+  multi-level folder completely untouched; accepting deletes every file
+  at every depth and every subfolder, root last; a mixed multi-select
+  batch (one empty, one non-empty) proves the empty one deletes
+  immediately while the non-empty one gets its own follow-up. A real,
+  visible bug caught by this project's own established "screenshot new
+  UI before calling it done" discipline, not by the headless
+  assertions: the warning's item-count text initially read "1 folders"
+  for a single subfolder — fixed with plain `count == 1` branching
+  (matching `confirmAndDelete()`'s own identical singular/plural
+  handling), not Qt's `%n` mechanism, since no i18n loading
+  infrastructure exists in this project yet to make that machinery
+  worth reaching for. Explicit non-goals: `RemoteBackend::deleteEntry()`
+  itself unchanged; `ScriptRunner`'s CLI `rm` unchanged (no interactive
+  confirmation flow to hook a warning into, and not asked for); no
+  progress UI for a large recursive delete (matches this project's
+  existing multi-delete UX, which already has none).
+
   **Scripting/automation (CLI mode)** — WinSCP's own flagship
   differentiator, picked as the next v2 target once sync/mirror browsing
   was fully shipped (both halves). `--script=<path>` (new

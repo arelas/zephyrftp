@@ -31,9 +31,11 @@ tracks what's changed between them.
 - **File management from the right-click menu** — create a new file or
   folder, rename, or delete, on either side (your computer or the
   server). Delete works on multiple selected items at once, with a
-  confirmation first. Deleting a folder only works if it's empty —
-  there's no "delete everything inside it too" here, on purpose, so a
-  misclick can't wipe out more than you meant to remove.
+  confirmation first. A folder that turns out to have contents isn't
+  just refused — you get a second, more specific warning telling you
+  exactly how much is inside ("isn't empty — it contains 12 files and 3
+  folders") before permanently deleting the whole thing, so a misclick
+  can't wipe out more than you actually meant to.
 - **SFTP with password or private-key login.**
 - **Site Manager** — save connections you use often, organized into
   folders (type a new folder name right on the site's details, or pick
@@ -393,8 +395,8 @@ rather than being half-implemented:
 - **Changing permissions covers one file or folder at a time, and just
   the standard 9 read/write/execute bits.** No multi-select or
   recursive "apply to everything inside," and no setuid/setgid/sticky
-  — the same restraint this app already applies to deleting (no
-  recursive delete) and renaming (one entry at a time).
+  — the same restraint this app already applies to renaming (one entry
+  at a time).
 - **The proxy is one global setting, not per-site** — every connection
   uses the same proxy (or none). If you only need a proxy for some
   servers, there's no way yet to say so; it's all connections or

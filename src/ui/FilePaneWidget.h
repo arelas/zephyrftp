@@ -6,10 +6,12 @@
 #include <QStringList>
 #include <QIcon>
 #include <QPair>
+#include <QSet>
 #include <functional>
 #include "../backends/RemoteBackend.h"
 #include "../backends/ConnectionDescriptor.h"
 #include "../backends/ConnectionHistory.h"
+#include "../transfer/FolderEnumerator.h"
 
 class FileTreeView;
 class QLineEdit;
@@ -102,7 +104,20 @@ public:
     // is expected to have already confirmed with the user; this is the
     // dispatch mechanism, not the confirmation UX (see confirmAndDelete(),
     // which now just builds the pairs and calls this after its own dialog).
-    void deleteEntriesAt(const QList<QPair<QString, bool>> &pathsAndIsDir);
+    //
+    // offerRecursiveDeleteOnFailure: when true, every DIRECTORY entry
+    // dispatched here is also recorded in m_recursiveDeleteCandidates, so
+    // a later "not empty" failure for it triggers offerRecursiveDelete()
+    // instead of a plain failure warning. Default false preserves every
+    // existing caller unchanged — right now, only CompareSyncExecutor,
+    // which deliberately stays precise (it only ever deletes what its
+    // own diff determined is actually "extra"; a directory that turns
+    // out to still contain something identical on both sides should
+    // fail plainly, not be offered a recursive escape hatch that could
+    // delete more than the diff intended). confirmAndDelete() is the one
+    // caller that opts in.
+    void deleteEntriesAt(const QList<QPair<QString, bool>> &pathsAndIsDir,
+                          bool offerRecursiveDeleteOnFailure = false);
 
     void navigateTo(const QString &path);
 
@@ -471,44 +486,79 @@ private:
     // at once, each producing its own refresh.
     int m_pendingFileOpRefreshes = 0;
 
-    // Guards against a real, live-reported crash: QMessageBox::warning()
-    // (called from onFileOperationFailed()) pumps the whole app's event
-    // queue while its own dialog is open, same as
-    // TransferManager::askConflict()'s own QMessageBox::exec() already
-    // did before its own identical fix. A burst of many failed
-    // createDirectory() calls (e.g. TransferManager's own Write Into
-    // merge dispatching one per nested directory, several of which fail
-    // for genuinely different reasons than "already exists" — a
-    // permission error, a full disk, a dropped connection partway
-    // through) could deliver a SECOND, already-queued failure while the
-    // first one's dialog was still open, opening its own dialog nested
-    // inside the first, and so on — an unbounded, genuinely nested (not
-    // sequential) call stack that crashed with a real Windows stack
-    // overflow on a real user's machine. Set for the duration of every
-    // warning dialog; any onFileOperationFailed() invocation that
-    // arrives while it's set is stashed in m_deferredFailureWarnings
-    // instead of opening its own dialog immediately, then shown after
-    // the in-progress one closes — see onFileOperationFailed()'s own
-    // body for where that replay happens, in a loop rather than
-    // recursively so the drain itself can't become unbounded stack
-    // depth either. The specific "already exists during a Write Into
-    // merge" trigger is ALSO fixed at its source — see
+    // Guards against a real, live-reported crash: QMessageBox::warning()/
+    // QMessageBox::question() both pump the whole app's event queue while
+    // their own dialog is open, same as TransferManager::askConflict()'s
+    // own QMessageBox::exec() already did before its own identical fix.
+    // A burst of many failed createDirectory() calls (e.g. TransferManager's
+    // own Write Into merge dispatching one per nested directory, several
+    // of which fail for genuinely different reasons than "already
+    // exists" — a permission error, a full disk, a dropped connection
+    // partway through) could deliver a SECOND, already-queued failure
+    // while the first one's dialog was still open, opening its own
+    // dialog nested inside the first, and so on — an unbounded,
+    // genuinely nested (not sequential) call stack that crashed with a
+    // real Windows stack overflow on a real user's machine.
+    //
+    // Originally scoped narrowly around just onFileOperationFailed()'s
+    // own plain warning (m_warningDialogInProgress/
+    // m_deferredFailureWarnings, a QList of a fixed 3-string struct) —
+    // widened here to guard ANY modal dialog this class shows as a
+    // result of an async backend event, since the recursive-delete
+    // confirmation below (offerRecursiveDelete()) is a SECOND, distinct
+    // kind of modal with the identical hazard, and — with two dialog
+    // kinds now live — they could reenter EACH OTHER, which two
+    // separate, uncoordinated guards would not have caught. Set for the
+    // duration of every such dialog; any action that arrives while it's
+    // set is stashed in m_deferredDialogActions instead of running
+    // immediately, then replayed once the in-progress one closes — see
+    // runOrDeferModalAction()'s own body, which drains the queue in a
+    // loop rather than recursively so the drain itself can't become
+    // unbounded stack depth either. The specific "already exists during
+    // a Write Into merge" trigger is ALSO fixed at its source — see
     // RemoteBackend::createDirectory()'s own ignoreAlreadyExists
     // parameter — but this guard closes the same crash risk for any
     // OTHER bulk-failure scenario too, not just that one trigger.
-    bool m_warningDialogInProgress = false;
-    struct DeferredFailureWarning {
-        QString operation;
-        QString path;
-        QString reason;
-    };
-    QList<DeferredFailureWarning> m_deferredFailureWarnings;
+    bool m_modalDialogInProgress = false;
+    QList<std::function<void()>> m_deferredDialogActions;
+
+    // Runs action() immediately if no modal dialog from this class is
+    // currently open, draining anything that had queued up while a
+    // PREVIOUS action was running (a loop, not recursion — see
+    // m_modalDialogInProgress's own doc comment for why). If a dialog
+    // IS currently open, action() is stashed instead of run — it will
+    // run later, from inside whichever call eventually finds the queue
+    // non-empty after its own dialog closes.
+    void runOrDeferModalAction(std::function<void()> action);
 
     // Shows one real QMessageBox::warning() for a file-operation
-    // failure — factored out of onFileOperationFailed() purely so both
-    // the immediate-show path and the deferred-drain loop share one
-    // implementation, not two copies that could drift apart.
+    // failure. Callers must route through runOrDeferModalAction(), not
+    // call this directly — it does not itself check/set the guard.
     void showFailureWarning(const QString &operation, const QString &path, const QString &reason);
+
+    // Paths most recently dispatched as a DIRECTORY delete via
+    // deleteEntriesAt(..., /*offerRecursiveDeleteOnFailure=*/true) —
+    // i.e. only from confirmAndDelete(), never from CompareSyncExecutor's
+    // own calls (which don't pass that flag; see deleteEntriesAt()'s own
+    // doc comment for why that's deliberate, not an oversight). Consulted
+    // by onFileOperationFailed(): a "Delete" failure for a path found
+    // (and removed) here is offered the recursive-delete flow instead of
+    // a plain failure warning.
+    QSet<QString> m_recursiveDeleteCandidates;
+
+    // Enumerates the folder at path (already known to be non-empty — its
+    // own plain, non-recursive deleteEntry() just failed) and, once the
+    // walk finishes, offers to delete it and everything inside via a
+    // content-aware warning. See FilePaneWidget.cpp's own implementation
+    // comment for the full flow (mirrors TransferManager::
+    // startFolderEnumeration()'s own FolderEnumerator lifecycle).
+    void offerRecursiveDelete(const QString &path, const QString &reason);
+
+    // Called once offerRecursiveDelete()'s own warning is answered Yes —
+    // builds the deepest-first bottom-up delete order from the already-
+    // enumerated items (mirroring CompareSyncExecutor::deleteSelected()'s
+    // own sort exactly) and dispatches it via two deleteEntriesAt() calls.
+    void runRecursiveDelete(const QString &path, const QList<EnumeratedItem> &items);
 
     // Non-owning — outlives this pane (MainWindow owns it for the app's
     // whole lifetime). Null in every test that constructs a pane directly.

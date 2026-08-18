@@ -594,6 +594,7 @@ qt_add_executable(navigation-test EXCLUDE_FROM_ALL
     src/AppSettings.cpp
     src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
+    src/transfer/FolderEnumerator.cpp
     src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
@@ -750,6 +751,29 @@ qt_add_executable(conflict-resolution-test EXCLUDE_FROM_ALL
 target_include_directories(conflict-resolution-test PRIVATE src)
 target_link_libraries(conflict-resolution-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
 
+# --- Recursive delete test (content-aware warning + bottom-up delete, real dialog interaction) ---
+# Leaner than conflict-resolution-test's own block above — no
+# TransferManager involved here at all (deleteEntriesAt() is called
+# directly, the same public entry point CompareSyncExecutor already
+# uses), so TransferManager.cpp/TransferQueueStore.cpp aren't needed.
+qt_add_executable(recursive-delete-test EXCLUDE_FROM_ALL
+    src/recursive_delete_test.cpp
+    src/AppSettings.cpp
+    src/backends/CredentialStore.cpp
+    src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
+    src/ui/PermissionsDialog.cpp
+    src/ui/FileTreeView.cpp
+    src/ui/IconTheme.cpp
+    src/backends/LocalBackend.cpp
+    src/backends/RemoteBackend.h
+    src/transfer/FolderEnumerator.cpp
+    resources/icons.qrc
+    resources/theme.qrc
+)
+target_include_directories(recursive-delete-test PRIVATE src)
+target_link_libraries(recursive-delete-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
+
 # --- FTP directory-listing parser test (MLSD/LIST, realistic sample data — no real server available) ---
 # CertificateVerifier.cpp/Widgets are pulled in because FtpBackend.cpp
 # includes CertificateVerifier.h (a Q_OBJECT header) for its
@@ -801,6 +825,7 @@ qt_add_executable(sort-and-commands-test EXCLUDE_FROM_ALL
     src/AppSettings.cpp
     src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
+    src/transfer/FolderEnumerator.cpp
     src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp

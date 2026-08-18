@@ -95,12 +95,21 @@ public slots:
     // because the two operations are genuinely different at the protocol
     // level (unlink vs. rmdir for SFTP, QFile::remove vs. QDir::rmdir
     // locally) — there's no single "delete anything" call to fall back
-    // to. Directory deletion is deliberately NOT recursive: both
+    // to. This PRIMITIVE is still deliberately NOT recursive: both
     // backends only remove an empty directory (matching plain POSIX
     // rmdir / SFTP RMDIR semantics), and a non-empty one fails with a
     // clear reason rather than either silently doing nothing or wiping
-    // out a whole tree — recursive delete is a meaningfully bigger, more
-    // dangerous feature that wasn't asked for.
+    // out a whole tree — no backend interface change was needed to add
+    // real recursive-delete UX on top of it. See
+    // FilePaneWidget::offerRecursiveDelete() for that: when a directory
+    // delete fails this way, it enumerates the tree, shows a content-
+    // aware warning, and — only if the person says yes — deletes
+    // everything bottom-up via repeated calls to this same
+    // non-recursive primitive (files first, then directories deepest-
+    // first, so every directory is provably empty by the time its own
+    // deleteEntry() call runs). Same "build the higher-level behavior
+    // out of unchanged primitives" shape this codebase already used for
+    // CompareSyncExecutor's own bottom-up delete-extras feature.
     virtual void deleteEntry(const QString &path, bool isDirectory) = 0;
     virtual void renameEntry(const QString &oldPath, const QString &newPath) = 0;
 

@@ -440,13 +440,13 @@ representative of any real desktop:
 
 ## Running the test suites
 
-Twenty-four `EXCLUDE_FROM_ALL` CMake targets make up the required suite
+Twenty-five `EXCLUDE_FROM_ALL` CMake targets make up the required suite
 as of this writing — not part of a normal `make`, built and run
 explicitly, and all of them (not just a "core" subset) need to actually
 pass before a change is done. The count keeps growing as the project
 does; rather than renumbering everything and rewriting this whole
 section each time, new targets get their own short subsection further
-below instead. Don't trust "twenty-four" to still be accurate by the
+below instead. Don't trust "twenty-five" to still be accurate by the
 time you're reading this — this paragraph is the one place that number lives,
 so if it's wrong, the fix is here, not a hunt through the rest of this
 file. The original ten, each with its own run command:
@@ -1177,6 +1177,55 @@ I/O, not just in-memory structs.
 ```
 cmake --build build --target connection-history-test
 QT_QPA_PLATFORM=offscreen ./build/connection-history-test
+```
+
+### `recursive-delete-test`
+
+Self-contained, `EXCLUDE_FROM_ALL`, added to all five `build.yml` jobs —
+`FilePaneWidget::deleteEntriesAt(..., offerRecursiveDeleteOnFailure)`'s
+own recursive-delete feature: a directory that fails its ordinary,
+non-recursive delete (still the same `RemoteBackend::deleteEntry()`
+primitive, unchanged) gets a content-aware "isn't empty — delete
+everything inside?" warning instead of just failing, and — only on
+Yes — a real bottom-up delete of the whole tree (`FolderEnumerator` walk,
+then files first, directories deepest-first, mirroring
+`CompareSyncExecutor::deleteSelected()`'s own established pattern).
+Drives the real `QMessageBox`, same technique
+`conflict-resolution-test` already established (a `QTimer` fires while
+the dialog's still-blocking `exec()` call is pumping the event loop,
+finds it via `QApplication::activeModalWidget()`, clicks a button by
+text). Calls `deleteEntriesAt()` directly rather than simulating the
+context menu — the same public entry point `CompareSyncExecutor`
+already uses (with the new parameter defaulted to `false`, so it stays
+completely unaffected — confirmed separately by `compare-sync-test`,
+unchanged by this feature).
+
+18 assertions across five phases, all against a real `LocalBackend` and
+real nested fixtures on disk: an empty folder and a single file both
+delete immediately with no new dialog, byte-for-byte the same as before
+this feature existed; a non-empty folder's warning, DECLINED, leaves
+the folder and everything inside completely untouched; a multi-level
+non-empty folder's warning, ACCEPTED, deletes every file at every depth
+and every subfolder, root gone last; and a mixed multi-select batch (one
+empty folder, one non-empty) proves the empty one deletes immediately
+while the non-empty one gets its own follow-up — also exercising the
+generalized `m_modalDialogInProgress` reentrancy guard (widened from a
+narrower one scoped just to plain failure warnings, built for the
+Write Into crash fix earlier — see `ARCHITECTURE.md`'s own entry for
+why a second, distinct kind of modal dialog needed the SAME guard, not
+a second uncoordinated one). All 18 passed on the first real run, and
+5/5 (then 8/8 in a matching `fedora:44` container) repeat runs after a
+margin-widening pass — the exact same CI-runner-load lesson
+`conflict-resolution-test`'s own newer phases already learned, applied
+proactively here from the start rather than after a real CI failure.
+Proved non-vacuous against the pre-feature code the same way a genuinely
+new API always is: it doesn't compile at all without
+`deleteEntriesAt()`'s new parameter, a stronger signal than a runtime
+failure would be.
+
+```
+cmake --build build --target recursive-delete-test
+QT_QPA_PLATFORM=offscreen ./build/recursive-delete-test
 ```
 
 ## Live-server verification (SFTP public-key auth, FTP/FTPS, cancel/pause/resume)

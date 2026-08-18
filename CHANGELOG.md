@@ -8,6 +8,15 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Added
+
+- **Recursive delete, with a warning.** Deleting a folder that turns
+  out to have contents is no longer just refused — you get a second,
+  content-aware warning ("isn't empty — it contains 12 files and 3
+  folders. Deleting it will permanently delete everything inside...")
+  and, only if you say yes, everything inside is deleted for real. The
+  plain delete confirmation is unchanged for files and empty folders.
+
 ## [0.7.35] — Fix a Windows crash from Write Into onto an existing folder tree
 
 ### Fixed
