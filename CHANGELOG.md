@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.36] — Recursive delete, with a warning
+
 ### Added
 
 - **Recursive delete, with a warning.** Deleting a folder that turns
@@ -2098,7 +2100,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.35...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.36...HEAD
+[0.7.36]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.36
 [0.7.35]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.35
 [0.7.33]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.33
 [0.7.31]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.31
