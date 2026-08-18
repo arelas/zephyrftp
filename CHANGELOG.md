@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.37] — Fix folder transfers hanging on "Preparing to transfer"
+
 ### Fixed
 
 - **A real performance regression from the previous crash fix: a folder
@@ -2116,7 +2118,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.36...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.37...HEAD
+[0.7.37]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.37
 [0.7.36]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.36
 [0.7.35]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.35
 [0.7.33]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.33
