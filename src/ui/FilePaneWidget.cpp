@@ -43,9 +43,11 @@ constexpr int SortDataRole = Qt::UserRole + 1;
 constexpr int SortIsDirRole = Qt::UserRole + 2;
 
 // Size is displayed as a plain, unpadded byte count (QString::number()),
-// which sorts wrong lexicographically ("10" < "9"). Modified's ISO-8601
-// text sorts correctly as a plain string (fixed-width, so lexicographic
-// order already matches chronological order) and Permissions is meant
+// which sorts wrong lexicographically ("10" < "9"). Modified's
+// "yyyy-MM-dd hh:mm:ss" text sorts correctly as a plain string
+// (fixed-width, so lexicographic order already matches chronological
+// order — the space between date and time is the same character on
+// every row, so it doesn't disturb that) and Permissions is meant
 // to sort as the text shown, so only Size and Name need a real sort key
 // of their own — stashed in SortDataRole since QStandardItem's default
 // operator< compares DisplayRole text.
@@ -427,6 +429,10 @@ void FilePaneWidget::buildUi()
     // is what should absorb leftover width instead.
     m_view->header()->setSectionResizeMode(ColName, QHeaderView::Interactive);
     m_view->setColumnWidth(ColName, 220);
+    // Wide enough for the full "yyyy-MM-dd hh:mm:ss" text below without
+    // needing to be dragged wider first; the maxWidths cap further down
+    // still allows shrinking it back down interactively.
+    m_view->setColumnWidth(ColModified, 155);
     // Same real bug, same fix as TransferQueueWidget's identical File
     // column (see that file's own comment for the full story, including
     // the follow-up that found this exact class of fix needs to be
@@ -670,7 +676,7 @@ void FilePaneWidget::rebuildModel()
         nameItem->setData(e.isDir, SortIsDirRole);
         auto *sizeItem = new SizeItem(e.isDir ? QString() : QString::number(e.size));
         sizeItem->setData(e.isDir ? qint64(-1) : e.size, SortDataRole);
-        auto *modItem = new QStandardItem(e.modified.toString(Qt::ISODate));
+        auto *modItem = new QStandardItem(e.modified.toString(QStringLiteral("yyyy-MM-dd hh:mm:ss")));
         auto *permItem = new QStandardItem(e.permissions);
         m_model->appendRow({nameItem, sizeItem, modItem, permItem});
     }

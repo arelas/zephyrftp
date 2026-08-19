@@ -8,6 +8,13 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- The file pane's **Modified** column showed timestamps in raw ISO 8601
+  form (`yyyy-MM-ddThh:mm:ss`) — now shown as `yyyy-MM-dd hh:mm:ss`
+  (a space instead of the `T`). The column also now opens wide enough
+  to show the full timestamp without needing to be dragged wider first.
+
 ## [0.7.42] — Drag files between the app and the OS file manager
 
 ### Added

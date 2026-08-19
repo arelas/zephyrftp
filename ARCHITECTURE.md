@@ -4957,6 +4957,26 @@ to drive FileZilla itself for a same-desktop comparison.
   finding the keyboard-shortcuts-test margin issue above — the same
   detection discipline caught both).
 
+  **Fix: Modified column showed a raw ISO 8601 timestamp
+  (`yyyy-MM-ddThh:mm:ss`) and opened too narrow to show it in full.**
+  A direct, small user report. `FilePaneWidget::rebuildModel()`
+  formatted each row's `Modified` cell with `Qt::ISODate`
+  (`e.modified.toString(Qt::ISODate)`) — switched to an explicit
+  `"yyyy-MM-dd hh:mm:ss"` format string (a space instead of the `T`).
+  Sort order is unaffected: the column's sort key is the display text
+  itself (see `SortDataRole`'s own class doc comment above), and a
+  fixed-width format with a constant separator character sorts
+  lexicographically the same regardless of which separator is used.
+  Also gave `ColModified` an explicit initial `setColumnWidth(155)`
+  (previously unset, relying on `QHeaderView`'s own default section
+  size) so the full timestamp is visible without dragging the column
+  wider first — the existing `maxWidths` cap of 180 already established
+  for the same column (see the `sectionResized` handler above) still
+  lets it shrink back down interactively. Verified via a disposable
+  visual probe (a real `FilePaneWidget` over a real local directory,
+  screenshotted) confirming both the space-separated format and the
+  full-width display with no manual drag needed.
+
   **Scripting/automation (CLI mode)** — WinSCP's own flagship
   differentiator, picked as the next v2 target once sync/mirror browsing
   was fully shipped (both halves). `--script=<path>` (new
