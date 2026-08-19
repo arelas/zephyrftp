@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.42] — Drag files between the app and the OS file manager
+
 ### Added
 
 - **Drag files between this app and your OS's own file manager**, not
@@ -2191,7 +2193,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.41...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.42...HEAD
+[0.7.42]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.42
 [0.7.41]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.41
 [0.7.40]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.40
 [0.7.39]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.39
