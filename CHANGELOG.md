@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.40] — Keyboard shortcuts, fix default sort order
+
 ### Added
 
 - **Keyboard shortcuts**: Delete to delete the selection, F2 to rename,
@@ -2168,7 +2170,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.39...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.40...HEAD
+[0.7.40]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.40
 [0.7.39]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.39
 [0.7.38]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.38
 [0.7.37]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.37
