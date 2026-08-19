@@ -21,8 +21,9 @@ tracks what's changed between them.
   once, side by side. Either pane can connect independently (click its
   own path-bar icon), so you're not limited to "your computer on one
   side, a server on the other" — connect both panes to different servers
-  and transfer between them directly. Back, forward, and up buttons
-  beside each pane's location bar, same as any file manager.
+  and transfer between them directly. Back, forward, up, home, and
+  refresh buttons beside each pane's location bar, same as any file
+  manager.
 - **Filter by name** — a field under each pane's path bar narrows a
   busy directory listing as you type (case-insensitive, matches
   anywhere in the name). Each pane's filter is independent, so you can
