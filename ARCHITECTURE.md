@@ -4977,6 +4977,56 @@ to drive FileZilla itself for a same-desktop comparison.
   screenshotted) confirming both the space-separated format and the
   full-width display with no manual drag needed.
 
+  **Fix: Permissions (the last column) had no bounded width and no
+  visible end; Name wasn't reliably the widest column on open.**
+  Another direct user report. `FileTreeView`'s header is a `QTreeView`,
+  which defaults `stretchLastSection` to `true` — the ORIGINAL design
+  deliberately relied on that to let Permissions absorb whatever width
+  Name/Size/Modified didn't claim, but the practical effect on any
+  window wider than a few hundred pixels was Permissions ballooning
+  into the widest column by far, the opposite of what a file browser
+  should lead with. Fixed by calling
+  `m_view->header()->setStretchLastSection(false)` and giving every
+  column (`ColName`/`ColSize`/`ColModified`/`ColPermissions`) its own
+  explicit `setColumnWidth()` — Name (200px) deliberately the widest
+  of the four, Size (78px) sized to show a full 8-digit byte count,
+  Modified (155px, unchanged from the fix above), Permissions (95px)
+  sized to show its own header label in full alongside a complete
+  `rwxr-xr-x` value. All four stay `Interactive` (a user can still drag
+  any of them), and `ColPermissions` joined the existing per-column
+  `maxWidths` cap (200px) that already capped Name/Size/Modified —
+  Permissions is no longer exempt from that map now that it isn't
+  stretch-governed.
+
+  Sizing the four widths concretely (not by eyeballing) took two
+  rounds: an initial pass sized Name generously (300px) with Size/
+  Permissions loose enough (90/130px) to comfortably fit their content
+  — but a disposable probe driving a real `MainWindow` at the app's
+  OWN fallback default size (`1100x780`, `MainWindow::MainWindow()`)
+  showed a horizontal scrollbar immediately on first launch, before any
+  resize: the four widths summed past what a default-sized pane
+  actually has room for once its own vertical scrollbar (for the
+  `~18`-entry `$HOME` listing used in the probe) is accounted for.
+  Trimmed to the final numbers above, reconfirmed scrollbar-free at
+  `1100x780` via the same probe, and reconfirmed Size/Permissions still
+  don't truncate their own content (`60000000`, the "Permissions"
+  label itself) via a second probe with a real 60MB sparse file.
+
+  Disabling `stretchLastSection` surfaced a second, purely visual bug
+  it had been silently covering for: the header's OWN blank strip past
+  the last column (previously nonexistent, since stretch always
+  consumed 100% of the width) isn't reached by the existing
+  `QHeaderView::section` QSS rule — `::section` only styles real
+  section cells — so it fell back to Qt's unstyled native header color,
+  a light gray strip cutting across both dark AND light themes right
+  where Permissions now ends. Fixed with a new bare `QHeaderView` rule
+  in both theme files (background-color + border-bottom matching each
+  theme's existing `::section` surface/border tokens) — this also gives
+  Permissions itself a real, visible right-hand divider for the first
+  time, since it's now a genuinely bounded section like any other
+  rather than a stretch region with no defined end. Verified via the
+  same disposable probe in both Dark and Light.
+
   **Scripting/automation (CLI mode)** — WinSCP's own flagship
   differentiator, picked as the next v2 target once sync/mirror browsing
   was fully shipped (both halves). `--script=<path>` (new

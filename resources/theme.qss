@@ -104,6 +104,18 @@ QPlainTextEdit {
     font-size: 12px;
 }
 
+/* Covers the header's own background, including any blank trailing
+   strip past the last column now that FilePaneWidget disabled
+   stretchLastSection (see its own comment) — without this, that strip
+   fell back to Qt's unstyled native header color instead of matching
+   the dark surface every real column already uses. ::section below
+   still needs its own background-color: this rule alone wouldn't
+   reach section cells, which paint over it. */
+QHeaderView {
+    background-color: #1a1d23;   /* --zf-surface */
+    border-bottom: 1px solid #2a2e35;   /* --zf-border — divider along the whole row, including past the last column */
+}
+
 QHeaderView::section {
     background-color: #1a1d23;   /* --zf-surface */
     color: #dfe4ea;               /* --zf-text-primary — brightened from text-secondary for readability */

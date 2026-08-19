@@ -422,34 +422,60 @@ void FilePaneWidget::buildUi()
     // for. Renaming has always gone through the dedicated QInputDialog
     // flow instead; this just makes that the only possible outcome.
     m_view->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    // Interactive like every other column — Stretch here used to make
-    // Name's width purely a side effect of dragging the OTHER columns'
-    // handles, with no handle of its own to drag. QTreeView's own
-    // stretchLastSection default (Permissions, the actual last column)
-    // is what should absorb leftover width instead.
+    // Interactive on every column, including Permissions — Stretch was
+    // tried on Name early on and rejected: it makes Name's width purely
+    // a side effect of dragging the OTHER columns' handles, with no
+    // handle of its own to drag, which is worse for a column whose
+    // whole point is reading long filenames.
+    //
+    // QTreeView's own stretchLastSection default used to be what let
+    // Permissions (the actual last column) absorb all leftover width —
+    // on anything but a narrow window that made it, not Name, the
+    // widest column on open, the opposite of what a file browser should
+    // lead with. Disabled here so every column instead gets its own
+    // explicit initial width below, sized so Name is always the
+    // largest on open: comfortably wider than any one of Size/Modified/
+    // Permissions individually, while still leaving the app's own
+    // fallback default window size (1100x780, MainWindow::MainWindow())
+    // free of a horizontal scrollbar — and, same reasoning as
+    // TransferQueueTable's own File column, the one column whose
+    // content (arbitrarily long filenames) actually benefits from a
+    // user dragging it wider still.
+    m_view->header()->setStretchLastSection(false);
     m_view->header()->setSectionResizeMode(ColName, QHeaderView::Interactive);
-    m_view->setColumnWidth(ColName, 220);
+    m_view->setColumnWidth(ColName, 200);
+    // Comfortably fits an 8-digit byte count ("60000000") without
+    // needing to be dragged wider first.
+    m_view->header()->setSectionResizeMode(ColSize, QHeaderView::Interactive);
+    m_view->setColumnWidth(ColSize, 78);
     // Wide enough for the full "yyyy-MM-dd hh:mm:ss" text below without
     // needing to be dragged wider first; the maxWidths cap further down
     // still allows shrinking it back down interactively.
+    m_view->header()->setSectionResizeMode(ColModified, QHeaderView::Interactive);
     m_view->setColumnWidth(ColModified, 155);
+    // Comfortably fits the "Permissions" header label itself (the
+    // longest of the four) alongside a full "rwxr-xr-x" value. Now that
+    // stretchLastSection is off, this is a genuine bounded column with
+    // its own right-hand divider (QHeaderView::section's border-right
+    // in both theme files) instead of an unbounded stretch with no
+    // visible end — the trailing space past it just shows the pane's
+    // own background, matching every other empty area in the app.
+    m_view->header()->setSectionResizeMode(ColPermissions, QHeaderView::Interactive);
+    m_view->setColumnWidth(ColPermissions, 95);
     // Same real bug, same fix as TransferQueueWidget's identical File
     // column (see that file's own comment for the full story, including
     // the follow-up that found this exact class of fix needs to be
     // PER-column, not one header-wide cap): with no upper bound,
-    // dragging Name wide enough pushes Size/Modified/Permissions past
-    // the visible area, unreachable (stretchLastSection actively avoids
-    // a horizontal scrollbar). A single shared maximum generous enough
-    // for Name would still let Size/Modified EACH independently reach
-    // that same width and collectively cause the identical problem, so
-    // each gets its own appropriately-sized cap instead. Permissions
-    // (the actual last column) isn't in this map — its width is already
-    // governed by stretchLastSection, same reasoning Speed is excluded
-    // in TransferQueueWidget.
+    // dragging one column wide enough pushes the others past the
+    // visible area, unreachable (with stretchLastSection now off, nothing
+    // absorbs the overflow — a horizontal scrollbar would appear instead
+    // of silently clipping). Every column gets its own appropriately-
+    // sized cap, Name's alone generous enough to actually read a long
+    // filename.
     connect(m_view->header(), &QHeaderView::sectionResized, this,
             [this](int logicalIndex, int /*oldSize*/, int newSize) {
         static const QHash<int, int> maxWidths{
-            {ColName, 500}, {ColSize, 120}, {ColModified, 180}
+            {ColName, 500}, {ColSize, 120}, {ColModified, 180}, {ColPermissions, 200}
         };
         const auto it = maxWidths.constFind(logicalIndex);
         if (it != maxWidths.constEnd() && newSize > it.value())

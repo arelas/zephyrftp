@@ -8,6 +8,18 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- The file pane's column layout gave Permissions (the last column) an
+  unbounded, auto-stretched width — on most windows that made it, not
+  Name, the widest column on open, and its header had no visible end:
+  the blank space past it fell back to Qt's unstyled native header
+  color instead of the app's own theme. Every column now gets an
+  explicit, sane initial width, with Name always the widest on open;
+  Permissions is now a genuine bounded column with a proper divider
+  on its right edge, and the trailing space past it matches the
+  pane's own background in both themes.
+
 ## [0.7.43] — Fix Modified column's date format and width
 
 ### Fixed
