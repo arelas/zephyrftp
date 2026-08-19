@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.43] — Fix Modified column's date format and width
+
 ### Fixed
 
 - The file pane's **Modified** column showed timestamps in raw ISO 8601
@@ -2200,7 +2202,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.42...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.43...HEAD
+[0.7.43]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.43
 [0.7.42]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.42
 [0.7.41]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.41
 [0.7.40]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.40
