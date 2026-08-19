@@ -5,7 +5,7 @@ local files and a remote server side by side, then drag, drop, or
 double-click to move things between them. Think FileZilla or WinSCP,
 built fresh in Qt6.
 
-**Current version: 0.8.0 — beta.** Real functionality, with real but
+**Current version: 0.8.1 — beta.** Real functionality, with real but
 narrowing gaps — see [Known limitations](#known-limitations) before
 relying on this for anything you can't afford to get wrong. [Releases](https://github.com/arelas/zephyrftp/releases)
 has downloadable Windows, macOS, and Linux builds; [CHANGELOG.md](CHANGELOG.md)
@@ -13,8 +13,11 @@ tracks what's changed between them.
 
 **The project is now in feature freeze, heading toward 1.0.** From here,
 releases are bug fixes and small additions closing existing gaps, not
-new capabilities. A signed, installer-based Windows build (replacing
-today's unzip-and-run `.zip`) is planned at some point during this phase.
+new capabilities. A Windows installer (`.exe`, alongside the existing
+unzip-and-run `.zip`) is now available — it's not yet signed, so
+Windows SmartScreen will flag it until a code-signing path (SignPath
+Foundation or Azure Trusted Signing) is set up, planned at some point
+during this phase.
 
 ![Dual-pane browsing, connected to a real SFTP server](docs/screenshots/dual-pane-browsing.png)
 
@@ -243,8 +246,12 @@ today's unzip-and-run `.zip`) is planned at some point during this phase.
 
 Grab the latest build from [Releases](https://github.com/arelas/zephyrftp/releases):
 
-- **Windows**: `zephyrftp-windows-x64.zip` — unzip it, no installer, just
-  launch `zephyrftp.exe`.
+- **Windows**: two options. `zephyrftp-windows-x64-setup.exe` installs
+  to Program Files with a Start Menu shortcut and a real uninstaller
+  (Add/Remove Programs); `zephyrftp-windows-x64.zip` is the portable,
+  unzip-and-run alternative if you'd rather not install anything. Neither
+  is code-signed yet (see the feature-freeze note above), so the
+  installer will get a Windows SmartScreen warning on first run.
 - **macOS**: `ZephyrFTP.dmg` — Apple Silicon only (no Intel Mac build
   yet, see Known limitations). Open the `.dmg` and drag ZephyrFTP into
   Applications. The build is unsigned and unnotarized (no paid Apple

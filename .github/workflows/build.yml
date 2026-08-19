@@ -53,13 +53,18 @@ jobs:
       # the built test suite, not just linking it (see the "Run test
       # suite under wine" step below for why Xvfb specifically is
       # needed). git isn't in the base fedora image; actions/checkout
-      # needs it.
+      # needs it. mingw64-nsis + mingw32-nsis (both, not just the 64-bit
+      # one — see tools/windows-installer.nsi's own header comment for
+      # why: makensis unconditionally probes for an x86 stub at startup
+      # before ever reaching this script's `Target amd64-unicode`,
+      # confirmed directly by mingw64-nsis alone failing even on
+      # `makensis /HELP`) build the Windows installer further below.
       - name: Install build dependencies
         run: |
           dnf install -y --setopt=install_weak_deps=False \
             git mingw64-gcc-c++ mingw64-qt6-qtbase mingw64-qt6-qtsvg \
             mingw64-libssh2 mingw64-openssl mingw64-cmake qt6-qtbase-devel \
-            wine xorg-x11-server-Xvfb zip
+            mingw64-nsis mingw32-nsis wine xorg-x11-server-Xvfb zip
 
       - uses: actions/checkout@v7
 
@@ -262,6 +267,78 @@ jobs:
         with:
           name: zephyrftp-windows-x64
           path: dist/
+          if-no-files-found: error
+
+      # tools/windows-installer.nsi's own header comment explains the
+      # absolute-path arguments and why the DLL/plugin set isn't
+      # hardcoded there. VERSION read from CMakeCache.txt rather than
+      # GITHUB_REF_NAME — matches build-macos's own precedent below, and
+      # works the same whether this run is a tag push or a PR build,
+      # unlike a tag-derived version which only exists on the former.
+      - name: Build Windows installer
+        run: |
+          VERSION="$(grep 'CMAKE_PROJECT_VERSION:STATIC' build-win/CMakeCache.txt | cut -d= -f2)"
+          makensis -DVERSION="$VERSION" -DDISTDIR="$(pwd)/dist" \
+            -DLICENSEFILE="$(pwd)/LICENSE" -DICONFILE="$(pwd)/resources/icons/app-icon.ico" \
+            -DOUTFILE="$(pwd)/zephyrftp-windows-x64-setup.exe" \
+            tools/windows-installer.nsi
+
+      # Not just "it compiled" — a real silent install/launch/uninstall
+      # cycle under wine, same WINEPREFIX/Xvfb pattern the test suite
+      # step below already establishes. Verified manually first
+      # (2026-08-19: real files, both Start Menu shortcuts, and both
+      # registry keys present after install, all genuinely gone after
+      # uninstall /S) — this step is that same check, automated.
+      - name: Verify installer install/launch/uninstall under wine
+        run: |
+          set -e
+          export WINEDEBUG=-all QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR=/tmp/xdg-runtime WINEPREFIX=/tmp/wineprefix-installer LIBGL_ALWAYS_SOFTWARE=1
+          mkdir -p /tmp/xdg-runtime /tmp/wineprefix-installer && chmod 700 /tmp/xdg-runtime
+
+          xvfb-run -a wine zephyrftp-windows-x64-setup.exe /S
+          wineserver -w
+
+          test -f "$WINEPREFIX/drive_c/Program Files/ZephyrFTP/zephyrftp.exe"
+          test -f "$WINEPREFIX/drive_c/Program Files/ZephyrFTP/uninstall.exe"
+          test -f "$WINEPREFIX/drive_c/Program Files/ZephyrFTP/Qt6Core.dll"
+          # Glob rather than a hardcoded username — this step hasn't been
+          # run inside the real CI container yet to confirm whether it's
+          # "root" (this job's other steps run in a fedora:44 container
+          # with no `user:` directive) or something else; a glob is
+          # correct either way instead of relying on that assumption.
+          ls "$WINEPREFIX"/drive_c/users/*/AppData/Roaming/Microsoft/Windows/"Start Menu"/Programs/ZephyrFTP/ZephyrFTP.lnk
+          echo "[PASS] install: files + shortcut present"
+
+          DISPLAYVERSION="$(wine reg query 'HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\ZephyrFTP' /v DisplayVersion 2>/dev/null | grep -o '[0-9][0-9.]*[0-9]')"
+          VERSION="$(grep 'CMAKE_PROJECT_VERSION:STATIC' build-win/CMakeCache.txt | cut -d= -f2)"
+          [ "$DISPLAYVERSION" = "$VERSION" ]
+          echo "[PASS] install: Add/Remove Programs DisplayVersion matches ($DISPLAYVERSION)"
+          wineserver -k -w
+
+          xvfb-run -a wine "C:\\Program Files\\ZephyrFTP\\uninstall.exe" /S
+          wineserver -w
+
+          # Explicit if/exit, not `! test ...` — under `set -e`, bash
+          # exempts a `!`-negated command from triggering exit-on-failure
+          # (POSIX behavior), so `! test -d X` would silently NOT fail
+          # this step even if X still existed. Confirmed by reading
+          # bash's own documented set -e semantics, not assumed.
+          if [ -d "$WINEPREFIX/drive_c/Program Files/ZephyrFTP" ]; then
+            echo "FAIL: ZephyrFTP install directory still exists after uninstall" >&2
+            exit 1
+          fi
+          if ls "$WINEPREFIX"/drive_c/users/*/AppData/Roaming/Microsoft/Windows/"Start Menu"/Programs/ZephyrFTP/ZephyrFTP.lnk >/dev/null 2>&1; then
+            echo "FAIL: Start Menu shortcut still exists after uninstall" >&2
+            exit 1
+          fi
+          echo "[PASS] uninstall: files + shortcut genuinely removed"
+          wineserver -k -w
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: zephyrftp-windows-installer
+          path: zephyrftp-windows-x64-setup.exe
           if-no-files-found: error
 
   build-linux:
@@ -970,6 +1047,10 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
+          name: zephyrftp-windows-installer
+
+      - uses: actions/download-artifact@v8
+        with:
           name: zephyrftp-linux-x64
           path: dist-linux
 
@@ -1007,6 +1088,7 @@ jobs:
         with:
           files: |
             zephyrftp-windows-x64.zip
+            zephyrftp-windows-x64-setup.exe
             zephyrftp-linux-x64.tar.gz
             *.deb
             *.rpm

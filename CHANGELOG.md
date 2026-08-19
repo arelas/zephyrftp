@@ -8,6 +8,28 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.8.1] — Add a real Windows installer
+
+### Added
+
+- **A real Windows installer.** `zephyrftp-windows-x64-setup.exe`
+  (NSIS) now ships alongside the existing portable `.zip` — installs to
+  Program Files, adds a Start Menu shortcut and an optional Desktop
+  shortcut, and registers a proper uninstaller in Add/Remove Programs.
+  Packages the exact same `dist/` folder the `.zip` is built from, so
+  it can't drift out of sync with `collect-win-runtime.sh`'s computed
+  DLL closure. CI verifies a full silent install → launch → uninstall
+  cycle under `wine`, not just that the installer builds — confirmed
+  files, both shortcuts, and both registry keys are present after
+  install and genuinely gone after `uninstall.exe /S`. **Not
+  code-signed yet** — Windows SmartScreen will flag it until a signing
+  path (SignPath Foundation or Azure Trusted Signing) is set up, see
+  README.md's feature-freeze note. See CONTRIBUTING.md's "Building the
+  Windows installer" section for the full local build/verify recipe,
+  including a real Fedora packaging gotcha (`mingw64-nsis` alone isn't
+  enough — `makensis` needs `mingw32-nsis`'s x86 stub too just to get
+  past its own startup check, even though the actual output is amd64).
+
 ## [0.8.0] — First beta: feature freeze heading toward 1.0
 
 ### Changed
@@ -2247,7 +2269,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.1
 [0.8.0]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.0
 [0.7.45]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.45
 [0.7.44]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.44

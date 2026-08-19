@@ -11,10 +11,11 @@ As of v0.8.0 (beta), the project is in feature freeze. Contributions
 from here should be bug fixes or small additions that close an existing,
 documented gap (see [Known limitations](README.md#known-limitations) and
 ARCHITECTURE.md's "Known gaps" entries) — not new capabilities or
-protocol/backend breadth. A signed, installer-based Windows build is
-planned at some point during this phase; a large new feature almost
-certainly isn't a fit right now. If you're unsure whether something
-qualifies, open an issue to discuss scope before starting on it.
+protocol/backend breadth. A Windows installer now ships alongside the
+`.zip` (see "Building the Windows installer" below) but isn't signed
+yet — that's still planned at some point during this phase. A large new
+feature almost certainly isn't a fit right now. If you're unsure whether
+something qualifies, open an issue to discuss scope before starting on it.
 
 ## Building
 
@@ -249,6 +250,67 @@ accumulation. If reproducing a multi-test CI failure locally by looping
 over several `.exe`s in a row, do the same (`wineserver -k -w` after
 each one) rather than assuming a single-test repro's environment
 generalizes to the full sequence.
+
+### Building the Windows installer
+
+`tools/windows-installer.nsi` (NSIS, Modern UI 2) packages whatever the
+"Assemble deployable folder" step above already produced into
+`zephyrftp-windows-x64-setup.exe` — Program Files install, Start Menu
+shortcut, optional Desktop shortcut, and a real Add/Remove Programs
+uninstaller. Deliberately doesn't hardcode the DLL list; it recursively
+packages the same `dist/` folder the `.zip` release asset is built
+from, so it can't drift out of sync when `collect-win-runtime.sh`'s own
+computed DLL closure changes.
+
+Two Fedora packages, both required (confirmed the hard way — see the
+script's own header comment for the full story): `mingw64-nsis` alone
+ships `makensis` and only the amd64 stubs, but `makensis` unconditionally
+probes for an x86 stub at its own startup, before it ever reaches this
+script's `Target amd64-unicode` directive — `mingw32-nsis` supplies that
+stub purely to satisfy the check; nothing about the actual installer
+output ends up 32-bit.
+
+```
+sudo dnf install mingw64-nsis mingw32-nsis
+```
+
+Build (from the repo root, after the "Assemble deployable folder" steps
+above have produced `dist/`) — note `-D`, not `/D`: this Linux build of
+`makensis` parses a leading `/` as the start of a path, not a flag:
+
+```
+VERSION="$(grep 'CMAKE_PROJECT_VERSION:STATIC' build-win/CMakeCache.txt | cut -d= -f2)"
+makensis -DVERSION="$VERSION" -DDISTDIR="$(pwd)/dist" \
+    -DLICENSEFILE="$(pwd)/LICENSE" -DICONFILE="$(pwd)/resources/icons/app-icon.ico" \
+    -DOUTFILE="$(pwd)/zephyrftp-windows-x64-setup.exe" \
+    tools/windows-installer.nsi
+```
+
+Verify it under `wine`, same `WINEPREFIX`/`xvfb-run` pattern as running
+the test suite above — a silent install (`/S`) followed by a silent
+uninstall (`uninstall.exe /S`) should leave nothing behind:
+
+```
+export WINEDEBUG=-all WINEPREFIX=/tmp/wineprefix-installer LIBGL_ALWAYS_SOFTWARE=1
+mkdir -p /tmp/wineprefix-installer
+xvfb-run -a wine zephyrftp-windows-x64-setup.exe /S
+wineserver -w
+# check "$WINEPREFIX/drive_c/Program Files/ZephyrFTP" and the Start
+# Menu shortcut under drive_c/users/*/AppData/... both exist
+xvfb-run -a wine "C:\Program Files\ZephyrFTP\uninstall.exe" /S
+wineserver -w
+# check they're both gone
+```
+
+CI runs this exact cycle automatically (`build-windows`'s "Verify
+installer install/launch/uninstall under wine" step) — a broken
+installer fails the build, not just a broken `.zip`.
+
+**Deliberately unsigned for now** — see the "Project status" section
+above for the planned code-signing path (SignPath Foundation or Azure
+Trusted Signing). Signing needs no changes to the `.nsi` script itself:
+it runs against the finished `.exe` afterward, same as signing any
+other prebuilt binary.
 
 ### A build gotcha worth knowing before it costs you an hour
 
