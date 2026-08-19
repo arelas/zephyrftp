@@ -43,16 +43,22 @@ inline int defaultPortFor(Protocol protocol)
     return 22;
 }
 
-// Shown in the protocol combo box, and in the connection dialog's title.
+// Shown in the protocol combo box (ConnectionDialog, SiteManagerDialog,
+// PreferencesDialog, and MainWindow's quick connect toolbar — see
+// ProtocolCombo::populate()). Sftp and Ftp have no explainer suffix —
+// each is the only entry of its kind, so there's nothing to distinguish
+// it from. Ftps/FtpsImplicit keep their (Explicit)/(Implicit) suffix
+// because those two ARE otherwise indistinguishable in the list — both
+// display as "FTPS" without it.
 inline QString displayNameFor(Protocol protocol)
 {
     switch (protocol) {
-    case Protocol::Sftp:         return QStringLiteral("SFTP (SSH File Transfer Protocol)");
-    case Protocol::Ftp:          return QStringLiteral("FTP (unencrypted)");
-    case Protocol::Ftps:         return QStringLiteral("FTPS (FTP with explicit TLS)");
+    case Protocol::Sftp:         return QStringLiteral("SFTP");
+    case Protocol::Ftp:          return QStringLiteral("FTP");
+    case Protocol::Ftps:         return QStringLiteral("FTPS (Explicit)");
     case Protocol::FtpsImplicit: return QStringLiteral("FTPS (Implicit)");
     }
-    return QStringLiteral("SFTP (SSH File Transfer Protocol)");
+    return QStringLiteral("SFTP");
 }
 
 // Only SFTP supports key-based authentication; FTP and FTPS authenticate

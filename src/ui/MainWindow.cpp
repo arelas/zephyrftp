@@ -400,8 +400,8 @@ void MainWindow::buildToolbar()
     addToolBarBreak(Qt::TopToolBarArea);
     m_quickConnectToolBar = addToolBar(tr("Quick Connect"));
 
-    // Separate host/username/port/protocol fields plus an explicit
-    // Connect button — replaces an earlier single free-text
+    // Separate host/username/password/port/protocol fields plus an
+    // explicit Connect button — replaces an earlier single free-text
     // "[protocol://][user@]host[:port]" field (a real reported
     // usability issue: the syntax wasn't discoverable). Protocol
     // defaults to Preferences' own default, same precedent
@@ -409,10 +409,13 @@ void MainWindow::buildToolbar()
     // dialog. Port is a plain QLineEdit, not a QSpinBox — a port is
     // typed, not nudged one integer at a time (same reasoning
     // PreferencesDialog/SiteManagerDialog's own port fields use).
-    // Order (host/username/port, THEN protocol, THEN Connect) matches a
-    // real reported preference — protocol sits right before the action
-    // it configures rather than leading the row, and host leads before
-    // username.
+    // Order (host/username/password/port, THEN protocol, THEN Connect)
+    // matches a real reported preference — protocol sits right before
+    // the action it configures rather than leading the row, and host
+    // leads before username. Password sits right after username (real
+    // credential entry, typed here directly) — see
+    // onQuickConnectReturnPressed() for why there's no QInputDialog
+    // prompt in between anymore.
     m_quickConnectHostEdit = new QLineEdit(this);
     m_quickConnectHostEdit->setPlaceholderText(tr("Host"));
     m_quickConnectHostEdit->setFixedWidth(160);
@@ -426,6 +429,14 @@ void MainWindow::buildToolbar()
     connect(m_quickConnectUsernameEdit, &QLineEdit::returnPressed,
             this, &MainWindow::onQuickConnectReturnPressed);
     m_quickConnectToolBar->addWidget(m_quickConnectUsernameEdit);
+
+    m_quickConnectPasswordEdit = new QLineEdit(this);
+    m_quickConnectPasswordEdit->setPlaceholderText(tr("Password"));
+    m_quickConnectPasswordEdit->setEchoMode(QLineEdit::Password);
+    m_quickConnectPasswordEdit->setFixedWidth(110);
+    connect(m_quickConnectPasswordEdit, &QLineEdit::returnPressed,
+            this, &MainWindow::onQuickConnectReturnPressed);
+    m_quickConnectToolBar->addWidget(m_quickConnectPasswordEdit);
 
     m_quickConnectPortEdit = new QLineEdit(this);
     m_quickConnectPortEdit->setPlaceholderText(tr("Port"));
@@ -768,18 +779,17 @@ void MainWindow::onQuickConnectReturnPressed()
         port = parsedPort;
     }
 
-    // Password-only auth — matching SiteManagerDialog::onConnectClicked()'s
-    // own QInputDialog::getText(Password) pattern exactly, but with no
-    // CredentialStore prefill: this is a one-off, not a saved site.
-    // Private-key auth still requires the full Connect dialog — a
-    // deliberate scope boundary, not an oversight (no reasonable way to
-    // fit a key path into this toolbar).
-    bool ok = false;
-    const QString password = QInputDialog::getText(
-        this, tr("Connect"), tr("Password for %1@%2:").arg(username, host),
-        QLineEdit::Password, QString(), &ok);
-    if (!ok)
-        return;
+    // Password-only auth, typed directly into the toolbar's own password
+    // field — no QInputDialog prompt in between (an earlier version of
+    // this toolbar popped one, matching SiteManagerDialog::
+    // onConnectClicked()'s own pattern; a real reported usability
+    // complaint was that this made "quick" connect not actually quick —
+    // an extra modal to dismiss on every single connection). No
+    // CredentialStore prefill/save-back either way: this is a one-off,
+    // not a saved site. Private-key auth still requires the full Connect
+    // dialog — a deliberate scope boundary, not an oversight (no
+    // reasonable way to fit a key path into this toolbar).
+    const QString password = m_quickConnectPasswordEdit->text();
 
     ConnectionRequest request;
     request.protocol = protocol;
@@ -801,6 +811,7 @@ void MainWindow::onQuickConnectReturnPressed()
     // see startConnection()'s own comment.
     startConnection(request, m_rightPane);
     m_quickConnectUsernameEdit->clear();
+    m_quickConnectPasswordEdit->clear();
     m_quickConnectHostEdit->clear();
     m_quickConnectPortEdit->clear();
 }

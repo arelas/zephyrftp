@@ -8,6 +8,23 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Added
+
+- **Quick connect now has its own password field.** Fill in Host,
+  Username, Password, Port, and Protocol, then press Enter or click
+  Connect — it connects immediately, with no separate password prompt
+  dialog in between.
+- **A Refresh button on each file pane's toolbar**, right after Home —
+  the same fresh re-listing the right-click Refresh menu item already
+  did, now one click away without opening a menu.
+
+### Changed
+
+- **Protocol dropdown entries are shorter**: SFTP, FTP, FTPS (Explicit),
+  FTPS (Implicit) — dropped the explainer text for SFTP and FTP, which
+  don't need it (each is the only entry of its kind); kept
+  (Explicit)/(Implicit) on FTPS, which does.
+
 ## [0.7.38] — Live progress during folder-transfer enumeration
 
 ### Fixed

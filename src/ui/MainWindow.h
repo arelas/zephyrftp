@@ -264,16 +264,21 @@ private:
     // directly). Constructed after m_transferManager/m_settings, before
     // either pane (both need to emit editRequested to it).
     EditSessionManager *m_editSessionManager = nullptr;
-    // Quick connect: separate host/username/port/protocol fields plus an
-    // explicit Connect button, all built in buildToolbar() (the View
-    // menu's toggle only needs m_quickConnectToolBar itself to exist,
-    // dereferenced lazily at toggle time — same "not needed until later"
-    // pattern m_leftPane/m_rightPane's own View-menu toggles already
-    // use — so unlike the single-field predecessor this replaced,
-    // nothing here needs to be pre-built in buildMenuBar()). Port is a
-    // plain QLineEdit, not a QSpinBox — a port is typed, not nudged.
+    // Quick connect: separate host/username/password/port/protocol
+    // fields plus an explicit Connect button, all built in buildToolbar()
+    // (the View menu's toggle only needs m_quickConnectToolBar itself to
+    // exist, dereferenced lazily at toggle time — same "not needed until
+    // later" pattern m_leftPane/m_rightPane's own View-menu toggles
+    // already use — so unlike the single-field predecessor this
+    // replaced, nothing here needs to be pre-built in buildMenuBar()).
+    // Port is a plain QLineEdit, not a QSpinBox — a port is typed, not
+    // nudged. Password connects directly with no QInputDialog prompt in
+    // between (see onQuickConnectReturnPressed()) — private-key auth
+    // still requires the full Connect dialog, a deliberate scope
+    // boundary, not an oversight.
     QComboBox *m_quickConnectProtocolCombo = nullptr;
     QLineEdit *m_quickConnectUsernameEdit = nullptr;
+    QLineEdit *m_quickConnectPasswordEdit = nullptr;
     QLineEdit *m_quickConnectHostEdit = nullptr;
     QLineEdit *m_quickConnectPortEdit = nullptr;
     QPushButton *m_quickConnectConnectButton = nullptr;

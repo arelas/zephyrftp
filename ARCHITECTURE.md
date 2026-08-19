@@ -4540,6 +4540,90 @@ to drive FileZilla itself for a same-desktop comparison.
   that the final count matches the whole tree (5 directories + 4 files
   = 9). Full 25-target required suite passed.
 
+  **Three small, direct UI requests, batched into one change: a quick
+  connect password field, a protocol-combo wording cleanup, and a
+  per-pane refresh button.**
+
+  1. *Quick connect gained its own password field and no longer pops a
+     `QInputDialog` prompt.* `onQuickConnectReturnPressed()` used to read
+     Host/Username/Port/Protocol straight from the toolbar but still
+     asked for the password via a separate modal (`QInputDialog::
+     getText(Password)`, matching `SiteManagerDialog::
+     onConnectClicked()`'s own pattern) — a real, if minor, contradiction
+     of "quick." New `m_quickConnectPasswordEdit` (`QLineEdit`,
+     `EchoMode::Password`) sits between Username and Port, matching this
+     toolbar's own established real-credential-entry-inline precedent
+     (this IS the one-off credential entry point, not a saved site — see
+     `CLAUDE.md`'s non-negotiable: never written to `sites.json`, and
+     this toolbar never persists anything, matching Recent Connections'
+     own "nothing is ever stored" convention). `onQuickConnectReturnPressed()`
+     now just reads `m_quickConnectPasswordEdit->text()` directly, with
+     no ok/cancel gate — Enter/Connect commits immediately, same as every
+     other field on this row already does. The field is cleared after
+     connecting alongside Username/Host/Port, unchanged. Private-key auth
+     is still explicitly out of scope for this toolbar — no key-path
+     field was added; the full Connect dialog remains the only way to
+     use a key, exactly the existing documented limitation in README.md.
+  2. *Protocol combo entries dropped their explainer suffixes for the
+     two protocols that don't need one.* `Protocol::displayNameFor()`
+     (the single shared source `ProtocolCombo::populate()` feeds into
+     every combo in the app — ConnectionDialog, SiteManagerDialog,
+     PreferencesDialog, and this quick connect toolbar) used to read
+     "SFTP (SSH File Transfer Protocol)", "FTP (unencrypted)", "FTPS
+     (FTP with explicit TLS)", "FTPS (Implicit)" — verbose, and
+     inconsistent about WHY the suffix existed: FTPS's two variants
+     genuinely need a distinguishing suffix (both would otherwise read
+     as bare "FTPS"), but SFTP and FTP are each the only entry of their
+     kind in the list, so their suffixes carried no distinguishing
+     information, just noise. Now: "SFTP", "FTP", "FTPS (Explicit)",
+     "FTPS (Implicit)" — every entry that needs a suffix to stay
+     distinguishable keeps one, every entry that doesn't, doesn't. Fixed
+     in exactly one place — the whole reason `ProtocolCombo::populate()`
+     was extracted in the first place (see that entry's own comment on
+     the bug it fixed: a new protocol value silently missing from one of
+     three hand-duplicated combos). A stale doc comment on
+     `displayNameFor()` claiming it fed "the connection dialog's title"
+     was also corrected while touching this — `ConnectionDialog`'s title
+     is actually a fixed `tr("Connect to Server")`, not derived from the
+     protocol at all; found by reading the code directly rather than
+     trusting the existing comment.
+  3. *File panes gained a dedicated Refresh button, right after Home in
+     the nav row.* A `refresh.svg`-iconed action already existed in the
+     right-click context menu (`navigateTo(currentDirectory())` —
+     deliberately a fresh re-listing, not a cache read), but there was no
+     toolbar equivalent — every other common nav action (Back/Forward/
+     Up/Home) already has one. New `m_refreshButton` (`QToolButton`,
+     Blue-tinted like its three siblings, same 24px size), wired to the
+     identical `navigateTo(currentDirectory())` call the context-menu
+     item already uses — `navigateTo()` already self-guards against a
+     navigation already in flight (`m_navigationInFlight`), so the button
+     needs no additional debouncing of its own. Added to `retintIcons()`
+     alongside the other three nav buttons so a theme switch re-tints it
+     too, same as them. Deliberately NOT disabled/enabled based on any
+     state (matching Up/Home's own always-enabled behavior, unlike
+     Back/Forward which track real history) — refreshing the current
+     directory is always a valid action whenever a pane has one.
+
+  All three verified visually via a disposable, non-committed probe (a
+  temporary CMake target constructing a real `MainWindow`, replicating
+  `main.cpp`'s own initial theme-QSS-load step and using an isolated
+  `XDG_CONFIG_HOME` for a clean-default `AppSettings` — same two gotchas
+  this project's "visually check new UI" discipline has hit before):
+  screenshots confirmed the password field renders correctly between
+  Username and Port, the protocol popup shows exactly "SFTP / FTP / FTPS
+  (Explicit) / FTPS (Implicit)" with no truncation or wrapping, and the
+  refresh button renders correctly immediately after Home in both panes.
+  No functional/headless test added for any of the three — all three are
+  either pure display-string changes or thin, directly-reused wiring
+  around an already-tested primitive (`navigateTo()`,
+  `startConnection()`), with no new branching logic of their own to
+  regression-test. Full 25-target required suite passed unaffected (no
+  test depended on the removed `QInputDialog` prompt or the old protocol
+  strings). README.md's own Quick Connect feature bullet updated too — it
+  had gone stale describing the pre-v0.7.13 single free-text-field
+  syntax, never updated after that toolbar redesign; fixed properly
+  while already touching this toolbar rather than left stale further.
+
   **Scripting/automation (CLI mode)** — WinSCP's own flagship
   differentiator, picked as the next v2 target once sync/mirror browsing
   was fully shipped (both halves). `--script=<path>` (new

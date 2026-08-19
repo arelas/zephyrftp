@@ -400,6 +400,7 @@ private:
     QToolButton *m_forwardButton;
     QToolButton *m_upButton;
     QToolButton *m_homeButton;
+    QToolButton *m_refreshButton;
     QLineEdit *m_pathBar;
     QAction *m_pathBarLeadingIcon = nullptr;   // owned by m_pathBar once added; tracked so it can be replaced
     // Case-insensitive substring filter by name — composes with

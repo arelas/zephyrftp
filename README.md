@@ -60,14 +60,13 @@ tracks what's changed between them.
   starts fresh with no assumptions about a password having come along
   with it — you'll just be prompted the first time you connect, same as
   any new site.
-- **Quick connect** — a toolbar field for a fast one-off connection:
-  type `[protocol://][user@]host[:port]` (e.g. `alice@example.com` or
-  `ftps://bob@ftp.example.com:2121`) and press Enter. Protocol defaults
-  to whatever Preferences has set as your default protocol if you don't
-  specify one; you're prompted for the password right there, the same
-  way Site Manager's own Connect button asks for it. No Connect dialog
-  to open first. Hide it if you don't want it via View → Quick Connect
-  Field.
+- **Quick connect** — a toolbar row for a fast one-off connection: Host,
+  Username, Password, Port, and Protocol fields plus a Connect button.
+  Fill in what you need and press Enter (or click Connect) — it
+  connects immediately, no separate dialog to open or password prompt
+  to dismiss first. Protocol defaults to whatever Preferences has set
+  as your default protocol. Hide the row if you don't want it via
+  View → Quick Connect Toolbar.
 - **Recent Connections** — every pane's own Sites/Connect/Disconnect
   menu (click the icon at the left of the path bar) now has a Recent
   Connections submenu listing the last 10 servers you connected to

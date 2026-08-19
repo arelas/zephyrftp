@@ -95,6 +95,7 @@ FilePaneWidget::FilePaneWidget(RemoteBackend *backend, QWidget *parent, AppSetti
     , m_forwardButton(nullptr)
     , m_upButton(nullptr)
     , m_homeButton(nullptr)
+    , m_refreshButton(nullptr)
     , m_pathBar(nullptr)
     , m_filterEdit(nullptr)
     , m_statusLabel(nullptr)
@@ -348,6 +349,17 @@ void FilePaneWidget::buildUi()
     m_homeButton->setToolTip(tr("Home"));
     connect(m_homeButton, &QToolButton::clicked, this, &FilePaneWidget::goHome);
 
+    m_refreshButton = new QToolButton(this);
+    m_refreshButton->setIcon(IconTheme::tintedIcon(":/icons/refresh.svg", IconTheme::Blue, 24));
+    m_refreshButton->setToolTip(tr("Refresh"));
+    // Same deliberately-fresh re-listing the right-click context menu's
+    // own Refresh action already uses — see that call site's comment.
+    // navigateTo() self-guards against a navigation already in flight, so
+    // no separate check is needed here.
+    connect(m_refreshButton, &QToolButton::clicked, this, [this]() {
+        navigateTo(currentDirectory());
+    });
+
     m_pathBar = new QLineEdit(this);
     connect(m_pathBar, &QLineEdit::returnPressed, this, &FilePaneWidget::onPathBarReturnPressed);
 
@@ -356,6 +368,7 @@ void FilePaneWidget::buildUi()
     pathRow->addWidget(m_forwardButton);
     pathRow->addWidget(m_upButton);
     pathRow->addWidget(m_homeButton);
+    pathRow->addWidget(m_refreshButton);
     pathRow->addWidget(m_pathBar, 1);
     layout->addLayout(pathRow);
 
@@ -540,6 +553,7 @@ void FilePaneWidget::retintIcons()
     m_forwardButton->setIcon(IconTheme::tintedIcon(":/icons/arrow-right.svg", IconTheme::Blue, 24));
     m_upButton->setIcon(IconTheme::tintedIcon(":/icons/corner-left-up.svg", IconTheme::Blue, 24));
     m_homeButton->setIcon(IconTheme::tintedIcon(":/icons/home.svg", IconTheme::Blue, 24));
+    m_refreshButton->setIcon(IconTheme::tintedIcon(":/icons/refresh.svg", IconTheme::Blue, 24));
     rebuildModel();
 }
 
