@@ -2326,10 +2326,27 @@ to drive FileZilla itself for a same-desktop comparison.
   key on Size specifically — its display text is an unpadded byte count,
   which sorts wrong lexicographically ("10" before "9"). Before any header
   is clicked, `rebuildModel()` now applies one consistent default order
-  across all three backends (folders first, then name descending, by the
-  entry's real name rather than the later `"[folder]"`-wrapped display
-  text) — previously only `LocalBackend` sorted its own results at all,
-  making the "default" order silently backend-dependent. Sorting
+  across all three backends (folders first, then name ascending A-Z, by
+  the entry's real name rather than the later `"[folder]"`-wrapped
+  display text) — previously only `LocalBackend` sorted its own results
+  at all, making the "default" order silently backend-dependent.
+  **A real, live-reported inconsistency, found after this had already
+  shipped**: the unifying comparator was originally written descending
+  (`> 0`), the opposite of both `NameItem`'s own ascending-by-default
+  header-click comparator (right below) and `LocalBackend`'s
+  pre-unification behavior this same entry already claimed to match — a
+  fresh listing showed Z-A with no sort indicator on the Name header at
+  all, then clicking that header once flipped everything to A-Z, a
+  jarring reversal on the very first click. Fixed to ascending, matching
+  both the header-click comparator and this entry's own original
+  intent; `sort-and-commands-test`'s Part 3 fixture (`zulu`/`alpha`
+  dirs, `bravo.txt`/`delta.txt`/`Aaa.txt` files) had its expected
+  default-order assertion corrected to match (it had been asserting the
+  wrong, descending order as if it were correct) — a genuine case of a
+  test faithfully encoding a real bug rather than catching it, since it
+  only ever checked internal self-consistency (comparator output vs.
+  itself), never that ascending was the actually-intended direction.
+  Sorting
   surfaced a real latent bug: every row-lookup method
   (`onRowDoubleClicked`, `selectedEntryName()`, `selectedFileNames()`,
   `selectedEntries()`) used to index `m_currentEntries` by row position, an
@@ -4623,6 +4640,94 @@ to drive FileZilla itself for a same-desktop comparison.
   had gone stale describing the pre-v0.7.13 single free-text-field
   syntax, never updated after that toolbar redesign; fixed properly
   while already touching this toolbar rather than left stale further.
+
+  **Keyboard shortcuts** — a direct user request ("Enable the delete key
+  for deleting file, copy/paste...possibly other keys, shortcuts as
+  well"): Delete, F2 (rename), F5 (refresh), Ctrl+A (select all), and
+  Ctrl+C/Ctrl+V (copy-then-paste across panes). Scope for the open-ended
+  "possibly other keys" was picked deliberately, not exhaustively: every
+  shortcut added either directly reuses an existing context-menu action
+  (Delete/Rename/Refresh) or an existing `QAbstractItemView` primitive
+  (`selectAll()` for Ctrl+A) with zero new logic, or — Copy/Paste — is
+  built entirely on the same `enqueueEntries()` `TransferManager`
+  plumbing Transfer Selected/drag-and-drop already share. Deliberately
+  NOT added: Ctrl+X/Cut. A traditional "cut" implies move-via-copy-then-
+  delete-on-success across ANY two locations, semantically distinct from
+  (and easy to confuse with) this app's existing "Move Selected" feature
+  (a real server-side rename, same-connection only) — implementing a
+  correct cross-connection cut (delete only after confirmed transfer
+  success, handle partial-batch failure) would be real new transfer
+  logic, not shortcut wiring, and wasn't asked for.
+
+  `FileTreeView` gained a `keyPressEvent()` override translating five
+  key combinations into five new signals
+  (`deleteKeyPressed`/`renameKeyPressed`/`refreshKeyPressed`/
+  `copyKeyPressed`/`pasteKeyPressed`) — Ctrl+A is handled entirely
+  inside that override (`selectAll()` needs nothing from the owning
+  pane). `FilePaneWidget` connects each to a new private slot mirroring
+  `showContextMenu()`'s own per-action logic exactly (same
+  empty-selection and single-selection guards, same
+  `confirmAndDelete()`/`promptAndRename()`/`navigateTo()` calls) — a
+  shortcut can never do something its context-menu equivalent wouldn't
+  also allow. Also set `m_view->setEditTriggers(QAbstractItemView::
+  NoEditTriggers)` in `buildUi()`, explicit rather than relying on Qt's
+  default (`DoubleClicked | EditKeyPressed`, the latter's platform key
+  being F2 on most platforms) — items are `QStandardItem`-editable by
+  default and this app has never handled Qt's own built-in inline cell
+  editor's `setData()`, so without this, F2 could additionally pop that
+  editor alongside (or instead of) the real `promptAndRename()` dialog.
+
+  Copy/Paste needed real design thought, not just wiring, because of one
+  genuine hazard the other four shortcuts don't have: every other
+  cross-pane operation this app already had (Transfer Selected, Move
+  Selected, drag-and-drop) is a single synchronous user gesture with no
+  gap for anything to change in between, but copy-then-paste has an
+  inherent, arbitrary time gap BY DESIGN — copy now, possibly navigate
+  around, paste later. `TransferManager::enqueue()`/`enqueueFolder()`
+  both derive their actual source path from the pane's CURRENT
+  directory at the moment they're called, not anything captured
+  earlier (see that method's own doc comment) — so a naive
+  implementation that just replayed `enqueueEntries(copiedSourcePane,
+  destPane, copiedEntries)` at paste time would silently transfer
+  whatever now happens to share those names in the source pane's NEW
+  directory if it had navigated away, not what was actually selected at
+  copy time. Two new `FilePaneWidget` signals, `filesCopied(entries)`
+  and `pasteRequested()` (no payload — MainWindow holds the clipboard),
+  route through `MainWindow`, which owns the actual clipboard state
+  (`m_clipboardSourcePane`/`m_clipboardSourceDirectory`/
+  `m_clipboardEntries`) since a paste can target either pane regardless
+  of which one the copy happened on, same symmetric ownership every
+  other cross-pane operation here already has. `onFilesCopied()`
+  captures the source pane's `currentDirectory()` AT COPY TIME;
+  `onPasteRequested()` refuses the paste (with a clear status-bar
+  message, matching `moveRequested`'s own "explain why, don't guess"
+  precedent) if that directory no longer matches the source pane's
+  CURRENT one, rather than risk transferring the wrong thing. Also
+  refuses pasting into the same pane it was copied from — there's
+  nothing for that to mean (no same-pane duplicate feature exists).
+  Deliberately NOT handled: a pane's backend being swapped
+  (Connect/Disconnect/Reconnect) between copy and paste — judged
+  low-risk to leave uncovered rather than hunting down every
+  `setBackend()` call site, since a reconnect overwhelmingly likely also
+  changes `currentDirectory()` (a fresh connection rarely lands back on
+  the exact same path), which the existing directory-match check already
+  catches in practice; a noted, deliberate scope boundary, not an
+  oversight.
+
+  New 26th required-suite target `keyboard-shortcuts-test` — drives a
+  real `MainWindow` (same construct-it-directly pattern `smoke-test`/
+  `sync-browsing-test`/`transfer-queue-test` already establish) with
+  real `QTest::keyClick()` calls against the real `QTreeView`, not
+  simulated by calling the handler slots directly, so it actually proves
+  `FileTreeView::keyPressEvent()` itself dispatches correctly. 25
+  assertions across seven phases; the two that matter most
+  (same-pane-paste refused, stale-source-directory paste refused) were
+  proved non-vacuous with a real sabotage-and-restore cycle — temporarily
+  disabling the same-pane check made its exact assertion fail on a real
+  rebuild+run, then the real code was restored and reconfirmed passing —
+  the same before/after-control discipline this project applies to every
+  fix, used here for a brand-new feature's own safety checks instead of
+  an existing bug. Full 26-target required suite passed.
 
   **Scripting/automation (CLI mode)** — WinSCP's own flagship
   differentiator, picked as the next v2 target once sync/mirror browsing

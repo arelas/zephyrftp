@@ -6,6 +6,7 @@
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
+#include <QKeyEvent>
 #include <QRandomGenerator>
 #include <cstring>
 
@@ -157,4 +158,48 @@ void FileTreeView::dropEvent(QDropEvent *event)
         emit filesDroppedFrom(sourcePane, entries);
 
     event->acceptProposedAction();
+}
+
+void FileTreeView::keyPressEvent(QKeyEvent *event)
+{
+    // Plain Delete, no modifiers — Ctrl+Delete/Shift+Delete etc. fall
+    // through to the base class unhandled rather than silently doing the
+    // same thing as plain Delete, matching how none of the shortcuts
+    // below fire on an unexpected modifier combination either.
+    if (event->key() == Qt::Key_Delete && event->modifiers() == Qt::NoModifier) {
+        emit deleteKeyPressed();
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_F2 && event->modifiers() == Qt::NoModifier) {
+        emit renameKeyPressed();
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_F5 && event->modifiers() == Qt::NoModifier) {
+        emit refreshKeyPressed();
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_C && event->modifiers() == Qt::ControlModifier) {
+        emit copyKeyPressed();
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_V && event->modifiers() == Qt::ControlModifier) {
+        emit pasteKeyPressed();
+        event->accept();
+        return;
+    }
+    // Ctrl+A: QAbstractItemView already implements selectAll() — no new
+    // logic needed, just wiring the shortcut to the existing method
+    // (unlike the other five above, this one has no cross-pane or
+    // FilePaneWidget-level meaning, so it's handled entirely here rather
+    // than round-tripping through a signal).
+    if (event->key() == Qt::Key_A && event->modifiers() == Qt::ControlModifier) {
+        selectAll();
+        event->accept();
+        return;
+    }
+    QTreeView::keyPressEvent(event);
 }

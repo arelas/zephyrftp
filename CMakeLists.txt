@@ -383,6 +383,56 @@ target_link_libraries(smoke-test PRIVATE
     Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${OPENSSL_TARGET} ${CREDENTIAL_STORE_TARGET}
 )
 
+# --- Keyboard shortcuts test: Delete/F2/F5/Ctrl+A/Ctrl+C/Ctrl+V, driven
+# via real QTest::keyClick() against a real MainWindow (see
+# src/keyboard_shortcuts_test.cpp's own header comment). Same dependency
+# list as smoke-test (also constructs a real MainWindow) plus Qt6::Test
+# for QTest::keyClick().
+qt_add_executable(keyboard-shortcuts-test EXCLUDE_FROM_ALL
+    src/keyboard_shortcuts_test.cpp
+    src/AppSettings.cpp
+    src/ui/MainWindow.cpp
+    src/backends/QuickConnectParser.cpp
+    src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
+    src/ui/PermissionsDialog.cpp
+    src/ui/FileTreeView.cpp
+    src/ui/ConnectionDialog.cpp
+    src/ui/TransferQueueWidget.cpp
+    src/ui/TransferQueueTable.cpp
+    src/ui/CommandsPaneWidget.cpp
+    src/ui/HostKeyVerifier.cpp
+    src/ui/CertificateVerifier.cpp
+    src/ui/IconTheme.cpp
+    src/ui/SiteManagerDialog.cpp
+    src/ui/PreferencesDialog.cpp
+    src/ui/EditSessionManager.cpp
+    src/backends/LocalBackend.cpp
+    src/backends/SftpBackend.cpp
+    src/backends/BandwidthThrottle.cpp
+    src/backends/ProxyConnect.cpp
+    src/backends/FtpBackend.cpp
+    src/backends/FtpTlsSocket.cpp
+    src/backends/SavedSite.cpp
+    src/backends/CredentialStore.cpp
+    src/transfer/TransferManager.cpp
+    src/transfer/ChecksumVerifier.cpp
+    src/transfer/TransferQueueStore.cpp
+    src/transfer/FolderEnumerator.cpp
+    src/compare/DirectoryComparer.cpp
+    src/compare/CompareSyncExecutor.cpp
+    src/ui/CompareDialog.cpp
+    src/ui/CompareDeleteConfirmDialog.cpp
+    resources/icons.qrc
+    resources/theme.qrc
+    ${HEADERS}
+)
+target_include_directories(keyboard-shortcuts-test PRIVATE src)
+target_compile_definitions(keyboard-shortcuts-test PRIVATE APP_VERSION="${PROJECT_VERSION}")
+target_link_libraries(keyboard-shortcuts-test PRIVATE
+    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg Qt6::Test ${LIBSSH2_TARGET} ${OPENSSL_TARGET} ${CREDENTIAL_STORE_TARGET}
+)
+
 # --- Checksum verification test: ChecksumVerifier's match/mismatch/
 # busy-backend-queuing/cancellation/hidden-from-UI behavior (see
 # src/checksum_verification_test.cpp's own header comment). Full

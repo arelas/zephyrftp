@@ -69,6 +69,12 @@ private slots:
     void onRightFilesActivated(const QList<RemoteEntry> &entries);
     void onFilesDropped(FilePaneWidget *sourcePane, const QList<RemoteEntry> &entries);
 
+    // Ctrl+C/Ctrl+V (FilePaneWidget::filesCopied/pasteRequested, in turn
+    // from FileTreeView's own key handling) — see m_clipboardSourcePane's
+    // own doc comment for the clipboard state these two maintain.
+    void onFilesCopied(const QList<RemoteEntry> &entries);
+    void onPasteRequested();
+
     // Fired from a pane's "Move Selected" context-menu action — see
     // FilePaneWidget::moveRequested()'s doc comment on why eligibility
     // isn't checked until here.
@@ -215,6 +221,23 @@ private:
     // enqueueEntries().
     void moveEntries(FilePaneWidget *sourcePane, FilePaneWidget *destPane,
                       const QList<RemoteEntry> &entries);
+
+    // Ctrl+C/Ctrl+V clipboard state — owned here, not by either
+    // FilePaneWidget, since a paste can target either pane regardless of
+    // which one the copy happened on (symmetric, like every other
+    // cross-pane operation MainWindow already orchestrates). nullptr
+    // means nothing has been copied yet, or the last copy is no longer
+    // considered valid — checked, never assumed, in onPasteRequested().
+    // m_clipboardSourceDirectory is captured at COPY time specifically
+    // so a paste can detect the source pane having navigated away in the
+    // meantime (see onFilesCopied()'s own comment) — the entries
+    // themselves carry only bare names, and enqueue()/enqueueFolder()
+    // resolve those against the source pane's CURRENT directory, so a
+    // stale directory would otherwise transfer silently wrong (or
+    // nonexistent) files rather than failing visibly.
+    FilePaneWidget *m_clipboardSourcePane = nullptr;
+    QString m_clipboardSourceDirectory;
+    QList<RemoteEntry> m_clipboardEntries;
 
     // Both start on LocalBackend; either can become remote via its own
     // path-bar icon menu (FilePaneWidget::connectRequested and friends) or,

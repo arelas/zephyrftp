@@ -299,6 +299,23 @@ signals:
     // sender().
     void editRequested(FilePaneWidget *pane, const RemoteEntry &entry);
 
+    // Ctrl+C on this pane's selection (see FileTreeView::keyPressEvent()).
+    // Carries the full selection (files and/or folders), same shape as
+    // filesActivated/filesDropped above; MainWindow is the one that
+    // actually remembers it (source pane + directory + entries) since
+    // pasting can happen an arbitrary time later, into either pane —
+    // this pane has no reason to hold onto state nobody local ever reads
+    // back.
+    void filesCopied(const QList<RemoteEntry> &entries);
+
+    // Ctrl+V on this pane — carries no payload; MainWindow holds
+    // whatever was last copied (from either pane) and decides whether
+    // this specific paste is actually valid (something was copied, this
+    // isn't the same pane it was copied from, and that pane hasn't
+    // navigated away since — see MainWindow::onPasteRequested()'s own
+    // comment for why that last check matters).
+    void pasteRequested();
+
 private slots:
     void onDirectoryListed(const QString &path, const QList<RemoteEntry> &entries);
     void onRowDoubleClicked(const QModelIndex &index);
@@ -319,6 +336,17 @@ private slots:
     // UI element for these one-shot operations the way there is for
     // transfers.
     void onFileOperationFailed(const QString &operation, const QString &path, const QString &reason);
+
+    // Keyboard shortcuts (see FileTreeView::keyPressEvent(), connected in
+    // buildUi()) — each mirrors the equivalent showContextMenu() action's
+    // own enabling/argument logic exactly (empty-selection and
+    // single-selection guards included), so a shortcut can never do
+    // something its context-menu equivalent wouldn't also allow.
+    void onDeleteKeyPressed();
+    void onRenameKeyPressed();
+    void onRefreshKeyPressed();
+    void onCopyKeyPressed();
+    void onPasteKeyPressed();
 
 private:
     void buildUi();

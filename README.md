@@ -37,6 +37,14 @@ tracks what's changed between them.
   exactly how much is inside ("isn't empty — it contains 12 files and 3
   folders") before permanently deleting the whole thing, so a misclick
   can't wipe out more than you actually meant to.
+- **Keyboard shortcuts** — Delete to delete the current selection, F2 to
+  rename, F5 to refresh, Ctrl+A to select everything in the focused
+  pane, and Ctrl+C then Ctrl+V to copy a selection from one pane and
+  transfer it into the other (paste into the same pane you copied from
+  isn't offered — copy always means "send to the other side"). Every one
+  of these is the exact same action already available from the
+  right-click menu or toolbar; the shortcut is just a faster way to
+  reach it.
 - **SFTP with password or private-key login.**
 - **Site Manager** — save connections you use often, organized into
   folders (type a new folder name right on the site's details, or pick
@@ -178,7 +186,7 @@ tracks what's changed between them.
 - **Click a column header to sort, click it again to reverse** — Name,
   Size, Modified, or Permissions on the file panes; File, Direction,
   Status, Progress, or Speed on the transfer queue. File panes default to
-  folders first, then name descending; the transfer queue defaults to the
+  folders first, then name ascending (A-Z); the transfer queue defaults to the
   order things were added.
 - **Dark or Light theme** (Preferences), switching immediately with no
   restart — built around a small set of colors that mean the same thing
@@ -405,6 +413,15 @@ rather than being half-implemented:
   tries first) — the rare fallback to active mode, where the *server*
   has to connect back to *you*, can't be proxied by anything on the
   client side, proxy or not.
+- **Ctrl+C/Ctrl+V always means "copy to the other pane," never "duplicate
+  in place" or "move."** There's no same-pane paste (nothing meaningful
+  for it to do — this app has no duplicate-file feature) and no Ctrl+X
+  cut — for moving instead of copying, use the existing right-click Move
+  Selected (same-connection only) or drag with the ordinary copy
+  semantics. If the pane you copied from navigates elsewhere before you
+  paste, the paste is refused with a clear message rather than silently
+  transferring whatever now happens to share those names in the new
+  directory — copy again from wherever you actually want to paste from.
 - **Quick connect is password-only and always targets the right pane.**
   There's no way to specify a private key through the quick-connect
   field — use Connect... for that, same as it's always worked. It also

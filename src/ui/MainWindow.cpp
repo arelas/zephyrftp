@@ -497,6 +497,13 @@ void MainWindow::buildLayout()
     connect(m_rightPane, &FilePaneWidget::filesDropped, this, &MainWindow::onFilesDropped);
     connect(m_leftPane, &FilePaneWidget::moveRequested, this, &MainWindow::onLeftMoveRequested);
     connect(m_rightPane, &FilePaneWidget::moveRequested, this, &MainWindow::onRightMoveRequested);
+    // Ctrl+C/Ctrl+V — same dual-connection-plus-sender() pattern
+    // filesDropped uses above, since both signals are symmetric (either
+    // pane can be the copy source or the paste destination).
+    connect(m_leftPane, &FilePaneWidget::filesCopied, this, &MainWindow::onFilesCopied);
+    connect(m_rightPane, &FilePaneWidget::filesCopied, this, &MainWindow::onFilesCopied);
+    connect(m_leftPane, &FilePaneWidget::pasteRequested, this, &MainWindow::onPasteRequested);
+    connect(m_rightPane, &FilePaneWidget::pasteRequested, this, &MainWindow::onPasteRequested);
 
     // Both panes wired to the same slot — sender() identifies which pane
     // fired, same dual-connection pattern filesDropped uses above. Drives
@@ -617,6 +624,67 @@ void MainWindow::enqueueEntries(FilePaneWidget *sourcePane, FilePaneWidget *dest
         else
             m_transferManager->enqueue(sourcePane, destPane, entry.name);
     }
+}
+
+void MainWindow::onFilesCopied(const QList<RemoteEntry> &entries)
+{
+    // sender() is the pane the Ctrl+C happened on — same identification
+    // technique onFilesDropped() already uses. Capturing
+    // currentDirectory() HERE, at copy time, rather than re-reading it
+    // whenever Paste eventually happens, is deliberate: unlike every
+    // other cross-pane operation this app has (Transfer/Move/drag-drop),
+    // which are all a single synchronous user gesture with no gap for
+    // anything to change in between, copy-then-paste has an inherent,
+    // arbitrary time gap by design — the whole point is copy now,
+    // possibly navigate around, paste later. onPasteRequested() checks
+    // the source pane's CURRENT directory against what's captured here
+    // and refuses the paste rather than silently transferring from
+    // wherever that pane happens to be now if the two don't match.
+    auto *sourcePane = qobject_cast<FilePaneWidget *>(sender());
+    if (!sourcePane)
+        return;
+
+    m_clipboardSourcePane = sourcePane;
+    m_clipboardSourceDirectory = sourcePane->currentDirectory();
+    m_clipboardEntries = entries;
+
+    statusBar()->showMessage(
+        entries.size() == 1 ? tr("Copied 1 item — paste into the other pane")
+                             : tr("Copied %1 items — paste into the other pane").arg(entries.size()),
+        4000);
+}
+
+void MainWindow::onPasteRequested()
+{
+    auto *destPane = qobject_cast<FilePaneWidget *>(sender());
+    if (!destPane)
+        return;
+
+    if (!m_clipboardSourcePane) {
+        statusBar()->showMessage(tr("Nothing copied yet — select something and press Ctrl+C first."), 4000);
+        return;
+    }
+    if (destPane == m_clipboardSourcePane) {
+        statusBar()->showMessage(tr("Can't paste into the same pane it was copied from."), 4000);
+        return;
+    }
+    // See onFilesCopied()'s own comment on why this check exists at
+    // all — the source pane may have navigated elsewhere in the
+    // (arbitrarily long) gap between Ctrl+C and this Ctrl+V, and
+    // enqueue()/enqueueFolder() both derive their actual source path
+    // from the pane's CURRENT directory, not anything captured earlier.
+    // Refusing here, rather than silently transferring whatever
+    // (possibly nonexistent, possibly just wrong) entries now share
+    // those same names in the new directory, matches this app's
+    // existing "explain why, don't guess" precedent (moveRequested's own
+    // ineligibility message).
+    if (m_clipboardSourcePane->currentDirectory() != m_clipboardSourceDirectory) {
+        statusBar()->showMessage(
+            tr("The copied selection's source folder has changed — copy again."), 5000);
+        return;
+    }
+
+    enqueueEntries(m_clipboardSourcePane, destPane, m_clipboardEntries);
 }
 
 void MainWindow::onLeftMoveRequested(const QList<RemoteEntry> &entries)

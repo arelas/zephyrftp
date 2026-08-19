@@ -407,6 +407,17 @@ void FilePaneWidget::buildUi()
     m_view->setAlternatingRowColors(true);
     m_view->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_view->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    // Explicit, not relying on Qt's default (DoubleClicked |
+    // EditKeyPressed): items are QStandardItem-editable by default, and
+    // EditKeyPressed's platform key is F2 on most platforms — exactly
+    // the key this pane now binds to its own promptAndRename() dialog
+    // (see FileTreeView::keyPressEvent()). Without this, F2 (and
+    // possibly double-click, which onRowDoubleClicked() below already
+    // handles itself) could additionally pop Qt's own built-in inline
+    // cell editor, which this app has never used or handled setData()
+    // for. Renaming has always gone through the dedicated QInputDialog
+    // flow instead; this just makes that the only possible outcome.
+    m_view->setEditTriggers(QAbstractItemView::NoEditTriggers);
     // Interactive like every other column — Stretch here used to make
     // Name's width purely a side effect of dragging the OTHER columns'
     // handles, with no handle of its own to drag. QTreeView's own
@@ -447,6 +458,14 @@ void FilePaneWidget::buildUi()
     m_view->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_view, &QTreeView::customContextMenuRequested, this, &FilePaneWidget::showContextMenu);
     connect(m_view, &FileTreeView::filesDroppedFrom, this, &FilePaneWidget::filesDropped);
+    // Keyboard shortcuts — see FileTreeView::keyPressEvent()'s own
+    // comment for why the actual logic lives in these handlers rather
+    // than in FileTreeView itself.
+    connect(m_view, &FileTreeView::deleteKeyPressed, this, &FilePaneWidget::onDeleteKeyPressed);
+    connect(m_view, &FileTreeView::renameKeyPressed, this, &FilePaneWidget::onRenameKeyPressed);
+    connect(m_view, &FileTreeView::refreshKeyPressed, this, &FilePaneWidget::onRefreshKeyPressed);
+    connect(m_view, &FileTreeView::copyKeyPressed, this, &FilePaneWidget::onCopyKeyPressed);
+    connect(m_view, &FileTreeView::pasteKeyPressed, this, &FilePaneWidget::onPasteKeyPressed);
     layout->addWidget(m_view);
 
     m_statusLabel = new QLabel(this);
@@ -606,20 +625,31 @@ void FilePaneWidget::rebuildModel()
             filtered.append(e);
     }
 
-    // Default listing order: folders first, then name descending — applied
-    // uniformly here rather than left to each backend, since only
+    // Default listing order: folders first, then name ascending (A-Z) —
+    // applied uniformly here rather than left to each backend, since only
     // LocalBackend ever sorted its own results (QDir::DirsFirst |
-    // QDir::Name); SftpBackend/FtpBackend returned whatever order the
-    // server happened to list in. Sorted by the entry's real name, not
-    // nameItem's later "[folder]" display text, for the same reason
-    // entryForRow() looks entries up by real name below. A later header
-    // click overrides this via the ordinary column-sort machinery further
-    // down — this only decides what a FRESH listing looks like before
-    // that's ever happened.
+    // QDir::Name, itself ascending); SftpBackend/FtpBackend returned
+    // whatever order the server happened to list in. Sorted by the
+    // entry's real name, not nameItem's later "[folder]" display text,
+    // for the same reason entryForRow() looks entries up by real name
+    // below. A later header click overrides this via the ordinary
+    // column-sort machinery further down — this only decides what a
+    // FRESH listing looks like before that's ever happened.
+    //
+    // **A real, live-reported inconsistency, not just a preference**:
+    // this comparator used to sort descending (`> 0`) — the opposite of
+    // both NameItem's own ascending-by-default header-click comparator
+    // just above and LocalBackend's pre-unification behavior this
+    // comment already claimed to match. A fresh listing showed Z-A with
+    // no sort indicator on the Name header at all, then clicking that
+    // same header once flipped to A-Z — a jarring, inconsistent-feeling
+    // reversal on the very first click, exactly matching the report.
+    // Fixed to ascending, matching NameItem's comparator and this
+    // comment's own original (if previously unrealized) intent.
     std::stable_sort(filtered.begin(), filtered.end(), [](const RemoteEntry &a, const RemoteEntry &b) {
         if (a.isDir != b.isDir)
             return a.isDir;
-        return a.name.localeAwareCompare(b.name) > 0;
+        return a.name.localeAwareCompare(b.name) < 0;
     });
 
     m_currentEntries.clear();
@@ -1053,6 +1083,51 @@ void FilePaneWidget::onFileOperationFailed(const QString &operation, const QStri
     runOrDeferModalAction([this, operation, path, reason]() {
         showFailureWarning(operation, path, reason);
     });
+}
+
+void FilePaneWidget::onDeleteKeyPressed()
+{
+    // Mirrors showContextMenu()'s deleteAction exactly — same selection
+    // snapshot, same currentDirectory() capture, same confirmAndDelete()
+    // call. Selection can legitimately be empty (Delete pressed with
+    // nothing selected) — silently do nothing, same as deleteAction
+    // being disabled in that case, rather than showing a dialog about
+    // nothing.
+    const QList<RemoteEntry> selected = selectedEntries();
+    if (selected.isEmpty())
+        return;
+    confirmAndDelete(selected, currentDirectory());
+}
+
+void FilePaneWidget::onRenameKeyPressed()
+{
+    // Mirrors showContextMenu()'s renameAction: single-selection only —
+    // renaming several items to one name doesn't make sense, same
+    // reasoning as that action's own setEnabled(selected.size() == 1).
+    const QList<RemoteEntry> selected = selectedEntries();
+    if (selected.size() != 1)
+        return;
+    promptAndRename(selected.first(), currentDirectory());
+}
+
+void FilePaneWidget::onRefreshKeyPressed()
+{
+    // Same deliberately-fresh re-listing the right-click Refresh action
+    // and the toolbar's refresh button both already use.
+    navigateTo(currentDirectory());
+}
+
+void FilePaneWidget::onCopyKeyPressed()
+{
+    const QList<RemoteEntry> selected = selectedEntries();
+    if (selected.isEmpty())
+        return;
+    emit filesCopied(selected);
+}
+
+void FilePaneWidget::onPasteKeyPressed()
+{
+    emit pasteRequested();
 }
 
 void FilePaneWidget::runOrDeferModalAction(std::function<void()> action)

@@ -440,7 +440,7 @@ representative of any real desktop:
 
 ## Running the test suites
 
-Twenty-five `EXCLUDE_FROM_ALL` CMake targets make up the required suite
+Twenty-six `EXCLUDE_FROM_ALL` CMake targets make up the required suite
 as of this writing — not part of a normal `make`, built and run
 explicitly, and all of them (not just a "core" subset) need to actually
 pass before a change is done. The count keeps growing as the project
@@ -1226,6 +1226,52 @@ failure would be.
 ```
 cmake --build build --target recursive-delete-test
 QT_QPA_PLATFORM=offscreen ./build/recursive-delete-test
+```
+
+### `keyboard-shortcuts-test`
+
+Self-contained, `EXCLUDE_FROM_ALL`, added to all five `build.yml` jobs —
+the keyboard shortcuts added to `FileTreeView`/`FilePaneWidget`/
+`MainWindow`: Delete (`confirmAndDelete()`), F2 (rename), F5 (refresh),
+Ctrl+A (select all), and Ctrl+C/Ctrl+V (cross-pane copy-then-paste,
+built entirely on the existing `enqueueEntries()` `TransferManager`
+plumbing already shared by Transfer Selected/drag-and-drop — no new
+transfer logic of its own). Drives a real `MainWindow` (same
+construct-it-directly pattern `smoke-test`/`sync-browsing-test`/
+`transfer-queue-test` already establish) with real `QTest::keyClick()`
+calls against the real `QTreeView` — not simulated by calling the
+handler slots directly, so this actually proves
+`FileTreeView::keyPressEvent()` itself dispatches correctly. Delete/
+Rename pop real `QMessageBox`/`QInputDialog` instances, driven via the
+same `QTimer`-fires-during-`exec()` technique
+`conflict-resolution-test`/`recursive-delete-test`/`navigation-test`
+already established.
+
+25 assertions across seven phases, all against real `LocalBackend`s and
+real fixtures on disk: Delete removes the selected file after a real
+Yes click; F2 renames via a real filled-in `QInputDialog`; F5 makes a
+file written directly to disk (bypassing the pane entirely) actually
+appear, proving a real re-listing happened, not a coincidence; Ctrl+A
+selects every row; Ctrl+C then Ctrl+V into the OTHER pane genuinely
+transfers the file (confirmed on disk, not just via a signal count).
+The last two phases are the ones actually worth the required-suite
+slot: pasting into the SAME pane it was copied from adds zero transfer
+items and explains why in the status bar; pasting after the source pane
+has navigated away in the gap between copy and paste (a real,
+easy-to-hit scenario this feature's own design specifically anticipates
+— see `MainWindow::onFilesCopied()`'s doc comment) is refused the same
+way, rather than silently transferring whatever now happens to share
+those names in the new directory. Both guards proved non-vacuous by a
+real sabotage-and-restore cycle during development, not just written
+and trusted: temporarily disabling the same-pane check made the exact
+assertion it protects fail (confirmed via a real rebuild+run), then the
+real code was restored and reconfirmed passing — the same
+before/after-control discipline this project applies to every fix, used
+here for a brand-new feature's own safety checks instead.
+
+```
+cmake --build build --target keyboard-shortcuts-test
+QT_QPA_PLATFORM=offscreen ./build/keyboard-shortcuts-test
 ```
 
 ## Live-server verification (SFTP public-key auth, FTP/FTPS, cancel/pause/resume)

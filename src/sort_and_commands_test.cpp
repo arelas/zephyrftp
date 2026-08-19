@@ -7,7 +7,7 @@
 //      (Connect/Disconnect/reconnect) re-targets the forwarding to the
 //      NEW backend and stops forwarding the old one's traffic.
 //   2. FilePaneWidget's default sort order (folders first, then name
-//      descending, applied uniformly across backends), numeric Size
+//      ascending, applied uniformly across backends), numeric Size
 //      sorting via a real header-column sort, and — the specific bug
 //      sorting surfaced — that entryForRow() still maps a view row to
 //      the correct RemoteEntry once a sort has physically reordered the
@@ -317,16 +317,16 @@ int main(int argc, char *argv[])
             return model->data(model->index(row, col), Qt::DisplayRole).toString();
         };
 
-        // Default order: folders first, then name descending — see
+        // Default order: folders first, then name ascending (A-Z) — see
         // rebuildModel()'s std::stable_sort. Directory names render
         // bracketed ("[name]"); this is the display text, not the real
         // name entryForRow() matches against.
-        check("default order: folders first, then name descending",
-              textAt(0, 0) == QStringLiteral("[zulu]")
-                  && textAt(1, 0) == QStringLiteral("[alpha]")
-                  && textAt(2, 0) == QStringLiteral("delta.txt")
+        check("default order: folders first, then name ascending",
+              textAt(0, 0) == QStringLiteral("[alpha]")
+                  && textAt(1, 0) == QStringLiteral("[zulu]")
+                  && textAt(2, 0) == QStringLiteral("Aaa.txt")
                   && textAt(3, 0) == QStringLiteral("bravo.txt")
-                  && textAt(4, 0) == QStringLiteral("Aaa.txt"));
+                  && textAt(4, 0) == QStringLiteral("delta.txt"));
 
         // A real header-column sort: this is the exact call Qt's own
         // header-click handling invokes once setSortingEnabled(true) is

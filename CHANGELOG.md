@@ -8,6 +8,24 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Added
+
+- **Keyboard shortcuts**: Delete to delete the selection, F2 to rename,
+  F5 to refresh, Ctrl+A to select all, and Ctrl+C/Ctrl+V to copy a
+  selection from one pane and transfer it into the other. Pasting into
+  the same pane it was copied from isn't offered, and a paste is refused
+  (with a clear message) if the source pane has navigated elsewhere
+  since the copy.
+
+### Fixed
+
+- **The default file listing order was inconsistent with itself.** A
+  fresh directory listing showed folders first, then files Z-A — but
+  clicking the Name column header once flipped straight to A-Z, a
+  jarring reversal on the very first click. The default now sorts
+  folders first, then name A-Z, matching what clicking Name actually
+  does.
+
 ## [0.7.39] — Quick connect password field, shorter protocol names, pane refresh button
 
 ### Added

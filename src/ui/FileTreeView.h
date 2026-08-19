@@ -51,11 +51,24 @@ signals:
     // routing between TransferManager::enqueue()/enqueueFolder().
     void filesDroppedFrom(FilePaneWidget *sourcePane, const QList<RemoteEntry> &entries);
 
+    // Keyboard shortcuts, all emitted from keyPressEvent() below and
+    // consumed by FilePaneWidget (connected in its constructor, same
+    // "view notices input, tell the owning pane to act" split
+    // filesDroppedFrom above already establishes) — this class stays a
+    // thin input-to-signal translator, not where the actual delete/
+    // rename/copy/paste/refresh logic lives.
+    void deleteKeyPressed();
+    void renameKeyPressed();
+    void refreshKeyPressed();
+    void copyKeyPressed();
+    void pasteKeyPressed();
+
 protected:
     void startDrag(Qt::DropActions supportedActions) override;
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dragMoveEvent(QDragMoveEvent *event) override;
     void dropEvent(QDropEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
 
 private:
     FilePaneWidget *m_owningPane;   // not owned — the FilePaneWidget that created this view
