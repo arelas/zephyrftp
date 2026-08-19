@@ -133,7 +133,11 @@ tracks what's changed between them.
   cancel something outright, or retry something that failed, all from
   one place. Active, Completed, and Failed transfers are split into
   their own tabs, so a finished batch or a file worth retrying doesn't
-  get lost in a long list of everything still queued. **Survives
+  get lost in a long list of everything still queued. Right-click a tab
+  itself (not a row) for "Clear Completed"/"Clear Failed" once you're
+  done with what's there — Active has no clear option, since everything
+  in it is still queued, running, paused, or waiting to reconnect, and
+  the actual transfer needs cancelling first, not just hiding. **Survives
   closing the app, too**: anything still queued, paused, or mid-transfer
   when you quit is there again next time you launch — a transfer to/from
   a server picks back up automatically the moment you reconnect to that

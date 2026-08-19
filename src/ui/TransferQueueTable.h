@@ -68,6 +68,12 @@ public:
 
     int rowCount() const { return m_rowById.size(); }
 
+    // Every item id currently held here — TransferQueueWidget's own
+    // tab-header "Clear" action (see its own doc comment) uses this to
+    // gather exactly what's in the clicked tab RIGHT NOW, before handing
+    // the list to TransferManager::clearItems().
+    QList<int> itemIds() const { return m_rowById.keys(); }
+
     // The exact text shown in the Direction column's tooltip, and what
     // resortAndRebuild()'s Direction-column sort compares — public so
     // TransferQueueWidget::directionText() (transfer-queue-test's own

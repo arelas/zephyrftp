@@ -190,6 +190,29 @@ public:
     // one doesn't necessarily). No-op for ids not currently Paused.
     void resumeItem(int id);
 
+    // Right-click "Clear Completed"/"Clear Failed" on a tab header
+    // (TransferQueueWidget) — hides every id in ids from the visible
+    // queue, but ONLY ones whose CURRENT status is already terminal
+    // (Done, Failed, Cancelled, or Skipped); any other id is silently
+    // skipped rather than acted on. That guard matters because ids are
+    // gathered from a specific tab's own current row set at click time,
+    // but this method runs after the context menu's own nested event
+    // loop (menu.exec()) — the same real "state can change while a
+    // modal is open" class of race this project has hit before (see
+    // FilePaneWidget::showContextMenu()'s own comment on capturing
+    // currentDirectory() before, not after, its menu.exec()) — so a
+    // status-changed-in-the-meantime id (e.g. a Failed item's own
+    // Retry, chosen from a DIFFERENT window/action between the click and
+    // the choice) never gets hidden while genuinely back in flight.
+    // Deliberately does NOT remove anything from m_items itself — see
+    // TransferItem::clearedFromQueue's own doc comment for why (pending
+    // conflict-check maps hold raw m_items indices across a real async
+    // round trip; physically compacting the list would silently corrupt
+    // those). Emits itemRemoved(id) for each id actually cleared, so
+    // TransferQueueWidget can remove exactly those rows without a full
+    // rebuild.
+    void clearItems(const QList<int> &ids);
+
     const QList<TransferItem> &items() const { return m_items; }
 
     // Queue persistence — see TransferQueueStore's own doc comment and
@@ -235,6 +258,11 @@ public:
 signals:
     void itemAdded(const TransferItem &item);
     void itemUpdated(const TransferItem &item);   // covers both progress and status changes
+    // Fired once per id clearItems() actually hides — see that method's
+    // own doc comment. Distinct from itemUpdated: this means "stop
+    // showing this row at all," not "re-render it," so TransferQueueWidget
+    // routes it to TransferQueueTable::removeItem() instead of updateItem().
+    void itemRemoved(int id);
     void transferSucceeded();   // fired after any item completes — MainWindow uses this to refresh both panes
 
     // Folder-transfer status, separate from the per-file itemAdded/

@@ -4729,6 +4729,93 @@ to drive FileZilla itself for a same-desktop comparison.
   fix, used here for a brand-new feature's own safety checks instead of
   an existing bug. Full 26-target required suite passed.
 
+  **Transfers pane: right-click a tab header for "Clear Completed"/
+  "Clear Failed"** — a direct user request ("Transfers pane needs
+  right-click clear options for tab headers"). The real design question
+  wasn't the UI (a `QTabBar::customContextMenuRequested` handler,
+  same shape `FileTreeView`'s own `customContextMenuRequested` wiring
+  already uses) but how to actually remove items from
+  `TransferManager`'s backing list safely. `m_items` isn't just a plain
+  list — several maps (`m_pendingFileConflictChecks`,
+  `m_pendingFolderConflictChecks`, `m_pendingMoveConflictChecks`) store
+  a raw INDEX into `m_items` across a real async round trip (a
+  `checkExists()`/conflict-check response can arrive well after it was
+  dispatched). Physically compacting the list on removal
+  (`QList::removeAt()`) would shift every LATER item's index out from
+  under any of those still in flight, silently corrupting an unrelated,
+  genuinely-active item's own conflict resolution the next time one of
+  those maps was consulted — a real, serious correctness risk, not a
+  theoretical one, given how central these maps are to dispatch.
+
+  Solved by NOT removing anything from `m_items` at all: new
+  `TransferItem::clearedFromQueue` (default `false`) is a soft-hide
+  flag, the exact same "exists in `m_items`, invisible to the UI" shape
+  `isVerificationTask` already established for a different reason (a
+  checksum-verification temp-download that was never meant to be
+  visible in the first place, vs. this — a user-initiated hide of
+  something that WAS visible). New `TransferManager::clearItems(const
+  QList<int> &ids)`: for each id, looks it up via the existing
+  `indexById()` helper, skips it unless its CURRENT status is already
+  terminal (Done/Failed/Cancelled/Skipped — defensive, since `ids` was
+  gathered from a tab's row set before the context menu's own
+  `menu.exec()` nested event loop ran, and could theoretically have
+  changed via an unrelated Retry in the meantime — the identical class
+  of "state can change while a modal pumps the event queue" race
+  `FilePaneWidget::showContextMenu()`'s own comment already documents
+  for `currentDirectory()`), sets the flag, and emits a new
+  `itemRemoved(int id)` signal — deliberately distinct from
+  `itemUpdated`: it means "stop showing this row," not "re-render it."
+  `TransferQueueTable::resortAndRebuild()` gained the matching filter
+  (`if (item.clearedFromQueue) continue;`, right beside the existing
+  `isVerificationTask` check) — without it, a LATER header-click resort
+  would silently resurrect a cleared item straight from
+  `m_manager->items()`, since that method itself still returns
+  everything, cleared or not (by design — this is the one thing the
+  soft-hide approach costs: `items()` callers that don't already filter
+  `isVerificationTask` also need to start filtering `clearedFromQueue`,
+  though `clearItems()`'s own restriction to already-terminal items
+  means the only realistic caller affected is exactly the queue-display
+  code this feature touches). `TransferQueueWidget::onItemRemoved()`
+  mirrors `onItemUpdated()`'s own category-migration shape exactly
+  (look up which tab currently holds the id via `m_categoryById`,
+  remove it from that specific `TransferQueueTable`, refresh that tab's
+  label count) but for outright removal instead of a move.
+
+  The Active tab's menu item is shown, not hidden, but permanently
+  disabled — matching this app's own established "visible-but-disabled
+  over hidden" convention (e.g. Disconnect) rather than making a
+  right-click there look inert/broken. Nothing in Active is safe to
+  silently discard from the visible queue without also cancelling the
+  underlying transfer, which this menu deliberately doesn't do (Cancel
+  is a different, already-existing action, on a different menu, on the
+  per-ROW right-click, not this per-TAB one).
+
+  Verified two ways: a real screenshot of all three tabs' menus
+  (Completed/Failed enabled with a trash icon, Active shown-but-dimmed)
+  confirmed the UI renders correctly; a new permanent Phase 8 in
+  `transfer_queue_test.cpp` (a fresh, isolated `TransferManager`/
+  `TransferQueueWidget` pair, same "fresh pair" precedent Phase 4/5
+  already establish) drives `clearItems()` directly rather than
+  simulating the right-click itself — matching this project's own
+  "test at the seam that actually changed" convention when the UI glue
+  on top is this thin (recursive-delete-test's own header comment makes
+  the same call for its analogous QMessageBox-vs-deleteEntriesAt()
+  choice). Confirms per-tab isolation (clearing Completed never touches
+  Failed's own 2 items and vice versa), that a cleared item stays
+  cleared through a REAL subsequent resort (the actual bug the
+  `clearedFromQueue` filter exists to prevent), that an unknown/
+  ineligible id is a safe no-op, matching `retryItem()`/`cancelItem()`'s
+  own established shape for an unrecognized id. **A real, unrelated bug
+  found while writing this test, not a feature bug**: the test's own
+  first draft constructed fresh panes, called `navigateTo()`, and
+  enqueued in the same synchronous block — the exact
+  navigateTo()-races-enqueue() setup race this project's own history
+  already documents (v0.7.19) — caught immediately by the test's own
+  setup assertion failing (0 completed / 3 failed instead of 1/2, since
+  the "real" transfer landed in the wrong directory too), fixed with a
+  real settle-poll before enqueueing, matching the established fix
+  pattern exactly. Full 26-target required suite passed.
+
   **Scripting/automation (CLI mode)** — WinSCP's own flagship
   differentiator, picked as the next v2 target once sync/mirror browsing
   was fully shipped (both halves). `--script=<path>` (new

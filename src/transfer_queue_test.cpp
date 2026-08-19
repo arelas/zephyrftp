@@ -458,6 +458,126 @@ int main(int argc, char *argv[])
         qDebug() << (phase5Pass ? "[phase5] PASS" : "[phase5] FAIL");
     });
 
+    // ---- Phase 8: tab-header "Clear" (TransferManager::clearItems(),
+    // TransferQueueWidget's own reaction to itemRemoved) — a direct user
+    // request ("Transfers pane needs right-click clear options for tab
+    // headers"). Fresh TransferManager/TransferQueueWidget pair, isolated
+    // from every other phase, same "fresh pair" precedent phase 4/5 above
+    // already establish. Tests the actual logic this feature is built on
+    // (clearItems()'s id/status filtering, the itemRemoved signal,
+    // TransferQueueTable's row removal, tab label counts, and — the one
+    // that actually matters most — that a cleared item stays cleared
+    // through a LATER resortAndRebuild(), not just immediately after
+    // clearing) rather than driving the real right-click menu itself,
+    // which was verified separately via a real screenshot of all three
+    // tabs' menus (Completed/Failed enabled, Active shown-but-disabled) —
+    // matching this project's own "test at the seam that actually
+    // changed" convention (see recursive_delete_test.cpp's own header
+    // comment) when the UI glue on top is this thin. ----
+    bool phase8Pass = false;
+    QTimer::singleShot(4600, &app, [&]() {
+        const QString clearSrcDir = "/tmp/transfer_test/clear_src";
+        const QString clearDstDir = "/tmp/transfer_test/clear_dst";
+        QDir(clearSrcDir).removeRecursively();
+        QDir(clearDstDir).removeRecursively();
+        QDir().mkpath(clearSrcDir);
+        QDir().mkpath(clearDstDir);
+        {
+            QFile f(clearSrcDir + "/clear_ok.txt");
+            f.open(QIODevice::WriteOnly);
+            f.write("small enough to complete near-instantly");
+        }
+
+        auto *clearLeftPane = new FilePaneWidget(new LocalBackend());
+        auto *clearRightPane = new FilePaneWidget(new LocalBackend());
+        clearLeftPane->navigateTo(clearSrcDir);
+        clearRightPane->navigateTo(clearDstDir);
+
+        auto *clearManager = new TransferManager(&app);
+        auto *clearWidget = new TransferQueueWidget(clearManager);
+        auto *completedContainer =
+            clearWidget->findChild<TransferQueueTable *>(QStringLiteral("completedQueueTable"));
+        auto *failedContainer =
+            clearWidget->findChild<TransferQueueTable *>(QStringLiteral("failedQueueTable"));
+        auto *completedTable = completedContainer->findChild<QTableWidget *>();
+
+        int itemRemovedCount = 0;
+        QObject::connect(clearManager, &TransferManager::itemRemoved, &app,
+                          [&](int) { ++itemRemovedCount; });
+
+        // Real bug this project has hit before (v0.7.19's own history):
+        // constructing fresh panes, navigating, and enqueueing all in the
+        // same synchronous block races navigateTo()'s own
+        // Qt::QueuedConnection dispatch — enqueue() could read a pane's
+        // CURRENT directory before its own navigateTo() call above has
+        // actually taken effect. A real settle-poll first, not a fixed
+        // delay assumed to be "surely long enough."
+        {
+            QElapsedTimer settle;
+            settle.start();
+            while ((clearLeftPane->currentDirectory() != clearSrcDir
+                    || clearRightPane->currentDirectory() != clearDstDir)
+                   && settle.elapsed() < 5000) {
+                qApp->processEvents(QEventLoop::AllEvents, 10);
+            }
+        }
+
+        // One real file that actually completes (Done -> Completed tab),
+        // two nonexistent ones that fail immediately (same trick phase 5
+        // above already uses) -> Failed tab. Settled via a real
+        // event-loop drain (matching phase 5's own pattern for this
+        // exact class of near-instant local transfer) rather than a
+        // fixed processEvents() poll.
+        QEventLoop clearSettle;
+        clearManager->enqueue(clearLeftPane, clearRightPane, "clear_ok.txt");
+        clearManager->enqueue(clearLeftPane, clearRightPane, "clear_missing_1.bin");
+        clearManager->enqueue(clearLeftPane, clearRightPane, "clear_missing_2.bin");
+        QTimer::singleShot(500, &clearSettle, &QEventLoop::quit);
+        clearSettle.exec();
+
+        const bool setupCorrect = completedContainer->rowCount() == 1 && failedContainer->rowCount() == 2;
+        qDebug() << "[phase8] setup: 1 completed item and 2 failed items, before any Clear:"
+                  << setupCorrect << "(completed =" << completedContainer->rowCount()
+                  << ", failed =" << failedContainer->rowCount() << ")";
+
+        // Clearing Completed must not touch Failed at all — the actual
+        // per-tab isolation this whole feature exists for.
+        clearManager->clearItems(completedContainer->itemIds());
+        const bool completedClearedFailedUntouched =
+            completedContainer->rowCount() == 0 && failedContainer->rowCount() == 2 && itemRemovedCount == 1;
+        qDebug() << "[phase8] clearing Completed emptied only Completed, left Failed's 2 items alone:"
+                  << completedClearedFailedUntouched;
+
+        // A later resort/rebuild on the now-empty Completed tab (the
+        // exact call a real header click would make) must NOT resurrect
+        // the cleared item — this is what TransferItem::clearedFromQueue
+        // actually guards against; without it, resortAndRebuild() would
+        // re-include it straight from m_manager->items() and this
+        // assertion would fail.
+        completedTable->horizontalHeader()->sectionClicked(0);
+        const bool staysHiddenAfterResort = completedContainer->rowCount() == 0;
+        qDebug() << "[phase8] cleared item stayed hidden through a later resort (not resurrected):"
+                  << staysHiddenAfterResort;
+
+        // Clearing an id that doesn't exist (or isn't eligible) is a
+        // silent no-op, not a crash — same defensive-no-op shape
+        // retryItem()/cancelItem() already use for an unknown id.
+        const int itemRemovedCountBeforeNoop = itemRemovedCount;
+        clearManager->clearItems({999999});
+        const bool unknownIdIsNoop = itemRemovedCount == itemRemovedCountBeforeNoop;
+        qDebug() << "[phase8] clearItems() on an unknown id is a safe no-op:" << unknownIdIsNoop;
+
+        // Now clear Failed too — proves the SAME mechanism works for the
+        // other clearable tab, not just Completed.
+        clearManager->clearItems(failedContainer->itemIds());
+        const bool failedCleared = failedContainer->rowCount() == 0 && itemRemovedCount == 3;
+        qDebug() << "[phase8] clearing Failed emptied it (itemRemoved fired for both):" << failedCleared;
+
+        phase8Pass = setupCorrect && completedClearedFailedUntouched && staysHiddenAfterResort
+            && unknownIdIsNoop && failedCleared;
+        qDebug() << (phase8Pass ? "[phase8] PASS" : "[phase8] FAIL");
+    });
+
     // ---- Phase 6: a real, severe crash regression — reported live, on
     // Windows, transferring a large number of files: the app hung
     // ("stopped interacting with Windows") and consumed memory at a
@@ -718,7 +838,7 @@ int main(int argc, char *argv[])
         // synchronously, inside its own timer callback before the next
         // one is scheduled — this now does the same.
         const bool overallPass = phase1Pass && phase2SyncPass && phase2Pass && phase3Pass
-            && phase4Pass && phase5Pass && phase6Pass && phase7Pass;
+            && phase4Pass && phase5Pass && phase8Pass && phase6Pass && phase7Pass;
         qDebug() << (overallPass ? "[test] ALL PHASES PASS" : "[test] AT LEAST ONE PHASE FAILED");
         app.exit(overallPass ? 0 : 1);
     });

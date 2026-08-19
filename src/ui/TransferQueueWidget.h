@@ -48,6 +48,24 @@ private slots:
     void onItemAdded(const TransferItem &item);
     void onItemUpdated(const TransferItem &item);
 
+    // Fired once per id TransferManager::clearItems() actually hid —
+    // removes that row from whichever tab currently holds it (looked up
+    // via m_categoryById, same as onItemUpdated()'s own migration path)
+    // and refreshes that tab's label count.
+    void onItemRemoved(int id);
+
+    // Right-click on a tab HEADER (not a row) — see buildUi()'s own
+    // wiring of this to m_tabs->tabBar()'s customContextMenuRequested.
+    // Offers "Clear Completed"/"Clear Failed" on those two tabs (enabled
+    // only when that tab actually has something in it); the Active tab
+    // gets the same action shown but permanently disabled — there's
+    // nothing safe to silently clear there (everything in it is still
+    // queued, in progress, paused, or waiting to reconnect; Cancel is
+    // the right action for those, a different one this menu doesn't
+    // offer), and showing a disabled action reads as "not applicable
+    // here" rather than the right-click looking broken/inert.
+    void onTabBarContextMenuRequested(const QPoint &pos);
+
     // "Verify Checksum..." wiring — this class owns the ChecksumVerifier
     // (see ChecksumVerifier.h's own doc comment on why: it needs
     // presentation (QMessageBox/QProgressDialog), which the individual

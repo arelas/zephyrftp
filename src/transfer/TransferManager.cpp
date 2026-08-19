@@ -1159,6 +1159,28 @@ void TransferManager::retryItem(int id)
     startNext();
 }
 
+void TransferManager::clearItems(const QList<int> &ids)
+{
+    for (int id : ids) {
+        const int idx = indexById(id);
+        if (idx < 0)
+            continue;
+
+        TransferItem &item = m_items[idx];
+        // Only a terminal status is ever eligible — see this method's
+        // own doc comment (TransferManager.h) for the real race this
+        // guards against (an id captured from a tab's row set before a
+        // context menu's own nested event loop ran, which could have
+        // gone back to Queued/InProgress via Retry in the meantime).
+        if (item.status != TransferStatus::Done && item.status != TransferStatus::Failed
+            && item.status != TransferStatus::Cancelled && item.status != TransferStatus::Skipped)
+            continue;
+
+        item.clearedFromQueue = true;
+        emit itemRemoved(id);
+    }
+}
+
 void TransferManager::pauseItem(int id)
 {
     const int idx = indexById(id);

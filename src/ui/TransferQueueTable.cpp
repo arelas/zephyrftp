@@ -667,6 +667,13 @@ void TransferQueueTable::resortAndRebuild()
         // transfer, but must never actually render as a queue row.
         if (item.isVerificationTask)
             continue;
+        // Cleared via a tab header's right-click "Clear" action (see
+        // TransferItem::clearedFromQueue's own doc comment) — stays in
+        // m_manager->items() forever, but must never resurface in a
+        // rebuild the way a plain removeItem() call (a category
+        // migration, not a clear) never repopulates either.
+        if (item.clearedFromQueue)
+            continue;
         if (categoryFor(item.status) == m_category)
             items.append(item);
     }

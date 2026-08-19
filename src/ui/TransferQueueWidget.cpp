@@ -1,11 +1,14 @@
 #include "TransferQueueWidget.h"
 #include "../transfer/TransferManager.h"
 #include "../transfer/ChecksumVerifier.h"
+#include "IconTheme.h"
 
 #include <QTabWidget>
+#include <QTabBar>
 #include <QVBoxLayout>
 #include <QMessageBox>
 #include <QProgressDialog>
+#include <QMenu>
 
 TransferQueueWidget::TransferQueueWidget(TransferManager *manager, QWidget *parent)
     : QWidget(parent)
@@ -43,6 +46,17 @@ TransferQueueWidget::TransferQueueWidget(TransferManager *manager, QWidget *pare
 
     connect(manager, &TransferManager::itemAdded, this, &TransferQueueWidget::onItemAdded);
     connect(manager, &TransferManager::itemUpdated, this, &TransferQueueWidget::onItemUpdated);
+    connect(manager, &TransferManager::itemRemoved, this, &TransferQueueWidget::onItemRemoved);
+
+    // Tab-header "Clear" right-click — see onTabBarContextMenuRequested()'s
+    // own doc comment. QTabBar, not m_tabs itself: a context menu on the
+    // QTabWidget as a whole would also fire when right-clicking the
+    // currently-open TABLE underneath the tab strip, which already has
+    // its own per-row menu (TransferQueueTable::showContextMenu()) that
+    // must stay the only thing that responds there.
+    m_tabs->tabBar()->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_tabs->tabBar(), &QWidget::customContextMenuRequested,
+            this, &TransferQueueWidget::onTabBarContextMenuRequested);
 
     for (TransferQueueTable *table : {m_activeTable, m_completedTable, m_failedTable}) {
         connect(table, &TransferQueueTable::verifyChecksumRequested,
@@ -121,6 +135,66 @@ void TransferQueueWidget::onItemUpdated(const TransferItem &item)
     } else {
         tableFor(newCategory)->updateItem(item);
     }
+}
+
+void TransferQueueWidget::onItemRemoved(int id)
+{
+    // take(), not constFind()/value() — a cleared id should stop being
+    // tracked here entirely, same as it stops existing in any table's
+    // own m_rowById the moment removeItem() below runs.
+    const auto it = m_categoryById.find(id);
+    if (it == m_categoryById.end())
+        return;   // already gone, or never tracked (defensive — shouldn't happen)
+
+    const QueueCategory category = it.value();
+    m_categoryById.erase(it);
+    tableFor(category)->removeItem(id);
+    updateTabLabel(category);
+}
+
+void TransferQueueWidget::onTabBarContextMenuRequested(const QPoint &pos)
+{
+    const int tabIndex = m_tabs->tabBar()->tabAt(pos);
+    if (tabIndex < 0)
+        return;
+
+    QueueCategory category;
+    switch (tabIndex) {
+    case 0: category = QueueCategory::Active;    break;
+    case 1: category = QueueCategory::Completed; break;
+    case 2: category = QueueCategory::Failed;    break;
+    default: return;   // unreachable — only 3 tabs ever exist
+    }
+
+    TransferQueueTable *table = tableFor(category);
+
+    QMenu menu(this);
+    const QString label = category == QueueCategory::Active   ? tr("Clear Active")
+                         : category == QueueCategory::Completed ? tr("Clear Completed")
+                                                                  : tr("Clear Failed");
+    QAction *clearAction = menu.addAction(IconTheme::tintedIcon(":/icons/trash.svg", IconTheme::Red), label);
+    // Active is never clearable — everything in it is still queued,
+    // in progress, paused, or waiting to reconnect, and silently
+    // discarding any of those from the visible queue without actually
+    // cancelling the underlying transfer would leave it running with no
+    // way left to see or manage it. Shown-but-disabled rather than
+    // omitted entirely, matching this app's own established
+    // visible-but-disabled convention (e.g. Disconnect) over hiding an
+    // action outright.
+    clearAction->setEnabled(category != QueueCategory::Active && table->rowCount() > 0);
+
+    QAction *chosen = menu.exec(m_tabs->tabBar()->mapToGlobal(pos));
+    if (chosen != clearAction)
+        return;
+
+    // Snapshot BEFORE clearItems() — menu.exec() above already ran its
+    // own nested event loop where this could have changed; clearItems()
+    // itself re-validates each id's status is still terminal anyway
+    // (see its own doc comment), so this is defense in depth, not the
+    // only guard.
+    const QList<int> ids = table->itemIds();
+    if (!ids.isEmpty())
+        m_manager->clearItems(ids);
 }
 
 void TransferQueueWidget::retintIcons()

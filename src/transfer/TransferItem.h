@@ -220,4 +220,24 @@ struct TransferItem {
     // goes through the exact same claim/pool/cancel machinery as any
     // other item.
     bool isVerificationTask = false;
+
+    // Set by TransferManager::clearItems() when a Completed/Failed-tab
+    // "Clear" action removes this item from the visible queue — never
+    // for an Active-tab item (still queued/in-progress/paused/pending-
+    // reconnect ones can't be silently cleared; see clearItems()'s own
+    // doc comment). Deliberately a soft-hide flag, NOT physical removal
+    // from TransferManager::m_items: several pending-conflict-check maps
+    // (m_pendingFileConflictChecks, m_pendingFolderConflictChecks,
+    // m_pendingMoveConflictChecks) store a raw INDEX into m_items across
+    // a real async round trip — compacting the list on removal would
+    // shift every later item's index out from under any of those still
+    // in flight, silently corrupting an unrelated item's own conflict
+    // resolution. A cleared item stays in m_items forever (same
+    // unbounded-for-the-session growth this class already has with no
+    // pruning at all, not a new characteristic), just permanently
+    // filtered out of every tab — same "exists in m_items, invisible to
+    // the UI" shape isVerificationTask above already established, reused
+    // here for a different reason (user-initiated hide, not "never meant
+    // to be visible in the first place").
+    bool clearedFromQueue = false;
 };

@@ -8,6 +8,14 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Added
+
+- **Right-click a Transfers tab header for "Clear Completed"/"Clear
+  Failed"** — clears just that tab, leaving the other alone. Active has
+  no clear option (shown, but disabled): everything in it is still
+  queued, running, paused, or waiting to reconnect, so it needs
+  cancelling, not hiding.
+
 ## [0.7.40] — Keyboard shortcuts, fix default sort order
 
 ### Added
