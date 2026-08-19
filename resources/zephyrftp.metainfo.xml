@@ -36,9 +36,12 @@
       <li>Destination conflict handling — always asks before overwriting anything</li>
     </ul>
     <p>
-      This is alpha software: real functionality, but real gaps too —
-      see the Known Limitations section in the project's README before
-      relying on it for anything you can't afford to get wrong.
+      This is beta software: real functionality, with real but
+      narrowing gaps — see the Known Limitations section in the
+      project's README before relying on it for anything you can't
+      afford to get wrong. The project is in feature freeze heading
+      toward 1.0: releases from here are bug fixes and small additions,
+      not new capabilities.
     </p>
   </description>
   <launchable type="desktop-id">zephyrftp.desktop</launchable>
@@ -69,6 +72,11 @@
   </screenshots>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.8.0" date="2026-08-19">
+      <description>
+        <p>First beta. The project enters feature freeze from here toward a 1.0 release — bug fixes and small additions closing existing gaps, not new capabilities. A signed, installer-based Windows build is planned at some point during this phase.</p>
+      </description>
+    </release>
     <release version="0.3.3" date="2026-08-03">
       <description>
         <p>Real .deb/.rpm Linux packages, built via CPack and verified end to end in disposable containers, alongside the existing plain tarball.</p>

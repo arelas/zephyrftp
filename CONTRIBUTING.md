@@ -5,6 +5,17 @@ This document is for building, testing, and modifying it.
 [ARCHITECTURE.md](ARCHITECTURE.md) has the full technical picture —
 verification status, component design, and known gaps in detail.
 
+## Project status: feature freeze toward 1.0
+
+As of v0.8.0 (beta), the project is in feature freeze. Contributions
+from here should be bug fixes or small additions that close an existing,
+documented gap (see [Known limitations](README.md#known-limitations) and
+ARCHITECTURE.md's "Known gaps" entries) — not new capabilities or
+protocol/backend breadth. A signed, installer-based Windows build is
+planned at some point during this phase; a large new feature almost
+certainly isn't a fit right now. If you're unsure whether something
+qualifies, open an issue to discuss scope before starting on it.
+
 ## Building
 
 ```

@@ -8,6 +8,20 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.8.0] — First beta: feature freeze heading toward 1.0
+
+### Changed
+
+- **The project moves from alpha to beta, and enters feature freeze.**
+  From this release forward, work heading toward 1.0 is bug fixes and
+  small additions that close an existing, documented gap — not new
+  capabilities or protocol/backend breadth. A signed, installer-based
+  Windows build (replacing today's unzip-and-run `.zip`) is planned at
+  some point during this phase. No functional/behavioral change in this
+  release beyond the status update itself — the About dialog, README,
+  and AppStream metadata now say "beta" instead of "alpha," and
+  CONTRIBUTING.md documents the freeze for contributors.
+
 ## [0.7.45] — Fix dialog-consistency bugs found by a full audit
 
 ### Fixed
@@ -2233,7 +2247,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.45...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.0
 [0.7.45]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.45
 [0.7.44]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.44
 [0.7.43]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.43

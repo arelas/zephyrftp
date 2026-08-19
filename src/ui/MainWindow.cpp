@@ -761,7 +761,7 @@ void MainWindow::onAboutTriggered()
     // be more code doing the same thing.
     QMessageBox::about(this, tr("About ZephyrFTP"),
         tr("<h3>ZephyrFTP</h3>"
-           "<p>Version %1 — alpha software. Expect rough edges; see "
+           "<p>Version %1 — beta software. Expect rough edges; see "
            "<a href=\"https://github.com/arelas/zephyrftp/blob/main/README.md#known-limitations\">"
            "Known limitations</a> in the README.</p>"
            "<p>A dual-pane SFTP client.</p>"
