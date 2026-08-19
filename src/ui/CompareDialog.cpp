@@ -38,8 +38,15 @@ QString sideText(bool present, bool isDir, qint64 size, const QDateTime &modifie
     if (isDir)
         return QObject::tr("(folder)");
     const QString sizeText = QLocale().formattedDataSize(size);
-    return modified.isValid() ? QStringLiteral("%1, %2").arg(sizeText, modified.toString(Qt::ISODate))
-                               : sizeText;
+    // Same "yyyy-MM-dd hh:mm:ss" format FilePaneWidget's own Modified
+    // column uses (v0.7.43) — this used to be the raw Qt::ISODate
+    // "yyyy-MM-ddThh:mm:ss" form, an inconsistency found by a later
+    // dialog-consistency audit, not caught when the pane fix shipped
+    // (this dialog wasn't in scope for that one).
+    return modified.isValid()
+               ? QStringLiteral("%1, %2").arg(
+                     sizeText, modified.toString(QStringLiteral("yyyy-MM-dd hh:mm:ss")))
+               : sizeText;
 }
 
 } // namespace
@@ -56,7 +63,10 @@ CompareDialog::CompareDialog(FilePaneWidget *leftPane, FilePaneWidget *rightPane
 {
     setWindowTitle(tr("Compare Directories"));
     setAttribute(Qt::WA_DeleteOnClose);
-    resize(760, 520);
+    // Widened from 760 (see setColumnWidth() calls below) — Left/Right's
+    // own "<size>, <modified>" text needs real room on both sides, not
+    // just one absorbing whatever the other three columns left over.
+    resize(830, 520);
 
     buildUi();
     runCompare();
@@ -98,6 +108,22 @@ void CompareDialog::buildUi()
     // scrolling — a real reported usability issue. Still freely
     // resizable afterward; this only sets the STARTING width.
     m_tree->setColumnWidth(0, 320);
+    // Same class of bug, found later by a dialog-consistency screenshot
+    // audit rather than a user report: Status/Left/Right were still
+    // left at Qt's own plain default (~100-150px), truncating Left's
+    // own "<size>, <modified>" text (sideText() above) with no visual
+    // hint it was cut off — QTreeWidget doesn't ellipsize a fixed-width
+    // column with any "..." unless the text literally doesn't fit any
+    // pixel of it, so a partially-cut value like "1 bytes, 2026-..."
+    // just silently loses its own tail. Right (the actual last column)
+    // keeps QTreeView's own stretchLastSection default rather than
+    // getting a fourth explicit width — its content is identical in
+    // shape to Left's, so whatever width Left gets is the right target
+    // for Right too, and stretch already delivers at least that much
+    // once Name/Status/Left have claimed their own share of the dialog's
+    // own widened default size above.
+    m_tree->setColumnWidth(1, 110);
+    m_tree->setColumnWidth(2, 190);
     connect(m_tree, &QTreeWidget::itemChanged, this, &CompareDialog::onItemChanged);
     layout->addWidget(m_tree, /*stretch=*/1);
 

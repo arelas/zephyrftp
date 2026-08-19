@@ -8,6 +8,21 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- A dialog-consistency audit across every dialog in the app (Connect,
+  Site Manager, Preferences, Permissions, Compare Directories, Compare's
+  delete-confirmation list) found and fixed three real, currently-
+  shipping rendering bugs: Site Manager's "Simultaneous connections"
+  spin box — the only spinner in the app that keeps its up/down
+  buttons — rendered them as blank squares with no visible arrow glyph
+  in either theme; Compare Directories' delete-confirmation file list
+  showed a bright native-white background even in Dark theme; and
+  Compare Directories' own Left/Right columns silently truncated their
+  "<size>, <modified>" text with no visual hint — and was still using
+  the old raw `yyyy-MM-ddThh:mm:ss` format, now matching the main file
+  pane's own Modified-column fix (v0.7.43).
+
 ## [0.7.44] — Fix file pane column defaults
 
 ### Fixed

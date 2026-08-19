@@ -79,7 +79,15 @@ QToolButton:checked {
     background-color: rgba(91, 141, 239, 26);   /* --zf-blue-tint */
 }
 
-QTreeView, QTableWidget {
+/* QListView covers QListWidget too (it's a thin QListView subclass) —
+   found missing entirely during a dialog-consistency screenshot audit:
+   CompareDeleteConfirmDialog's file list is this app's only QListWidget,
+   so it had never been exercised by any of the other list-styling work
+   here. Rendered a bright native-white list against this dialog's dark
+   chrome until this rule was added — same root cause this project has
+   hit before (an unstyled child widget falling back to native palette),
+   just never on this specific widget class. */
+QTreeView, QTableWidget, QListView {
     background-color: #14171c;   /* --zf-bg */
     color: #dfe4ea;               /* --zf-text-primary */
     border: none;
@@ -88,7 +96,7 @@ QTreeView, QTableWidget {
     selection-color: #dfe4ea;
     font-size: 12px;
 }
-QTreeView::item:hover, QTableWidget::item:hover {
+QTreeView::item:hover, QTableWidget::item:hover, QListView::item:hover {
     background-color: rgba(255, 255, 255, 10);   /* --zf-surface-hover */
 }
 
@@ -153,6 +161,32 @@ QComboBox::down-arrow {
     image: url(:/icons/chevron-down-muted.svg);
     width: 12px;
     height: 12px;
+}
+
+/* Same root cause as ::drop-down above, for the one QSpinBox in the app
+   that keeps its up/down buttons instead of setButtonSymbols(NoButtons)
+   (Simultaneous Connections, deliberately — see SiteManagerDialog.cpp's
+   own comment): styling QSpinBox at all (the base rule above) makes Qt
+   stop painting its native arrow glyphs, but unlike QComboBox this went
+   unnoticed until a real screenshot audit caught it — the two buttons
+   rendered as blank squares, not missing entirely, so it read as "a bit
+   odd" rather than obviously broken at a glance. border: none keeps
+   both corners merged into the field's own rounded outline; a fixed
+   small width keeps the two stacked buttons from eating into the
+   field's own fixed height (see setFixedHeight()'s own comment). */
+QSpinBox::up-button, QSpinBox::down-button {
+    border: none;
+    width: 16px;
+}
+QSpinBox::up-arrow {
+    image: url(:/icons/chevron-up-muted.svg);
+    width: 10px;
+    height: 10px;
+}
+QSpinBox::down-arrow {
+    image: url(:/icons/chevron-down-muted.svg);
+    width: 10px;
+    height: 10px;
 }
 
 /* An EDITABLE QComboBox (SiteManagerDialog's Group field is this app's

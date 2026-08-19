@@ -72,7 +72,13 @@ QToolButton:checked {
     background-color: rgba(91, 141, 239, 26);   /* --zf-blue-tint */
 }
 
-QTreeView, QTableWidget {
+/* QListView covers QListWidget too — same reasoning as theme.qss's own
+   identical rule (CompareDeleteConfirmDialog's file list, missed
+   entirely until a dialog-consistency audit found it). Harmless-looking
+   here since the native fallback happens to already be white, same as
+   this theme's own background — theme.qss's dark counterpart is where
+   the same gap actually became visible. */
+QTreeView, QTableWidget, QListView {
     background-color: #ffffff;   /* --zf-bg (light) */
     color: #1a1d23;               /* --zf-text-primary (light) */
     border: none;
@@ -81,7 +87,7 @@ QTreeView, QTableWidget {
     selection-color: #1a1d23;
     font-size: 12px;
 }
-QTreeView::item:hover, QTableWidget::item:hover {
+QTreeView::item:hover, QTableWidget::item:hover, QListView::item:hover {
     background-color: rgba(0, 0, 0, 8);   /* --zf-surface-hover (light) */
 }
 
@@ -140,6 +146,24 @@ QComboBox::down-arrow {
     image: url(:/icons/chevron-down-muted.svg);
     width: 12px;
     height: 12px;
+}
+
+/* Same reasoning as theme.qss's own identical rule — the one QSpinBox
+   in the app that keeps its up/down buttons (Simultaneous Connections)
+   otherwise renders them as blank squares under custom QSS. */
+QSpinBox::up-button, QSpinBox::down-button {
+    border: none;
+    width: 16px;
+}
+QSpinBox::up-arrow {
+    image: url(:/icons/chevron-up-muted.svg);
+    width: 10px;
+    height: 10px;
+}
+QSpinBox::down-arrow {
+    image: url(:/icons/chevron-down-muted.svg);
+    width: 10px;
+    height: 10px;
 }
 
 /* An EDITABLE QComboBox draws its closed-state text via a real child

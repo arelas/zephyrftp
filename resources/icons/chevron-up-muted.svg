@@ -1,0 +1,23 @@
+<!--
+  QSS-only variant of arrow-up.svg for QSpinBox::up-arrow: QSS's
+  image: url() has no runtime tinting hook (unlike IconTheme::tintedIcon(),
+  which recolors every other icon in the app at paint time), so this one
+  needs its color baked in ahead of time. Stroke hardcoded to the
+  zf-text-secondary token's value (#8790a0), matching QLabel's own
+  secondary-text color, since a spin indicator should read as muted
+  chrome, not a primary-text-weight element. Same construction as
+  chevron-down-muted.svg's own sibling, just mirrored vertically.
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="#8790a0"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M6 15l6 -6l6 6" />
+</svg>

@@ -5027,6 +5027,103 @@ to drive FileZilla itself for a same-desktop comparison.
   rather than a stretch region with no defined end. Verified via the
   same disposable probe in both Dark and Light.
 
+  **Dialog-consistency audit across every dialog in the app.** A direct
+  user request ("ensure all dialogs are correct and consistent between
+  Windows, Mac, and Linux"), scoped down via a clarifying question: a
+  general proactive audit (not a specific known-bad dialog), validated
+  via static code review plus real screenshots on this Linux sandbox —
+  there's no way to literally render on Windows/macOS here. One
+  reassuring finding from the static half: zero `#ifdef Q_OS_*`/
+  `QSysInfo` branches anywhere in `src/ui/`'s six real `QDialog`
+  subclasses (`ConnectionDialog`, `SiteManagerDialog`,
+  `PreferencesDialog`, `PermissionsDialog`, `CompareDialog`,
+  `CompareDeleteConfirmDialog`) — every dialog is built identically
+  regardless of platform, and this app's heavy reliance on a fully
+  custom `app.setStyleSheet()` QSS theme (rather than each platform's
+  native widget style) is itself most of what keeps cross-platform
+  rendering consistent by construction, not by accident.
+
+  A disposable probe constructed all six dialogs at once (mirroring
+  `keyboard-shortcuts-test`'s own full dependency list, since it
+  already links everything `MainWindow` needs including `SftpBackend`)
+  and screenshotted each in both Dark and Light — surfacing three real,
+  currently-shipping bugs the functional test suite had no way to
+  catch, none previously reported:
+
+  1. **Site Manager's "Simultaneous connections" spin box rendered its
+     up/down arrow buttons as blank squares**, in both themes. It's
+     the ONLY spin box in the app that keeps its native buttons —
+     every other one (`ConnectionDialog`/`SiteManagerDialog`'s own Port
+     fields, `PreferencesDialog`'s Proxy Port and Bandwidth Limit)
+     calls `setButtonSymbols(QAbstractSpinBox::NoButtons)` deliberately
+     (see `SiteManagerDialog.cpp`'s own comment on why this one field
+     alone keeps them: a small 1-10 range where up/down nudging is
+     genuinely useful). Root cause matches an already-fixed `QComboBox`
+     bug from earlier in this file's own history: styling `QSpinBox` at
+     all (the shared `QLineEdit, QSpinBox, QComboBox` base rule) makes
+     Qt stop painting its native arrow glyphs, and nothing had ever
+     supplied a replacement — `QComboBox::down-arrow` already had one,
+     `QSpinBox::up-arrow`/`down-arrow` never did, simply because this
+     was the only spin box ever exercising that code path. Fixed with
+     new `QSpinBox::up-button`/`down-button`/`up-arrow`/`down-arrow`
+     rules in both theme files, reusing the existing muted-chevron SVG
+     technique (`chevron-down-muted.svg`'s own baked-in
+     `--zf-text-secondary` stroke color, since QSS `image: url()` has
+     no runtime tinting hook) plus a new sibling `chevron-up-muted.svg`.
+     A first pass measured the widget's actual programmatic
+     `height()`/`sizeHint()` (both correctly 33px, matching sibling
+     `QLineEdit`s) before concluding the earlier `setFixedHeight()` fix
+     from this file's own history was still working correctly and the
+     visual "taller" impression from eyeballing an unzoomed screenshot
+     was wrong — confirmed by a precise pixel-grid crop showing both
+     fields genuinely the same height. The real bug was the missing
+     arrow glyphs alone, not a size regression.
+  2. **Compare Directories' delete-confirmation file list
+     (`CompareDeleteConfirmDialog`) rendered a bright native-white
+     background in Dark theme.** It's this app's only `QListWidget`,
+     so `QTreeView`/`QTableWidget`'s existing shared dark-palette rule
+     never reached it — the same root cause ("an unstyled child widget
+     falls back to native palette") this project has hit several times
+     before, just never yet on this specific widget class. Fixed by
+     adding `QListView` (which `QListWidget` is a thin subclass of) to
+     the existing shared selector in both theme files. Verified this
+     didn't regress `QComboBox`'s own dropdown popup — internally also
+     a `QListView` — by opening a real popup via `showPopup()` and
+     screenshotting it: the existing, more specific
+     `QComboBox QAbstractItemView` rule (a different surface color,
+     intentionally) still correctly wins, confirming Qt's usual CSS-
+     like specificity cascade held here as expected, not just assumed.
+  3. **Compare Directories' own Left/Right columns silently truncated
+     their own `sideText()` content** (`"<size>, <modified>"`) with no
+     visible hint — `QTreeWidget` doesn't ellipsize a column that's
+     merely too narrow for its content the way `TransferQueueTable`'s
+     own established convention explicitly plans for elsewhere; it
+     just clips. The exact same class of bug this file's own Name-
+     column fix (comment right above) already documents finding once,
+     never applied to the OTHER three columns. Fixed with explicit
+     `setColumnWidth()` calls for Status (110px) and Left (190px) —
+     Right, the actual last column, keeps `QTreeView`'s own
+     `stretchLastSection` default rather than a fourth explicit width,
+     since its content is identical in shape to Left's and stretch
+     already delivers at least that much once the other three columns
+     have claimed their share — plus widening the dialog's own default
+     `resize()` from 760 to 830 so all four columns fit without
+     fighting each other for space. While fixing this, also found (by
+     literally reading the rendered date text in the screenshot) that
+     `sideText()` still formatted `modified` with the same old raw
+     `Qt::ISODate` (`yyyy-MM-ddThh:mm:ss`) this file's own earlier
+     Modified-column fix had already replaced for the main file pane —
+     switched to the identical `"yyyy-MM-dd hh:mm:ss"` format for
+     consistency between the two.
+
+  All three verified via the same disposable probe, in both Dark and
+  Light, including a real (small, fast-finishing) `DirectoryComparer`
+  run rather than a static mock — an early version of the probe used
+  `$HOME` for both sides of the comparison and never finished within
+  the probe's own screenshot delay; switched to two small throwaway
+  `QTemporaryDir`s with a handful of files so the real async compare
+  actually completes.
+
   **Scripting/automation (CLI mode)** — WinSCP's own flagship
   differentiator, picked as the next v2 target once sync/mirror browsing
   was fully shipped (both halves). `--script=<path>` (new
