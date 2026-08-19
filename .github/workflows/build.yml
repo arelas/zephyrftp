@@ -296,7 +296,7 @@ jobs:
           mkdir -p /tmp/xdg-runtime /tmp/wineprefix-installer && chmod 700 /tmp/xdg-runtime
 
           xvfb-run -a wine zephyrftp-windows-x64-setup.exe /S
-          wineserver -w
+          wineserver -w || true
 
           test -f "$WINEPREFIX/drive_c/Program Files/ZephyrFTP/zephyrftp.exe"
           test -f "$WINEPREFIX/drive_c/Program Files/ZephyrFTP/uninstall.exe"
@@ -313,10 +313,10 @@ jobs:
           VERSION="$(grep 'CMAKE_PROJECT_VERSION:STATIC' build-win/CMakeCache.txt | cut -d= -f2)"
           [ "$DISPLAYVERSION" = "$VERSION" ]
           echo "[PASS] install: Add/Remove Programs DisplayVersion matches ($DISPLAYVERSION)"
-          wineserver -k -w
+          wineserver -k -w || true
 
           xvfb-run -a wine "C:\\Program Files\\ZephyrFTP\\uninstall.exe" /S
-          wineserver -w
+          wineserver -w || true
 
           # Explicit if/exit, not `! test ...` — under `set -e`, bash
           # exempts a `!`-negated command from triggering exit-on-failure
@@ -332,7 +332,7 @@ jobs:
             exit 1
           fi
           echo "[PASS] uninstall: files + shortcut genuinely removed"
-          wineserver -k -w
+          wineserver -k -w || true
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v7
