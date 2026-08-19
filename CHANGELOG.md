@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.41] — Clear Completed/Clear Failed on Transfers tab headers
+
 ### Added
 
 - **Right-click a Transfers tab header for "Clear Completed"/"Clear
@@ -2178,7 +2180,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.40...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.41...HEAD
+[0.7.41]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.41
 [0.7.40]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.40
 [0.7.39]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.39
 [0.7.38]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.38
