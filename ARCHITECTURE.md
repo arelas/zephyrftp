@@ -4497,6 +4497,49 @@ to drive FileZilla itself for a same-desktop comparison.
   transfers still complete correctly end-to-end against a real nested
   tree), plus the full 25-target required suite, all passing.
 
+  **David reported the SAME "Preparing to transfer" symptom again after
+  the fix above shipped, with a real caveat: "It may have been a little
+  quicker but it left the user in a state where they might be concerned
+  the app has frozen."** The v0.7.37 fix above was real, but it only
+  ever addressed the directory-CREATION side (the `ignoreAlreadyExists`
+  stat/list check). It never touched the actual dominant cost for a
+  large tree: `FolderEnumerator`'s own walk, which lists one directory
+  per real network round trip, strictly serially (see that class's own
+  header comment on why — a real `SftpBackend` has exactly one session,
+  so concurrent listing calls would just serialize through libssh2
+  anyway). For a tree with many directories, that's still a real,
+  structurally-unavoidable amount of network latency before enumeration
+  even finishes — but the actual UX bug was separate from that latency
+  itself: `MainWindow`'s status bar showed the exact same static
+  "Preparing to transfer..." string for the entire walk, with zero
+  visible change between `folderTransferStarted` and
+  `folderTransferFinished`. A perfectly healthy multi-second walk and a
+  genuine hang were, from the user's perspective, indistinguishable.
+  Fixed by surfacing progress that was already happening internally but
+  never exposed: `FolderEnumerator` gained a new `itemsDiscovered(int
+  itemsSoFar)` signal, emitted once per directory listing folded into
+  its results (a running total, not a percentage — the tree's total
+  size isn't known until the walk is already done, so there's nothing
+  to divide by yet); `TransferManager::startFolderEnumeration()`
+  connects to it and re-emits a new `folderTransferProgress(folderName,
+  itemsFound)` signal; `MainWindow` updates the status bar live —
+  `"Preparing to transfer \"%1\"... (%2 items found so far)"` — instead
+  of leaving it static. No new round trips, no change to WHEN the
+  transfer actually starts — purely additive visibility into work
+  that was already in flight.
+
+  Verified non-vacuously, not just by argument: extended
+  `folder-transfer-test`'s existing `myfolder` fixture (5 real
+  directories: itself, `subdir1`, `subdir2`, `subdir2/nested`,
+  `emptydir`) with assertions that `folderTransferProgress` fires at
+  least once per directory listed, that its counts are monotonically
+  non-decreasing (NOT strictly increasing — a first draft of this
+  assertion was itself wrong and caught by the test failing: listing a
+  genuinely empty directory like `emptydir` correctly contributes zero
+  NEW items, so two consecutive equal counts is valid, not a bug), and
+  that the final count matches the whole tree (5 directories + 4 files
+  = 9). Full 25-target required suite passed.
+
   **Scripting/automation (CLI mode)** — WinSCP's own flagship
   differentiator, picked as the next v2 target once sync/mirror browsing
   was fully shipped (both halves). `--script=<path>` (new

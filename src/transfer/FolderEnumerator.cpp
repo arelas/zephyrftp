@@ -66,6 +66,7 @@ void FolderEnumerator::onDirectoryEnumerated(const QString &path, const QList<Re
         }
     }
 
+    emit itemsDiscovered(m_results.size());
     enumerateNext();
 }
 

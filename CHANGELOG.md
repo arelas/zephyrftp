@@ -8,6 +8,17 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **"Preparing to transfer..." still looked frozen for a large folder,
+  even after the previous fix.** The bigger, remaining cost was never
+  the extra directory-creation check — it's the folder-tree walk
+  itself, which lists one directory per real network round trip
+  (SFTP/FTP), strictly one at a time, and the status bar showed the
+  exact same unchanging text the whole time it did that. Now updates
+  live with a running item count while the walk is in progress, so a
+  slow tree reads as "still working" instead of "might be frozen."
+
 ## [0.7.37] — Fix folder transfers hanging on "Preparing to transfer"
 
 ### Fixed

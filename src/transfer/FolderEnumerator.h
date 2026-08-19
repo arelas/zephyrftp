@@ -59,6 +59,18 @@ signals:
     // missing content would look successful while actually being wrong,
     // which is worse than clearly failing.
     void failed(const QString &reason);
+    // Fired after each directory listing is folded into m_results, purely
+    // so a caller can show live progress during a walk that — for a large
+    // tree over SFTP/FTP — can take many real network round trips (one
+    // listDirectoryForEnumeration() per directory, strictly serial; see
+    // this class's own header comment on why). Without this, a caller
+    // has no signal at all between start() and finished()/failed(), which
+    // for a slow enough tree reads exactly like a hang even though the
+    // walk is genuinely progressing. itemsSoFar is a running total
+    // (files and directories both, including the synthetic root item),
+    // not a percentage — the total size of the tree isn't known until the
+    // walk is already done, so there's nothing to divide by.
+    void itemsDiscovered(int itemsSoFar);
 
 private slots:
     void onDirectoryEnumerated(const QString &path, const QList<RemoteEntry> &entries, int requestId);

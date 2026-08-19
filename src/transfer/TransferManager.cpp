@@ -473,6 +473,10 @@ void TransferManager::startFolderEnumeration(FilePaneWidget *sourcePane, FilePan
         enumerator->deleteLater();
         emit folderTransferFailed(folderName, reason);
     });
+    connect(enumerator, &FolderEnumerator::itemsDiscovered, this,
+            [this, folderName](int itemsSoFar) {
+        emit folderTransferProgress(folderName, itemsSoFar);
+    });
 
     enumerator->start();
 }

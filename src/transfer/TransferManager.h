@@ -253,6 +253,16 @@ signals:
     // (a real transfer that happened to find no files, e.g. a tree of
     // only empty subdirectories).
     void folderTransferStarted(const QString &folderName);
+    // Fired repeatedly during the enumeration phase (see
+    // FolderEnumerator::itemsDiscovered's own doc comment) — a real,
+    // live-reported UX gap: without this, MainWindow's "Preparing to
+    // transfer..." status message never changed between
+    // folderTransferStarted and folderTransferFinished, which for a
+    // large/deep tree over SFTP/FTP (a real network round trip per
+    // directory, strictly serial) could take upwards of ten seconds with
+    // zero visible feedback — indistinguishable from a genuine freeze
+    // even though the walk was working the whole time.
+    void folderTransferProgress(const QString &folderName, int itemsFound);
     void folderTransferFinished(const QString &folderName, int fileCount);
     void folderTransferFailed(const QString &folderName, const QString &reason);
     void folderTransferSkipped(const QString &folderName);

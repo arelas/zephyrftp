@@ -117,6 +117,18 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_transferManager, &TransferManager::folderTransferStarted, this, [this](const QString &name) {
         statusBar()->showMessage(tr("Preparing to transfer \"%1\"...").arg(name));
     });
+    // Live progress during enumeration — without this, the message above
+    // never changes until the whole tree is walked, which for a large
+    // folder over SFTP/FTP (a real network round trip per directory) can
+    // take upwards of ten seconds and reads exactly like a frozen app. No
+    // timeout on showMessage() here, same as folderTransferStarted's own
+    // call above — folderTransferFinished/Failed always follows and
+    // replaces it.
+    connect(m_transferManager, &TransferManager::folderTransferProgress,
+            this, [this](const QString &name, int itemsFound) {
+        statusBar()->showMessage(
+            tr("Preparing to transfer \"%1\"... (%2 items found so far)").arg(name).arg(itemsFound));
+    });
     connect(m_transferManager, &TransferManager::folderTransferFinished,
             this, [this](const QString &name, int fileCount) {
         statusBar()->showMessage(

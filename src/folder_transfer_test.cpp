@@ -123,12 +123,25 @@ int main(int argc, char *argv[])
     // assuming there's only ever one in flight.
     QSet<QString> startedFolders;
     QHash<QString, int> finishedFolderFileCounts;
+    QList<int> myfolderProgressCounts;
     int itemsAdded = 0;
     int itemsDone = 0;
 
     QObject::connect(manager, &TransferManager::folderTransferStarted, &app,
                       [&](const QString &name) {
         startedFolders.insert(name);
+    });
+    // Live-progress-during-enumeration regression: without this signal,
+    // MainWindow's "Preparing to transfer..." status message never
+    // changed between folderTransferStarted and folderTransferFinished —
+    // indistinguishable from a hang for a large/slow tree, a real
+    // live-reported issue. myfolder's own fixture has 5 directories
+    // (itself, subdir1, subdir2, subdir2/nested, emptydir), so a working
+    // signal should fire at least once per directory listed.
+    QObject::connect(manager, &TransferManager::folderTransferProgress, &app,
+                      [&](const QString &name, int itemsFound) {
+        if (name == QStringLiteral("myfolder"))
+            myfolderProgressCounts.append(itemsFound);
     });
     QObject::connect(manager, &TransferManager::folderTransferFailed, &app,
                       [&](const QString &name, const QString &reason) {
@@ -169,6 +182,23 @@ int main(int argc, char *argv[])
     // file transfers to actually complete.
     QTimer::singleShot(2000, &app, [&]() {
         check("folderTransferStarted fired", startedFolders.contains("myfolder"));
+        check("folderTransferProgress fired at least once per directory listed (5 real directories in "
+              "the fixture: myfolder, subdir1, subdir2, subdir2/nested, emptydir) — proves live "
+              "feedback during enumeration, not just a static message the whole time",
+              myfolderProgressCounts.size() >= 5);
+        check("folderTransferProgress's own counts are monotonically non-decreasing — a real running "
+              "total, not a repeated-out-of-order or bogus value (non-strict: listing emptydir "
+              "genuinely contributes zero NEW items, so two consecutive equal counts is valid)",
+              [&]() {
+            for (int i = 1; i < myfolderProgressCounts.size(); ++i) {
+                if (myfolderProgressCounts[i] < myfolderProgressCounts[i - 1])
+                    return false;
+            }
+            return true;
+        }());
+        check("folderTransferProgress's final count reflects the whole tree (5 dirs + 4 files = 9, "
+              "root counted from FolderEnumerator::start() before the first progress signal even fires)",
+              !myfolderProgressCounts.isEmpty() && myfolderProgressCounts.last() == 9);
         check("folderTransferFinished reported exactly 4 files (a,b,c,d — not counting directories)",
               finishedFolderFileCounts.value("myfolder", -1) == 4);
         check("exactly 4 transfer queue items were actually added", itemsAdded == 4);
