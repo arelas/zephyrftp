@@ -87,7 +87,8 @@ public:
 };
 }
 
-FilePaneWidget::FilePaneWidget(RemoteBackend *backend, QWidget *parent, AppSettings *settings)
+FilePaneWidget::FilePaneWidget(RemoteBackend *backend, QWidget *parent, AppSettings *settings,
+                                TransferManager *transferManager)
     : QWidget(parent)
     , m_backend(nullptr)
     , m_view(nullptr)
@@ -101,6 +102,7 @@ FilePaneWidget::FilePaneWidget(RemoteBackend *backend, QWidget *parent, AppSetti
     , m_statusLabel(nullptr)
     , m_model(new QStandardItemModel(this))
     , m_settings(settings)
+    , m_transferManager(transferManager)
 {
     buildUi();
     setBackend(backend, nullptr);
@@ -458,6 +460,7 @@ void FilePaneWidget::buildUi()
     m_view->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_view, &QTreeView::customContextMenuRequested, this, &FilePaneWidget::showContextMenu);
     connect(m_view, &FileTreeView::filesDroppedFrom, this, &FilePaneWidget::filesDropped);
+    connect(m_view, &FileTreeView::externalFilesDropped, this, &FilePaneWidget::externalFilesDropped);
     // Keyboard shortcuts — see FileTreeView::keyPressEvent()'s own
     // comment for why the actual logic lives in these handlers rather
     // than in FileTreeView itself.

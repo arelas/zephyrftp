@@ -295,7 +295,18 @@ int main(int argc, char *argv[])
         leftPane->navigateTo(base + "/left/elsewhere");
     });
 
-    QTimer::singleShot(5400, &app, [&]() {
+    // Real bug found by this project's own established pattern of
+    // running the full required suite back to back, not in isolation
+    // (see [[ci-containerized-debugging-technique]]): this margin was
+    // originally 500ms, tight enough that it flaked under real system
+    // load (many other test binaries' worth of accumulated CPU
+    // contention) even though it passed reliably standalone — the exact
+    // same "generous fixed margins" lesson conflict_resolution_test.cpp's
+    // own Phase G/H already learned. navigateTo()'s real LocalBackend
+    // directory listing goes through QtConcurrent::run(), a genuine
+    // background-thread round trip, not a fixed-cost operation — widened
+    // to 1500ms.
+    QTimer::singleShot(6400, &app, [&]() {
         check("Phase G: setup — left pane genuinely navigated away",
               leftPane->currentDirectory() == base + "/left/elsewhere");
 
@@ -303,7 +314,7 @@ int main(int argc, char *argv[])
         QTest::keyClick(rightView, Qt::Key_V, Qt::ControlModifier);
     });
 
-    QTimer::singleShot(5700, &app, [&]() {
+    QTimer::singleShot(6800, &app, [&]() {
         check("Phase G: paste after the source pane navigated away added NO transfer item",
               itemsAdded == 0);
         check("Phase G: toCopyStale.txt was NOT transferred into the right pane",

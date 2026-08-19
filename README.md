@@ -114,6 +114,15 @@ tracks what's changed between them.
   on the other side, nested structure and all, including empty
   subfolders. Each file inside shows up in the transfer queue like any
   other transfer — same pause/resume/cancel, same progress and speed.
+- **Drag files in from — or out to — your OS's own file manager**, not
+  just between the two panes. Drag a file or folder from Nautilus,
+  Explorer, or Finder onto a pane to upload or copy it in, with the same
+  Overwrite/Skip and Write Into prompts as any other transfer. Dragging
+  a file out of a local pane works immediately, the same as dragging it
+  from any other folder; dragging one out of a remote (SFTP/FTP) pane
+  downloads it first (with a visible progress dialog — Cancel aborts
+  cleanly) so the OS has something real to hand to whatever you drop it
+  on. Only offered for a pure file selection — see Known limitations.
 - **Move, not just copy, when both panes are on the same server (or both
   on your computer).** Right-click a selection and choose "Move Selected"
   to relocate it server-side — a single instant rename, not a
@@ -353,6 +362,15 @@ rather than being half-implemented:
   just tested in isolation. Still newer and less battle-tested than SFTP;
   expect some rough edges against servers this
   hasn't specifically been tried against.
+- **Dragging a folder out of a remote pane to the OS isn't offered —
+  only individual files.** Downloading an entire folder tree before a
+  drag gesture can even start would mean an unpredictable, possibly very
+  long wait with no good way to cancel just that one drag partway
+  through; a folder in the selection simply means no real file data is
+  offered to the OS for that drag (dragging within the app between panes
+  still works regardless). There's also no delayed/lazy handoff the way
+  some native OS apps support — the whole file downloads up front, every
+  time, even for a drag you end up cancelling.
 - **Server-to-server transfers are now supported, but staged through a
   local temporary file rather than moving directly between the two
   servers.** Both panes can now connect independently — click either

@@ -50,6 +50,7 @@
 #include <QInputDialog>
 #include <QKeyEvent>
 #include <QFile>
+#include <QFileInfo>
 #include <QTextStream>
 #include <QDateTime>
 #include <QApplication>
@@ -473,8 +474,8 @@ void MainWindow::buildLayout()
     // specifically, the global toolbar's Connect/Sites (onConnectTriggered).
     // m_settings passed to both so a live "show hidden files" toggle in
     // Preferences updates whichever pane(s) are showing at the time.
-    m_leftPane = new FilePaneWidget(new LocalBackend(), splitter, m_settings);
-    m_rightPane = new FilePaneWidget(new LocalBackend(), splitter, m_settings);
+    m_leftPane = new FilePaneWidget(new LocalBackend(), splitter, m_settings, m_transferManager);
+    m_rightPane = new FilePaneWidget(new LocalBackend(), splitter, m_settings, m_transferManager);
     // Same objectName-for-lookup precedent m_transfersDock/m_commandsDock
     // already establish below — lets a test find each pane reliably via
     // findChild<FilePaneWidget*>("leftPane"/"rightPane") rather than
@@ -495,6 +496,8 @@ void MainWindow::buildLayout()
     connect(m_rightPane, &FilePaneWidget::filesActivated, this, &MainWindow::onRightFilesActivated);
     connect(m_leftPane, &FilePaneWidget::filesDropped, this, &MainWindow::onFilesDropped);
     connect(m_rightPane, &FilePaneWidget::filesDropped, this, &MainWindow::onFilesDropped);
+    connect(m_leftPane, &FilePaneWidget::externalFilesDropped, this, &MainWindow::onExternalFilesDropped);
+    connect(m_rightPane, &FilePaneWidget::externalFilesDropped, this, &MainWindow::onExternalFilesDropped);
     connect(m_leftPane, &FilePaneWidget::moveRequested, this, &MainWindow::onLeftMoveRequested);
     connect(m_rightPane, &FilePaneWidget::moveRequested, this, &MainWindow::onRightMoveRequested);
     // Ctrl+C/Ctrl+V — same dual-connection-plus-sender() pattern
@@ -623,6 +626,26 @@ void MainWindow::enqueueEntries(FilePaneWidget *sourcePane, FilePaneWidget *dest
             m_transferManager->enqueueFolder(sourcePane, destPane, entry.name);
         else
             m_transferManager->enqueue(sourcePane, destPane, entry.name);
+    }
+}
+
+void MainWindow::onExternalFilesDropped(const QStringList &localPaths)
+{
+    // Same sender()-identifies-the-destination technique onFilesDropped()
+    // above already uses — there's no source pane to compare against
+    // here, since the source is the OS itself, not a different pane.
+    auto *destPane = qobject_cast<FilePaneWidget *>(sender());
+    if (!destPane)
+        return;
+
+    for (const QString &localPath : localPaths) {
+        const QFileInfo info(localPath);
+        if (!info.exists())
+            continue;   // e.g. the OS offered a path that vanished between drag and drop — skip, don't fail the whole batch
+        if (info.isDir())
+            m_transferManager->enqueueExternalFolder(destPane, localPath, info.fileName());
+        else
+            m_transferManager->enqueueExternalUpload(destPane, localPath, info.fileName());
     }
 }
 

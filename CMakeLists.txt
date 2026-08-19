@@ -645,6 +645,8 @@ qt_add_executable(navigation-test EXCLUDE_FROM_ALL
     src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
     src/transfer/FolderEnumerator.cpp
+    src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
     src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp
@@ -802,10 +804,14 @@ target_include_directories(conflict-resolution-test PRIVATE src)
 target_link_libraries(conflict-resolution-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
 
 # --- Recursive delete test (content-aware warning + bottom-up delete, real dialog interaction) ---
-# Leaner than conflict-resolution-test's own block above — no
-# TransferManager involved here at all (deleteEntriesAt() is called
-# directly, the same public entry point CompareSyncExecutor already
-# uses), so TransferManager.cpp/TransferQueueStore.cpp aren't needed.
+# deleteEntriesAt() itself is called directly (the same public entry
+# point CompareSyncExecutor already uses), not through TransferManager —
+# but TransferManager.cpp/TransferQueueStore.cpp are still needed here
+# as a LINK dependency of FileTreeView.cpp below, which now calls
+# TransferManager directly for drag-out's own download-before-drag
+# flow (see FileTreeView::downloadForDragOut()) — unrelated to what
+# this test itself exercises, just an unavoidable consequence of
+# linking FileTreeView.cpp at all.
 qt_add_executable(recursive-delete-test EXCLUDE_FROM_ALL
     src/recursive_delete_test.cpp
     src/AppSettings.cpp
@@ -818,11 +824,38 @@ qt_add_executable(recursive-delete-test EXCLUDE_FROM_ALL
     src/backends/LocalBackend.cpp
     src/backends/RemoteBackend.h
     src/transfer/FolderEnumerator.cpp
+    src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
     resources/icons.qrc
     resources/theme.qrc
 )
 target_include_directories(recursive-delete-test PRIVATE src)
 target_link_libraries(recursive-delete-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
+
+# --- External drag-in test (OS file manager -> a pane): TransferManager::
+# enqueueExternalUpload()/enqueueExternalFolder(), the isExternal branch of
+# PendingFolderConflictCheck, and FileTreeView's real dragEnterEvent()/
+# dropEvent() handling of text/uri-list data — same dependency list as
+# folder-transfer-test (also drives real TransferManager folder transfers). ---
+qt_add_executable(external-drop-test EXCLUDE_FROM_ALL
+    src/external_drop_test.cpp
+    src/AppSettings.cpp
+    src/backends/CredentialStore.cpp
+    src/ui/FilePaneWidget.cpp
+    src/backends/ConnectionHistory.cpp
+    src/ui/PermissionsDialog.cpp
+    src/ui/FileTreeView.cpp
+    src/ui/IconTheme.cpp
+    src/backends/LocalBackend.cpp
+    src/backends/RemoteBackend.h
+    src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
+    src/transfer/FolderEnumerator.cpp
+    resources/icons.qrc
+    resources/theme.qrc
+)
+target_include_directories(external-drop-test PRIVATE src)
+target_link_libraries(external-drop-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
 
 # --- FTP directory-listing parser test (MLSD/LIST, realistic sample data — no real server available) ---
 # CertificateVerifier.cpp/Widgets are pulled in because FtpBackend.cpp
@@ -876,6 +909,8 @@ qt_add_executable(sort-and-commands-test EXCLUDE_FROM_ALL
     src/backends/CredentialStore.cpp
     src/ui/FilePaneWidget.cpp
     src/transfer/FolderEnumerator.cpp
+    src/transfer/TransferManager.cpp
+    src/transfer/TransferQueueStore.cpp
     src/backends/ConnectionHistory.cpp
     src/ui/PermissionsDialog.cpp
     src/ui/FileTreeView.cpp

@@ -20,6 +20,7 @@ class QThread;
 class QAction;
 class QToolButton;
 class AppSettings;
+class TransferManager;
 
 // One side of the dual-pane layout. Owns a backend (local or remote) and
 // renders its current directory listing. MainWindow instantiates two of
@@ -28,14 +29,28 @@ class AppSettings;
 class FilePaneWidget : public QWidget {
     Q_OBJECT
 public:
-    // settings defaults to nullptr so every existing test-file call site
-    // (constructing a pane with just a backend, no live preferences)
-    // keeps compiling unchanged; a null settings pointer just means
-    // "hide dotfiles, and don't react live to a toggle that can't exist."
+    // settings/transferManager both default to nullptr so every existing
+    // test-file call site (constructing a pane with just a backend, no
+    // live preferences, no real transfer machinery) keeps compiling
+    // unchanged. transferManager is a deliberate, narrow exception to
+    // this class's usual "never talk to TransferManager, only emit UI-
+    // intent signals for MainWindow to act on" rule (see filesActivated's
+    // own doc comment) — needed for exactly one thing, dragging a file
+    // OUT of a remote pane to the OS's own file manager (see
+    // FileTreeView::startDrag()'s own doc comment): that has to download
+    // the file to a real local temp path and BLOCK the drag gesture on
+    // it via a nested event loop, all synchronously inside startDrag()
+    // itself — there's no way to hand this off to MainWindow via a
+    // signal and get a useful answer back in time, unlike every other
+    // MainWindow-mediated operation this class has. A null
+    // transferManager just means remote-pane drag-out silently isn't
+    // offered — the file still drags within the app via this class's own
+    // existing internal MIME format either way.
     explicit FilePaneWidget(RemoteBackend *backend, QWidget *parent = nullptr,
-                             AppSettings *settings = nullptr);
+                             AppSettings *settings = nullptr, TransferManager *transferManager = nullptr);
 
     RemoteBackend *backend() const { return m_backend; }
+    TransferManager *transferManager() const { return m_transferManager; }
     QString selectedEntryName() const;
     QString currentDirectory() const { return m_backend->currentPath(); }
 
@@ -253,6 +268,15 @@ signals:
     // destination) since sourcePane is already carried in the signal
     // itself.
     void filesDropped(FilePaneWidget *sourcePane, const QList<RemoteEntry> &entries);
+
+    // Files/folders dragged in from OUTSIDE this process (the OS's own
+    // file manager, or any other application offering real file data) —
+    // forwarded straight through from FileTreeView::externalFilesDropped.
+    // MainWindow connects both panes' externalFilesDropped signals to
+    // one slot, using sender() to identify which pane received the drop
+    // (there's no "source pane" at all here, unlike filesDropped above —
+    // the source is the OS itself).
+    void externalFilesDropped(const QStringList &localPaths);
 
     // Emitted from onDirectoryListed() on a genuine fresh navigation
     // (double-click, Up, Home, path bar, Back/Forward — every one of
@@ -592,4 +616,9 @@ private:
     // Non-owning — outlives this pane (MainWindow owns it for the app's
     // whole lifetime). Null in every test that constructs a pane directly.
     AppSettings *m_settings;
+
+    // Non-owning, same lifetime shape as m_settings above — see this
+    // class's own constructor doc comment for the one narrow reason this
+    // class holds a TransferManager* at all.
+    TransferManager *m_transferManager;
 };

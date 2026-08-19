@@ -70,6 +70,48 @@ public:
     // enqueue()'s RemoteToRemote handling, same as a standalone file.
     void enqueueFolder(FilePaneWidget *sourcePane, FilePaneWidget *destPane, const QString &folderName);
 
+    // Files/folders dragged in from the OS's own file manager (or any
+    // other application offering real file data) onto a pane — see
+    // FileTreeView::externalFilesDropped's own doc comment for the drop
+    // side. The one genuine difference from enqueue()/enqueueFolder()
+    // above: there's no SOURCE FilePaneWidget at all, just an absolute
+    // local filesystem path that already existed before this app ever
+    // touched it. Deliberately kept as separate methods rather than
+    // making sourcePane nullable in enqueue()/enqueueFolder() themselves
+    // — those are heavily-tested, historically crash-prone code (see
+    // startFolderFileTransfers()'s own doc comment on the real Windows
+    // stack-overflow bug found there) not worth touching just to shave
+    // a small amount of duplication.
+    //
+    // enqueueExternalUpload() reuses enqueue()'s own direction-decision
+    // shape (LocalToLocal/LocalToRemote — the source is always local by
+    // construction here) but skips the srcLocal check entirely, and
+    // needs no source backend at all: dispatchActiveItem()'s
+    // LocalToLocal/LocalToRemote cases only ever call
+    // uploadFile(item.sourcePath, item.destPath) on the DESTINATION
+    // backend (confirmed by reading dispatchActiveItem() directly, not
+    // assumed) — the source side of an upload was never more than a
+    // path string to begin with. destFileName lets the caller rename on
+    // the way in (used by enqueueExternalFolder() below, where a
+    // discovered item's relativePath — not just its bare name — is what
+    // belongs on the destination side).
+    int enqueueExternalUpload(FilePaneWidget *destPane, const QString &localSourcePath,
+                               const QString &destFileName, bool assumeOverwrite = false);
+
+    // Same idea as enqueueFolder(), but the source is an arbitrary local
+    // directory instead of a pane's currentDirectory()/folderName pair.
+    // FolderEnumerator itself needs zero changes — it only ever talks to
+    // a RemoteBackend* + root path + root name, with no coupling to
+    // FilePaneWidget at all (confirmed by reading FolderEnumerator.h
+    // directly) — so this constructs a throwaway LocalBackend purely to
+    // hand FolderEnumerator something to call
+    // listDirectoryForEnumeration() on; LocalBackend itself is
+    // stateless enough (no real "connection," see LocalBackend.h's own
+    // doc comment) that this is safe to construct ad hoc, unassociated
+    // with any pane, and dispose of once enumeration finishes.
+    void enqueueExternalFolder(FilePaneWidget *destPane, const QString &localRootPath,
+                                const QString &folderName);
+
     // Moves a single file/folder-root server-side within ONE backend (both
     // panes on the same connection — see moveEligible()/
     // RemoteBackend::connectionIdentity()) instead of enqueue()'s
@@ -442,6 +484,21 @@ private:
                                    const QString &folderName, const QList<EnumeratedItem> &items,
                                    bool rootAlreadyExists);
 
+    // External-drop counterparts of the two methods just above — same
+    // two-phase split, same rootAlreadyExists meaning, but against a
+    // throwaway LocalBackend + an arbitrary local root path instead of
+    // a source pane. Kept as separate methods rather than adding an
+    // optional/nullable sourcePane to the two above — see
+    // enqueueExternalFolder()'s own doc comment (TransferManager.h) for
+    // why. The LocalBackend is constructed here, parented to `this`,
+    // and deleteLater()'d in the same lambda that already deleteLater()s
+    // the FolderEnumerator once enumeration finishes or fails.
+    void startExternalFolderEnumeration(FilePaneWidget *destPane, const QString &localRootPath,
+                                         const QString &folderName, bool rootAlreadyExists);
+    void startExternalFolderFileTransfers(FilePaneWidget *destPane, const QString &localRootPath,
+                                           const QString &folderName, const QList<EnumeratedItem> &items,
+                                           bool rootAlreadyExists);
+
     // Second half of startNext()'s old body — actually tells the backend
     // to start uploading/downloading. Split out specifically so the file-
     // conflict check (checkExists(), async) can sit in between "an item
@@ -693,6 +750,16 @@ private:
         FilePaneWidget *sourcePane = nullptr;
         FilePaneWidget *destPane = nullptr;
         QString folderName;
+        // Set only for an external (OS drag-in) folder drop — see
+        // enqueueExternalFolder()'s own doc comment. sourcePane stays
+        // nullptr in that case; onDestinationExistsChecked() branches on
+        // this field to call startExternalFolderEnumeration() instead of
+        // the ordinary startFolderEnumeration(). Existing callers
+        // (enqueueFolder()'s own aggregate-init call site) are
+        // unaffected — these two default-initialize via C++'s ordinary
+        // aggregate-init rules without needing to touch that call site.
+        bool isExternal = false;
+        QString externalLocalRootPath;
     };
     QHash<int, PendingFolderConflictCheck> m_pendingFolderConflictChecks;
 

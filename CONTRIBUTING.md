@@ -440,7 +440,7 @@ representative of any real desktop:
 
 ## Running the test suites
 
-Twenty-six `EXCLUDE_FROM_ALL` CMake targets make up the required suite
+Twenty-seven `EXCLUDE_FROM_ALL` CMake targets make up the required suite
 as of this writing — not part of a normal `make`, built and run
 explicitly, and all of them (not just a "core" subset) need to actually
 pass before a change is done. The count keeps growing as the project
@@ -1272,6 +1272,72 @@ here for a brand-new feature's own safety checks instead.
 ```
 cmake --build build --target keyboard-shortcuts-test
 QT_QPA_PLATFORM=offscreen ./build/keyboard-shortcuts-test
+```
+
+### `external-drop-test`
+
+Self-contained, `EXCLUDE_FROM_ALL`, added to all five `build.yml` jobs —
+dragging files between this app and the OS's own file manager, both
+directions ("allow the dragging of files between the app and the
+system file manager"). Phases A-D cover dragging IN (OS -> a pane):
+`TransferManager::enqueueExternalUpload()`/`enqueueExternalFolder()`,
+the `isExternal` branch of `PendingFolderConflictCheck` (a real Write
+Into conflict dialog for an externally-dropped folder, driven the same
+`QTimer`-fires-during-`exec()` way `conflict-resolution-test` already
+established), and `FileTreeView`'s real `dragEnterEvent()`/
+`dropEvent()` handling of `text/uri-list` data — a real `QDropEvent`
+carrying real `file://` `QUrl`s, delivered via
+`QCoreApplication::sendEvent()` (dispatches through `QWidget::event()`
+exactly as the real windowing system would, no friend/protected-access
+workaround needed) — against a real `LocalBackend` and real temp
+directories.
+
+Phases E-G cover dragging OUT (a REMOTE pane -> the OS), via
+`FileTreeView::downloadForDragOut()` called directly rather than
+through `startDrag()` itself — `startDrag()` is protected, and a real
+native drag gesture can't be reliably triggered under the `offscreen`
+platform (`QDrag::exec()` has no real drop target to negotiate with
+headlessly), so `downloadForDragOut()` is exposed public specifically
+for this (see its own doc comment, `FileTreeView.h`) — it's the real,
+novel logic; the thin mouse-gesture layer above it is a handful of
+lines, judged not worth the same investment. A small fake non-local
+`RemoteBackend` exercises the real download-then-URLs logic exactly as
+faithfully as a live SFTP server would for this specific purpose (no
+live server is available in this environment, the same limitation
+flagged elsewhere in this project). Covers: a single file downloading
+to a real, readable local temp file with the URL pointing at it; two
+files at once, each with its own distinct real content; and — the one
+that actually matters — one file failing partway through a two-file
+selection returns *completely* empty (never a partial drag) and leaks
+no temp file for the one that DID succeed first, verified by scanning
+the real `zephyrftp-staging/` directory before and after, not just
+trusting the code. That last guard was proved non-vacuous the same way
+`keyboard-shortcuts-test`'s own safety checks were: temporarily
+removing the cleanup loop made the exact assertion protecting against
+it fail on a real rebuild+run, then the real code was restored and
+reconfirmed passing.
+
+**Two real, unrelated bugs found while writing this test, neither in
+the feature itself**: (1) three existing targets
+(`navigation-test`/`recursive-delete-test`/`sort-and-commands-test`)
+link `FileTreeView.cpp`, which now references `TransferManager` symbols
+directly for drag-out — a real link-error regression, caught immediately
+by a full rebuild, fixed by adding `TransferManager.cpp`/
+`TransferQueueStore.cpp` to their own dependency lists (a correct,
+line-based Python audit script — not a regex-across-multiline one,
+which this project has been burned by before — confirmed zero remaining
+gaps across all targets). (2) `TransferManager`'s own constructor sweeps
+the *entire* shared `zephyrftp-staging/` directory clean on startup (the
+documented crash/leak backstop) — this test's own Phase E/F/G originally
+scheduled their independent `TransferManager` constructions too close
+together, so a LATER phase's constructor could wipe an EARLIER phase's
+own still-in-flight downloaded temp file out from under it. Fixed by
+giving each phase a full second to itself, comfortably past any
+plausible resolution window.
+
+```
+cmake --build build --target external-drop-test
+QT_QPA_PLATFORM=offscreen ./build/external-drop-test
 ```
 
 ## Live-server verification (SFTP public-key auth, FTP/FTPS, cancel/pause/resume)

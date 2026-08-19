@@ -1,6 +1,7 @@
 #include "TransferManager.h"
 #include "../ui/FilePaneWidget.h"
 #include "../backends/RemoteBackend.h"
+#include "../backends/LocalBackend.h"
 #include "../PathUtils.h"
 
 #include <QMetaObject>
@@ -138,6 +139,52 @@ void TransferManager::enqueueFolder(FilePaneWidget *sourcePane, FilePaneWidget *
     ensureExistsCheckConnected(dstBackend);
     const int requestId = m_nextConflictCheckId++;
     m_pendingFolderConflictChecks.insert(requestId, {sourcePane, destPane, folderName});
+
+    QMetaObject::invokeMethod(dstBackend, "checkExists", Qt::QueuedConnection,
+                               Q_ARG(QString, destFolderPath), Q_ARG(int, requestId));
+}
+
+int TransferManager::enqueueExternalUpload(FilePaneWidget *destPane, const QString &localSourcePath,
+                                            const QString &destFileName, bool assumeOverwrite)
+{
+    TransferItem item;
+    item.id = m_nextId++;
+    item.fileName = destFileName;
+    item.sourcePane = nullptr;   // no source pane — see this method's own doc comment (TransferManager.h)
+    item.destPane = destPane;
+    item.sourcePath = localSourcePath;
+    item.destPath = joinPath(destPane->currentDirectory(), destFileName);
+    item.skipConflictCheckOnDispatch = assumeOverwrite;
+    item.direction = destPane->backend()->isLocalFilesystem()
+        ? TransferDirection::LocalToLocal : TransferDirection::LocalToRemote;
+
+    m_items.append(item);
+    m_indexById.insert(item.id, m_items.size() - 1);
+    emit itemAdded(m_items.last());
+
+    if (item.status == TransferStatus::Queued)
+        startNextIfLikelyToDispatch(item);
+
+    return item.id;
+}
+
+void TransferManager::enqueueExternalFolder(FilePaneWidget *destPane, const QString &localRootPath,
+                                             const QString &folderName)
+{
+    RemoteBackend *dstBackend = destPane->backend();
+
+    // Same root-level-only conflict check enqueueFolder() runs — see
+    // its own comment for why nested subdirectories aren't checked
+    // individually.
+    const QString destFolderPath = joinPath(destPane->currentDirectory(), folderName);
+    ensureExistsCheckConnected(dstBackend);
+    const int requestId = m_nextConflictCheckId++;
+    PendingFolderConflictCheck pending;
+    pending.destPane = destPane;
+    pending.folderName = folderName;
+    pending.isExternal = true;
+    pending.externalLocalRootPath = localRootPath;
+    m_pendingFolderConflictChecks.insert(requestId, pending);
 
     QMetaObject::invokeMethod(dstBackend, "checkExists", Qt::QueuedConnection,
                                Q_ARG(QString, destFolderPath), Q_ARG(int, requestId));
@@ -569,6 +616,83 @@ void TransferManager::startFolderFileTransfers(FilePaneWidget *sourcePane, FileP
     // only empty subdirectories) — not a failure, the directories were
     // still created above, there's just nothing left for the visible
     // transfer queue to do.
+    emit folderTransferFinished(folderName, fileCount);
+}
+
+void TransferManager::startExternalFolderEnumeration(FilePaneWidget *destPane, const QString &localRootPath,
+                                                       const QString &folderName, bool rootAlreadyExists)
+{
+    // Not owned by any pane, not pooled, not claimed by anything until
+    // FolderEnumerator actually calls listDirectoryForEnumeration() on
+    // it — a plain, disposable LocalBackend exists purely to give
+    // FolderEnumerator something to call. Parented to `this` as a
+    // backstop; explicitly deleteLater()'d below the moment enumeration
+    // finishes or fails, same lifetime as the enumerator itself.
+    auto *srcBackend = new LocalBackend(this);
+    auto *enumerator = new FolderEnumerator(srcBackend, localRootPath, folderName, this);
+
+    emit folderTransferStarted(folderName);
+
+    connect(enumerator, &FolderEnumerator::finished, this,
+            [this, enumerator, srcBackend, destPane, localRootPath, folderName,
+             rootAlreadyExists](const QList<EnumeratedItem> &items) {
+        enumerator->deleteLater();
+        srcBackend->deleteLater();
+        startExternalFolderFileTransfers(destPane, localRootPath, folderName, items, rootAlreadyExists);
+    });
+    connect(enumerator, &FolderEnumerator::failed, this,
+            [this, enumerator, srcBackend, folderName](const QString &reason) {
+        enumerator->deleteLater();
+        srcBackend->deleteLater();
+        emit folderTransferFailed(folderName, reason);
+    });
+    connect(enumerator, &FolderEnumerator::itemsDiscovered, this,
+            [this, folderName](int itemsSoFar) {
+        emit folderTransferProgress(folderName, itemsSoFar);
+    });
+
+    enumerator->start();
+}
+
+void TransferManager::startExternalFolderFileTransfers(FilePaneWidget *destPane, const QString &localRootPath,
+                                                         const QString &folderName,
+                                                         const QList<EnumeratedItem> &items,
+                                                         bool rootAlreadyExists)
+{
+    RemoteBackend *dstBackend = destPane->backend();
+
+    // Directory creation is byte-for-byte the same as
+    // startFolderFileTransfers()'s own loop — only ever touches
+    // dstBackend, no source involved either way. See that method's own
+    // doc comment for the full history (a real Windows crash, then a
+    // real performance regression) behind ignoreAlreadyExists's exact
+    // meaning here.
+    for (const EnumeratedItem &item : items) {
+        if (!item.isDir)
+            continue;
+        if (rootAlreadyExists && item.relativePath == folderName)
+            continue;
+        const QString destDirPath = joinPath(destPane->currentDirectory(), item.relativePath);
+        QMetaObject::invokeMethod(dstBackend, "createDirectory", Qt::QueuedConnection,
+                                   Q_ARG(QString, destDirPath), Q_ARG(bool, rootAlreadyExists));
+    }
+
+    // FolderEnumerator's relativePath always starts WITH the root's own
+    // name (folderName) — see its own class doc comment — so re-joining
+    // it against localRootPath's PARENT directory (not localRootPath
+    // itself) reconstructs the correct real absolute path on disk for
+    // every discovered file, the external-source equivalent of
+    // startFolderFileTransfers()'s own joinPath(sourcePane->
+    // currentDirectory(), item.relativePath).
+    const QString externalRootParent = QFileInfo(localRootPath).path();
+    int fileCount = 0;
+    for (const EnumeratedItem &item : items) {
+        if (item.isDir)
+            continue;
+        enqueueExternalUpload(destPane, joinPath(externalRootParent, item.relativePath), item.relativePath);
+        fileCount++;
+    }
+
     emit folderTransferFinished(folderName, fileCount);
 }
 
@@ -1483,9 +1607,14 @@ void TransferManager::onDestinationExistsChecked(const QString &path, bool exist
         FilePaneWidget *sourcePane = pending.sourcePane;
         FilePaneWidget *destPane = pending.destPane;
         const QString folderName = pending.folderName;
+        const bool isExternal = pending.isExternal;
+        const QString externalLocalRootPath = pending.externalLocalRootPath;
 
         if (!exists) {
-            startFolderEnumeration(sourcePane, destPane, folderName, /*rootAlreadyExists=*/false);
+            if (isExternal)
+                startExternalFolderEnumeration(destPane, externalLocalRootPath, folderName, /*rootAlreadyExists=*/false);
+            else
+                startFolderEnumeration(sourcePane, destPane, folderName, /*rootAlreadyExists=*/false);
             return;
         }
 
@@ -1509,10 +1638,14 @@ void TransferManager::onDestinationExistsChecked(const QString &path, bool exist
             drainDeferredExistsChecks();
         }
 
-        if (proceed)
-            startFolderEnumeration(sourcePane, destPane, folderName, /*rootAlreadyExists=*/true);
-        else
+        if (proceed) {
+            if (isExternal)
+                startExternalFolderEnumeration(destPane, externalLocalRootPath, folderName, /*rootAlreadyExists=*/true);
+            else
+                startFolderEnumeration(sourcePane, destPane, folderName, /*rootAlreadyExists=*/true);
+        } else {
             emit folderTransferSkipped(folderName);
+        }
         return;
     }
 

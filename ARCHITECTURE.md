@@ -4816,6 +4816,147 @@ to drive FileZilla itself for a same-desktop comparison.
   real settle-poll before enqueueing, matching the established fix
   pattern exactly. Full 26-target required suite passed.
 
+  **Drag files between this app and the OS's own file manager** — a
+  direct user request ("allow the dragging of files between the app and
+  the system file manager"), explicitly both directions. Every existing
+  drag-and-drop in this app was same-process-only (`FileTreeView`'s own
+  custom `application/x-zephyrftp-sourcepane` MIME type, see that
+  class's own header comment) — real interop with Nautilus/Explorer/
+  Finder needed genuinely new plumbing on both sides.
+
+  **Drag IN (OS -> a pane)**: `FileTreeView::dragEnterEvent()`/
+  `dragMoveEvent()`/`dropEvent()` now also accept `event->mimeData()->
+  hasUrls()` alongside the existing custom-MIME-type check — checked
+  second, so an internal same-app drag is completely unaffected. A real
+  drop extracts local paths via `QUrl::toLocalFile()` and emits a new
+  `externalFilesDropped(QStringList)` signal (parallel to
+  `filesDroppedFrom`, forwarded through `FilePaneWidget` the same way),
+  routed by `MainWindow::onExternalFilesDropped()` to one of two new
+  `TransferManager` entry points: `enqueueExternalUpload()` (mirrors
+  `enqueue()`'s own direction-decision shape, but with no source pane at
+  all — `item.sourcePane = nullptr`, `item.sourcePath` is the dropped
+  absolute path used as-is) and `enqueueExternalFolder()` (mirrors
+  `enqueueFolder()`, but `FolderEnumerator` — confirmed by reading it
+  directly, it only ever needs a `RemoteBackend*` + root path + root
+  name, zero `FilePaneWidget` coupling — runs against a throwaway
+  `LocalBackend` constructed just for the walk, parented to `this`,
+  `deleteLater()`'d once enumeration finishes). `PendingFolderConflictCheck`
+  gained an `isExternal`/`externalLocalRootPath` pair (default-
+  initialized, so `enqueueFolder()`'s own existing call site is
+  unaffected) so a dropped folder that already exists at the destination
+  gets the exact same Write Into dialog and `m_directoryConflictResolution`
+  "apply to all" memory an ordinary pane-to-pane folder conflict already
+  uses — one shared conflict-resolution code path, not a duplicate.
+
+  **A real, non-obvious risk investigated (not assumed) before writing
+  any of this**: could `sourcePane == nullptr` crash something?
+  `LocalToLocal`/`LocalToRemote` are the ONLY two directions an external
+  upload ever uses, and reading `requiredBackendsForDispatch()`/
+  `dispatchActiveItem()`/`poolPaneForItem()` directly confirmed none of
+  the three ever dereference `item.sourcePane` for those two directions
+  — an upload's "source" was never more than a path string to begin
+  with. `EditDownload`/`EditUpload` (Edit-in-place) already prove the
+  same "no sourcePane at all" shape is safe elsewhere in this exact
+  class. The one other place `item.sourcePane` is read
+  (`ChecksumVerifier.cpp`) only does so for `RemoteToLocal`/
+  `EditDownload`, never `LocalToLocal`/`LocalToRemote` — confirmed by
+  grepping every `.sourcePane`/`->sourcePane` reference in the codebase,
+  not assumed from reading `enqueue()` alone.
+
+  **Drag OUT (a pane -> the OS)**: for a LOCAL pane, trivial — the
+  selected entries already exist as real files, so `startDrag()` just
+  adds `QUrl::fromLocalFile(...)` for each alongside the existing
+  internal MIME data. For a REMOTE pane, Qt has no cross-platform
+  delayed-rendering drag support (the technique some native OS apps use
+  to hand over bytes lazily as the drop target actually asks for them),
+  so the only portable option is downloading first — new
+  `FileTreeView::downloadForDragOut()`, called from inside `startDrag()`
+  itself, which runs a real nested `QEventLoop` (with a visible,
+  `Qt::WindowModal` `QProgressDialog` — Cancel genuinely calls
+  `TransferManager::cancelItem()` on whatever's still in flight, not
+  just abandoned) BLOCKING the drag gesture until every selected file
+  has downloaded to a real local temp path via
+  `TransferManager::startEditDownload()` — the exact same primitive
+  Edit-in-place already uses, reused as-is rather than adding a new
+  direction or a hidden-task flag (its own downloads already show
+  normally in the visible Transfers queue, judged fine — arguably
+  useful feedback for what could be a slow multi-file wait before a drag
+  can even start). All-or-nothing: any single failure or a Cancel click
+  discards everything (including whatever DID already finish — its temp
+  file is removed immediately) rather than ever handing the OS a
+  partial, silently-incomplete drag. Deliberately NOT attempted for a
+  selection containing any folder — recursively downloading an entire
+  tree before a drag gesture can even start would be an unbounded-
+  duration UX trap with no way to cancel just that one drag partway
+  through; a folder in the selection simply means no real OS file data
+  is offered for that drag (the internal same-app drag is completely
+  unaffected either way), not an error or a partial attempt.
+
+  **A narrow, deliberate exception to this class's own established
+  boundary**: `FilePaneWidget` (and `FileTreeView`, via it) now
+  optionally holds a `TransferManager*`, injected the same way
+  `AppSettings*` already is (a 4th constructor parameter, defaulting to
+  `nullptr` so every existing test call site keeps compiling unchanged).
+  This class has never talked to `TransferManager` directly before —
+  the established shape is "emit a UI-intent signal, let `MainWindow`
+  act on it" — but that shape fundamentally doesn't fit here:
+  `startDrag()` must sychronously block on a real download via a nested
+  event loop, tied to the ACTIVE mouse-drag gesture Qt is mid-way
+  through; there's no way to hand this off to `MainWindow` via a signal
+  and get a useful synchronous answer back in time the way every other
+  MainWindow-mediated operation this class has can. A null
+  `transferManager` (every existing test) just means remote-pane
+  drag-out silently isn't offered — internal drag-and-drop is completely
+  unaffected regardless.
+
+  New 27th required-suite target `external-drop-test` — Phases A-D
+  cover drag-IN (real `LocalBackend`, real temp directories, a real
+  `QDropEvent` delivered via `QCoreApplication::sendEvent()` — a
+  legitimate way to exercise a protected event handler from outside the
+  class, dispatching through `QWidget::event()` exactly as the real
+  windowing system would). Phases E-G cover drag-OUT by calling
+  `downloadForDragOut()` directly (exposed public specifically for this
+  — a real native drag gesture can't be reliably triggered under the
+  `offscreen` platform at all, this project's test suite has no
+  existing precedent for simulating one, and the thin mouse-gesture
+  layer `startDrag()` adds on top is a handful of lines, not worth the
+  same investment as the actual download-orchestration logic under it)
+  against a small fake non-local `RemoteBackend` — direction-agnostic
+  logic, so a fake is exactly as faithful here as a live SFTP server
+  would be for this specific purpose. Covers real single- and multi-file
+  success (real, distinct downloaded content, real URLs pointing at real
+  files) and — the assertion that actually matters — a partial failure
+  returning completely empty with no leaked temp file for whatever DID
+  succeed first, verified by scanning the real `zephyrftp-staging/`
+  directory before and after, not just trusting the code; proved
+  non-vacuous by a real sabotage-and-restore cycle (temporarily removing
+  the cleanup loop made that exact assertion fail on a rebuild+run).
+
+  **Two real, unrelated bugs found while building this, neither in the
+  feature's own logic**: (1) `FileTreeView.cpp` now references
+  `TransferManager` symbols directly, which broke the LINK step (not the
+  compile) for three existing targets
+  (`navigation-test`/`recursive-delete-test`/`sort-and-commands-test`)
+  that already linked `FileTreeView.cpp` but never needed
+  `TransferManager.cpp` before — caught immediately by a full rebuild,
+  fixed by adding it (plus `TransferQueueStore.cpp`) to their dependency
+  lists, confirmed with a correct line-based (not regex-across-
+  multiline — this project has been burned by that exact mistake once
+  already) Python audit across all 45 CMake targets. (2)
+  `TransferManager`'s own constructor sweeps the ENTIRE shared
+  `zephyrftp-staging/` directory clean on startup (the documented crash/
+  leak backstop) — `external-drop-test`'s own Phase E/F/G originally
+  scheduled their independent `TransferManager` constructions only
+  200ms apart, close enough that a LATER phase's constructor could
+  (and, once observed via scrambled assertion print order, demonstrably
+  did) sweep away an EARLIER phase's own still-in-flight downloaded temp
+  file. Fixed by widening the gap to a full second per phase. Full
+  27-target required suite passed, confirmed stable across multiple
+  consecutive full runs (this exact class of "passes standalone, fails
+  only inside the full sequential suite" symptom is also what led to
+  finding the keyboard-shortcuts-test margin issue above — the same
+  detection discipline caught both).
+
   **Scripting/automation (CLI mode)** — WinSCP's own flagship
   differentiator, picked as the next v2 target once sync/mirror browsing
   was fully shipped (both halves). `--script=<path>` (new

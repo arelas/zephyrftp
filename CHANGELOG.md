@@ -8,6 +8,17 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Added
+
+- **Drag files between this app and your OS's own file manager**, not
+  just between the two panes. Drag a file or folder from Nautilus,
+  Explorer, or Finder onto a pane to upload or copy it in, with the same
+  Overwrite/Skip and Write Into prompts as any other transfer. Dragging
+  a file out of a local pane works immediately; dragging one out of a
+  remote pane downloads it first (with a visible, cancellable progress
+  dialog). Only individual files can be dragged out of a remote pane —
+  see Known limitations.
+
 ## [0.7.41] — Clear Completed/Clear Failed on Transfers tab headers
 
 ### Added

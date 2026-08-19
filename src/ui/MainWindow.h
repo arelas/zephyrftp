@@ -69,6 +69,13 @@ private slots:
     void onRightFilesActivated(const QList<RemoteEntry> &entries);
     void onFilesDropped(FilePaneWidget *sourcePane, const QList<RemoteEntry> &entries);
 
+    // Files/folders dragged in from the OS's own file manager (or any
+    // other application offering real file data) — sender() identifies
+    // the destination pane, same technique onFilesDropped() above
+    // already uses (there's no "source pane" at all here, unlike that
+    // one — the source is the OS itself).
+    void onExternalFilesDropped(const QStringList &localPaths);
+
     // Ctrl+C/Ctrl+V (FilePaneWidget::filesCopied/pasteRequested, in turn
     // from FileTreeView's own key handling) — see m_clipboardSourcePane's
     // own doc comment for the clipboard state these two maintain.
