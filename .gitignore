@@ -26,4 +26,4 @@ compile_commands.json
 .vs/
 .vscode/
 *.user
-site
+site/
