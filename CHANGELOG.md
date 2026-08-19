@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.39] — Quick connect password field, shorter protocol names, pane refresh button
+
 ### Added
 
 - **Quick connect now has its own password field.** Fill in Host,
@@ -2148,7 +2150,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.38...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.39...HEAD
+[0.7.39]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.39
 [0.7.38]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.38
 [0.7.37]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.37
 [0.7.36]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.36
