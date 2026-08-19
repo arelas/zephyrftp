@@ -8,6 +8,8 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.7.45] — Fix dialog-consistency bugs found by a full audit
+
 ### Fixed
 
 - A dialog-consistency audit across every dialog in the app (Connect,
@@ -2231,7 +2233,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.44...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.7.45...HEAD
+[0.7.45]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.45
 [0.7.44]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.44
 [0.7.43]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.43
 [0.7.42]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.42
