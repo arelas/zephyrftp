@@ -6,6 +6,49 @@ project doesn't yet promise strict [Semantic Versioning](https://semver.org/)
 guarantees — it's pre-1.0 (see [Known limitations](README.md#known-limitations)
 in the README), so anything may still change between 0.x releases.
 
+## [Unreleased]
+
+### Added
+
+- **Site Manager: right-click a group folder to rename it.** Requested
+  directly. Groups were never a separate stored entity — a group name
+  is just a string every member site happens to share (see
+  `m_groupCombo`'s own doc comment) — so "renaming a group" means
+  restamping that string on every site currently in it, not editing
+  some separate object. New `onTreeContextMenuRequested()` slot, wired
+  to the tree's `customContextMenuRequested`, shows a single "Rename
+  Group..." action only for folder items (a real site's own row
+  already has New/Duplicate/Delete as toolbar buttons and its name is
+  just a form field, so it gets no menu of its own); renaming a group
+  onto an existing different group's name is allowed deliberately —
+  it just merges the two, consistent with a group being nothing more
+  than a shared label. Verified via a disposable probe driving the
+  real `QMenu`/`QInputDialog` end to end (right down to the documented
+  `QTest::mouseClick`-not-`trigger()` gotcha for making `QMenu::exec()`
+  actually return — see project memory) and a screenshot of the
+  rendered menu; full 27-target required suite passes clean.
+
+### Fixed
+
+- **Preferences dialog's external-editor field clipped its own
+  placeholder text ("Leave blank to use your system's default
+  application").** Reported directly. Root cause: `QLineEdit::sizeHint()`
+  is based on a fixed handful of average characters, not the actual
+  placeholder string, and this dialog has nothing else demanding more
+  width — so the natural layout came out too narrow to show it in
+  full. Fixed by sizing the field's minimum width from the
+  placeholder's own rendered width via `QFontMetrics::horizontalAdvance()`
+  (plus a small allowance for the line edit's internal frame/text
+  margins), so it always fits on any platform/font/DPI without a
+  hand-tuned pixel guess — it still grows past that floor via the
+  form's existing `QFormLayout::AllNonFixedFieldsGrow` when the dialog
+  is wider for other reasons. Unlike this session's two macOS-only UI
+  bugs, this one reproduced cleanly right here: a disposable probe
+  measured the OLD code clipping by a real 124px (168px field vs.
+  292px placeholder) and the NEW code fitting with room to spare
+  (316px vs. 292px) — confirmed non-vacuously, not just "still
+  builds." Full 27-target required suite passes clean.
+
 ## [0.8.5] — Fix two macOS-specific UI bugs: Transfers tabs and Site Manager field height
 
 ### Fixed

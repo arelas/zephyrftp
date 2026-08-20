@@ -24,6 +24,7 @@
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QFileDialog>
+#include <QMenu>
 #include <QUuid>
 #include <QMap>
 #include <algorithm>
@@ -79,6 +80,9 @@ void SiteManagerDialog::buildUi()
         if (item && !item->data(0, IdRole).toString().isEmpty())
             onConnectClicked();
     });
+    m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_tree, &QTreeWidget::customContextMenuRequested,
+            this, &SiteManagerDialog::onTreeContextMenuRequested);
 
     auto *newSiteButton = new QPushButton(tr("New Site"), this);
     newSiteButton->setIcon(IconTheme::tintedIcon(":/icons/folder-plus.svg", IconTheme::Green));
@@ -721,6 +725,56 @@ void SiteManagerDialog::updateStartingDirVisibility()
 {
     m_startingDirEdit->setEnabled(m_specificDirRadio->isChecked());
     onFieldEdited();   // this choice is itself an edit worth persisting immediately, same as auth method above
+}
+
+void SiteManagerDialog::onTreeContextMenuRequested(const QPoint &pos)
+{
+    QTreeWidgetItem *item = m_tree->itemAt(pos);
+    // A real site's own row has no IdRole set only when it's actually a
+    // group folder (see rebuildTree()) — everything else (a real site,
+    // or empty space) gets no menu here.
+    if (!item || !item->data(0, IdRole).toString().isEmpty())
+        return;
+
+    const QString oldName = item->text(0);
+
+    QMenu menu(this);
+    QAction *renameAction = menu.addAction(
+        IconTheme::tintedIcon(":/icons/edit.svg", IconTheme::Gray()), tr("Rename Group..."));
+    QAction *chosen = menu.exec(m_tree->viewport()->mapToGlobal(pos));
+    if (chosen != renameAction)
+        return;
+
+    bool ok = false;
+    const QString newName = QInputDialog::getText(
+        this, tr("Rename Group"), tr("Group name:"),
+        QLineEdit::Normal, oldName, &ok).trimmed();
+    // Cancelled, unchanged, or blanked out — blanking isn't "rename",
+    // it's "ungroup every site in here at once", a much bigger and more
+    // surprising action to trigger from a text-field submit; someone who
+    // actually wants that can already do it one site at a time via the
+    // Group field in the details form.
+    if (!ok || newName.isEmpty() || newName == oldName)
+        return;
+
+    // No separate "groups" collection to rename (see m_groupCombo's own
+    // doc comment) — a group is just a string every member site
+    // happens to share, so renaming it means restamping that string on
+    // every site currently in it. Renaming onto an EXISTING different
+    // group's name is allowed deliberately: it just merges the two,
+    // consistent with a group being nothing more than a shared label.
+    for (SavedSite &site : m_sites) {
+        if (site.group == oldName)
+            site.group = newName;
+    }
+    SiteStore::save(m_sites);
+
+    // The group folder itself has no site id to re-select after
+    // rebuildTree() replaces every QTreeWidgetItem — re-selecting by id
+    // (rebuildTree()'s own normal behavior) simply finds nothing, same
+    // as any other rebuild that starts from no selection.
+    m_selectedId.clear();
+    rebuildTree();
 }
 
 void SiteManagerDialog::onNewSite()

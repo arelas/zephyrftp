@@ -47,6 +47,11 @@ public:
 
 private slots:
     void onTreeSelectionChanged();
+    // Right-click on a GROUP (folder) item only — a real site's own row
+    // already has New/Duplicate/Delete as toolbar buttons plus
+    // double-click-to-connect, and its name is just a form field like
+    // any other, so it gets no menu of its own here.
+    void onTreeContextMenuRequested(const QPoint &pos);
     void onNewSite();
     void onDuplicateSite();
     void onDeleteSite();

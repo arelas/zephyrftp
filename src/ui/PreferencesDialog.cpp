@@ -62,6 +62,19 @@ PreferencesDialog::PreferencesDialog(AppSettings *settings, QWidget *parent)
     m_externalEditorCommandEdit->setText(m_settings->externalEditorCommand());
     m_externalEditorCommandEdit->setPlaceholderText(
         tr("Leave blank to use your system's default application"));
+    // QLineEdit::sizeHint() is based on a fixed handful of average
+    // characters, not the actual placeholder string — with nothing else
+    // in this dialog demanding more width, the natural layout came out
+    // too narrow to show the whole placeholder, clipping it. Sized
+    // explicitly from the placeholder's own rendered width (plus a
+    // small allowance for the line edit's internal frame/text margins)
+    // so it always fits, on any platform/font/DPI, without a hand-tuned
+    // pixel guess for the whole field. Still grows past this floor via
+    // QFormLayout::AllNonFixedFieldsGrow below when the dialog itself
+    // is wider for other reasons.
+    const int placeholderWidth = m_externalEditorCommandEdit->fontMetrics()
+        .horizontalAdvance(m_externalEditorCommandEdit->placeholderText());
+    m_externalEditorCommandEdit->setMinimumWidth(placeholderWidth + 24);
     m_externalEditorCommandEdit->setToolTip(
         tr("The file path is appended to this command as its only argument "
            "(e.g. \"code\", \"gedit\", \"notepad++\")."));
