@@ -44,6 +44,21 @@ TransferQueueWidget::TransferQueueWidget(TransferManager *manager, QWidget *pare
     // this the same way it can't reach QFormLayout's field-growth policy.
     m_tabs->setDocumentMode(true);
 
+    // Same class of per-platform QStyle hint as documentMode above
+    // (and QFormLayout's own field-growth policy elsewhere in this
+    // app) — QStyle::SH_TabBar_ElideMode differs by platform, and
+    // QMacStyle defaults to eliding tab text that doesn't fit its own
+    // computed width, unlike Linux/Windows. Reported directly from
+    // real macOS hardware: labels ("Completed"/"Failed", worse once
+    // updateTabLabel() appends a live "(N)" count) were getting cut
+    // off there specifically. Forced to no eliding at all — these tabs
+    // have no scroll buttons and plenty of dock width, so there's
+    // nothing to gain from ever truncating instead of just sizing the
+    // tab to its real text, matching this dock's own convention (see
+    // QDockWidget's own comment above) of tabs sizing to content, not
+    // a fixed slot.
+    m_tabs->tabBar()->setElideMode(Qt::ElideNone);
+
     m_tabs->addTab(m_activeTable, tr("Active"));
     m_tabs->addTab(m_completedTable, tr("Completed"));
     m_tabs->addTab(m_failedTable, tr("Failed"));

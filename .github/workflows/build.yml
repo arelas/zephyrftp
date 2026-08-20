@@ -1040,6 +1040,30 @@ jobs:
           path: build/*.dmg
           if-no-files-found: error
 
+      # TEMPORARY — visual verification for the Transfers pane tab-label
+      # clipping fix (QTabBar::setElideMode(Qt::ElideNone)), reported
+      # directly from real macOS hardware. Same "there's no way to
+      # preview real macOS rendering outside of a real macOS runner"
+      # reasoning as the .dmg screenshot steps already used (and
+      # removed) earlier this session — remove once confirmed.
+      - name: TEMP - build and screenshot the Transfers tabs
+        run: |
+          set -e
+          cmake --build build --target transfers-tabs-probe -- -j$(sysctl -n hw.ncpu)
+          cd build
+          ./transfers-tabs-probe &
+          PROBE_PID=$!
+          sleep 3
+          screencapture -x ../transfers-tabs-screenshot.png
+          kill "$PROBE_PID" || true
+
+      - name: TEMP - upload Transfers tabs screenshot
+        uses: actions/upload-artifact@v7
+        with:
+          name: zephyrftp-transfers-tabs-screenshot
+          path: transfers-tabs-screenshot.png
+          if-no-files-found: error
+
   # Only runs on version tags (v1.0.0 etc.) — attaches both platform
   # builds as zipped/tarred assets on a GitHub Release, matching the
   # Phat32 pipeline pattern. Plain ubuntu-latest (no PowerShell needed) —
