@@ -60,8 +60,33 @@ endif()
 
 qt_standard_project_setup()
 
-set(SOURCES
-    src/main.cpp
+# --- Shared core (OBJECT library) ---
+#
+# Every one of the 44 EXCLUDE_FROM_ALL test/verify targets below used to
+# list its own copy of whatever subset of these source files it needed,
+# so CMake compiled each shared .cpp once PER TARGET THAT NAMED IT —
+# confirmed directly to be a real, large cost, not just theoretical:
+# MainWindow.cpp alone was being compiled 14 separate times, TransferManager.cpp
+# 34 times, FilePaneWidget.cpp 36 times, 1.4GB of object files for the
+# test suite alone, and real CI timing showed "Build test suite" (6m06s)
+# taking over 3x as long as "Run test suite" (1m53s) — the tests
+# themselves were never the slow part, redundant compilation was.
+#
+# CORE_SOURCES is every source file any target below could possibly
+# need — confirmed by diffing the full union of every .cpp file any
+# target referenced against this list before this refactor: empty diff,
+# every one was already a subset of what the main app itself compiles.
+# Compiled exactly ONCE into zephyrftp_core; every target below just
+# links it plus its own single entry-point .cpp, instead of re-listing
+# and re-compiling this whole set. A target that only exercises a small
+# slice (e.g. bandwidth-throttle-test, which only touches
+# BandwidthThrottle.cpp's own math) now links some genuinely unused
+# object code too — harmless (dead code, not linked into anything that
+# runs, no behavior change, same "duplicate the whole list, don't chase
+# a minimal subset" precedent this codebase already used for its
+# "full" tests, just uniformly applied everywhere now that doing so is
+# free instead of costing a full extra compile).
+set(CORE_SOURCES
     src/AppSettings.cpp
     src/ui/MainWindow.cpp
     src/backends/QuickConnectParser.cpp
@@ -101,33 +126,6 @@ set(SOURCES
     resources/theme.qrc
 )
 
-# .rc files are a Windows-only resource-compiler input (embeds app-icon.ico
-# as the .exe's native icon, shown in File Explorer/taskbar before the app
-# even runs — separate from the Qt runtime window icon set in main.cpp —
-# and a VERSIONINFO block, see app-icon.rc.in's own header comment for why
-# that's templated through configure_file() rather than a plain committed
-# .rc). CMake only knows what to do with this on Windows; guarded rather
-# than added unconditionally so it's a clean no-op on Linux, not a build
-# error.
-if(WIN32)
-    configure_file(resources/app-icon.rc.in ${CMAKE_BINARY_DIR}/app-icon.rc @ONLY)
-    list(APPEND SOURCES ${CMAKE_BINARY_DIR}/app-icon.rc)
-endif()
-
-# .icns is the macOS analog of the .rc/.ico handling above — the app
-# bundle's own icon, shown in Finder/Dock. Unlike every other icon
-# asset in this repo, it's never committed: iconutil (the only tool
-# that produces .icns) only exists on macOS, so this file is generated
-# fresh by the macOS CI job itself, right before this configure step
-# runs (see build.yml's build-macos job). Guarded on APPLE so a local
-# non-macOS configure doesn't fail looking for a file that was never
-# generated.
-if(APPLE)
-    list(APPEND SOURCES resources/icons/app-icon.icns)
-    set_source_files_properties(resources/icons/app-icon.icns PROPERTIES
-        MACOSX_PACKAGE_LOCATION Resources)
-endif()
-
 set(HEADERS
     src/AppSettings.h
     src/ui/MainWindow.h
@@ -155,7 +153,28 @@ set(HEADERS
     src/transfer/TransferQueueStore.h
 )
 
-qt_add_executable(zephyrftp ${SOURCES} ${HEADERS})
+add_library(zephyrftp_core OBJECT ${CORE_SOURCES} ${HEADERS})
+
+# PUBLIC (not PRIVATE/INTERFACE): these are needed to actually compile
+# CORE_SOURCES itself (e.g. FtpTlsSocket.cpp needs OpenSSL directly,
+# SftpBackend.cpp needs libssh2, CredentialStore.cpp needs the OS
+# keychain lib) AND need to propagate to every target that links this
+# library, which no longer lists any of this itself.
+target_include_directories(zephyrftp_core PUBLIC src)
+target_compile_definitions(zephyrftp_core PUBLIC APP_VERSION="${PROJECT_VERSION}")
+target_link_libraries(zephyrftp_core PUBLIC
+    Qt6::Widgets
+    Qt6::Network
+    Qt6::Concurrent
+    Qt6::Svg
+    ${LIBSSH2_TARGET}
+    ${OPENSSL_TARGET}
+    ${CREDENTIAL_STORE_TARGET}
+)
+
+# --- The shipped app itself ---
+qt_add_executable(zephyrftp src/main.cpp)
+target_link_libraries(zephyrftp PRIVATE zephyrftp_core)
 
 # Without this, the linked exe defaults to the console subsystem on
 # Windows — qt_add_executable() doesn't set it automatically — and every
@@ -166,23 +185,33 @@ qt_add_executable(zephyrftp ${SOURCES} ${HEADERS})
 # there, but no reason to change it).
 set_target_properties(zephyrftp PROPERTIES WIN32_EXECUTABLE ON)
 
-target_include_directories(zephyrftp PRIVATE src)
+# .rc files are a Windows-only resource-compiler input (embeds app-icon.ico
+# as the .exe's native icon, shown in File Explorer/taskbar before the app
+# even runs — separate from the Qt runtime window icon set in main.cpp —
+# and a VERSIONINFO block, see app-icon.rc.in's own header comment for why
+# that's templated through configure_file() rather than a plain committed
+# .rc). CMake only knows what to do with this on Windows; guarded rather
+# than added unconditionally so it's a clean no-op on Linux, not a build
+# error. Only on the real app, not the shared library — nothing about
+# test binaries needs a native .exe icon.
+if(WIN32)
+    configure_file(resources/app-icon.rc.in ${CMAKE_BINARY_DIR}/app-icon.rc @ONLY)
+    target_sources(zephyrftp PRIVATE ${CMAKE_BINARY_DIR}/app-icon.rc)
+endif()
 
-# Makes the version set in this file's project() declaration above
-# actually reach the compiled binary — CMake's PROJECT_VERSION has no
-# effect on the C++ source without being wired through explicitly like
-# this. Used by MainWindow for the window title and About dialog.
-target_compile_definitions(zephyrftp PRIVATE APP_VERSION="${PROJECT_VERSION}")
-
-target_link_libraries(zephyrftp PRIVATE
-    Qt6::Widgets
-    Qt6::Network
-    Qt6::Concurrent
-    Qt6::Svg
-    ${LIBSSH2_TARGET}
-    ${OPENSSL_TARGET}
-    ${CREDENTIAL_STORE_TARGET}
-)
+# .icns is the macOS analog of the .rc/.ico handling above — the app
+# bundle's own icon, shown in Finder/Dock. Unlike every other icon
+# asset in this repo, it's never committed: iconutil (the only tool
+# that produces .icns) only exists on macOS, so this file is generated
+# fresh by the macOS CI job itself, right before this configure step
+# runs (see build.yml's build-macos job). Guarded on APPLE so a local
+# non-macOS configure doesn't fail looking for a file that was never
+# generated.
+if(APPLE)
+    target_sources(zephyrftp PRIVATE resources/icons/app-icon.icns)
+    set_source_files_properties(resources/icons/app-icon.icns PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources)
+endif()
 
 # --- Linux distro packaging (.deb/.rpm via CPack) ---
 #
@@ -322,9 +351,9 @@ endif()
 # plain tarball uses — Finder/Dock/Launchpad all expect one, and an
 # unbundled Qt executable dropped directly into /Applications wouldn't
 # find its own Info.plist-declared icon or behave like a normal Mac
-# app. MACOSX_BUNDLE_ICON_FILE points at the .icns added to SOURCES
-# above (generated fresh by the macOS CI job itself before this
-# configure step runs, never committed to the repo).
+# app. MACOSX_BUNDLE_ICON_FILE points at the .icns added above
+# (generated fresh by the macOS CI job itself before this configure
+# step runs, never committed to the repo).
 if(APPLE)
     set_target_properties(zephyrftp PROPERTIES
         MACOSX_BUNDLE TRUE
@@ -365,624 +394,140 @@ if(APPLE)
     # CMake/CPack re-staging step in between to silently drop anything.
 endif()
 
+# --- Required test suite ---
+#
+# Every target below used to enumerate its own subset of CORE_SOURCES
+# (see that variable's own comment above for the compile-time cost this
+# had, and why it's gone now) plus its own include/compile-definition/
+# link-library boilerplate. Now: one line to declare the target from its
+# own entry-point .cpp, one line to link zephyrftp_core (which brings
+# include dirs, APP_VERSION, and every Qt/libssh2/OpenSSL/credential-store
+# link dependency along with it via PUBLIC propagation), and Qt6::Test
+# only on the two targets that actually call into it
+# (keyboard-shortcuts-test, navigation-test). This also structurally
+# closes the AUTOMOC/Q_OBJECT-header gotcha CONTRIBUTING.md documents
+# (a target pulling in a Q_OBJECT header via ${HEADERS} without also
+# compiling the matching .cpp used to be a real, repeatedly-hit link
+# error) — every Q_OBJECT header's .cpp is now always compiled exactly
+# once, in zephyrftp_core, before any target links it.
+
 # --- smoke test (not part of the shipped app; verifies thread lifecycle) ---
-qt_add_executable(smoke-test EXCLUDE_FROM_ALL
-    src/smoke_test.cpp
-    src/AppSettings.cpp
-    src/ui/MainWindow.cpp
-    src/backends/QuickConnectParser.cpp
-    src/ui/FilePaneWidget.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/ConnectionDialog.cpp
-    src/ui/TransferQueueWidget.cpp
-    src/ui/TransferQueueTable.cpp
-    src/ui/CommandsPaneWidget.cpp
-    src/ui/HostKeyVerifier.cpp
-    src/ui/CertificateVerifier.cpp
-    src/ui/IconTheme.cpp
-    src/ui/SiteManagerDialog.cpp
-    src/ui/PreferencesDialog.cpp
-    src/ui/EditSessionManager.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/SftpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/FtpBackend.cpp   # MainWindow.cpp constructs one — see startConnection()
-    src/backends/FtpTlsSocket.cpp
-    src/backends/SavedSite.cpp
-    src/backends/CredentialStore.cpp
-    src/transfer/TransferManager.cpp
-    src/transfer/ChecksumVerifier.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/transfer/FolderEnumerator.cpp
-    src/compare/DirectoryComparer.cpp
-    src/compare/CompareSyncExecutor.cpp
-    src/ui/CompareDialog.cpp
-    src/ui/CompareDeleteConfirmDialog.cpp
-    resources/icons.qrc
-    resources/theme.qrc
-    ${HEADERS}
-)
-target_include_directories(smoke-test PRIVATE src)
-target_compile_definitions(smoke-test PRIVATE APP_VERSION="${PROJECT_VERSION}")
-target_link_libraries(smoke-test PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${OPENSSL_TARGET} ${CREDENTIAL_STORE_TARGET}
-)
+qt_add_executable(smoke-test EXCLUDE_FROM_ALL src/smoke_test.cpp)
+target_link_libraries(smoke-test PRIVATE zephyrftp_core)
 
 # --- Keyboard shortcuts test: Delete/F2/F5/Ctrl+A/Ctrl+C/Ctrl+V, driven
 # via real QTest::keyClick() against a real MainWindow (see
-# src/keyboard_shortcuts_test.cpp's own header comment). Same dependency
-# list as smoke-test (also constructs a real MainWindow) plus Qt6::Test
-# for QTest::keyClick().
-qt_add_executable(keyboard-shortcuts-test EXCLUDE_FROM_ALL
-    src/keyboard_shortcuts_test.cpp
-    src/AppSettings.cpp
-    src/ui/MainWindow.cpp
-    src/backends/QuickConnectParser.cpp
-    src/ui/FilePaneWidget.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/ConnectionDialog.cpp
-    src/ui/TransferQueueWidget.cpp
-    src/ui/TransferQueueTable.cpp
-    src/ui/CommandsPaneWidget.cpp
-    src/ui/HostKeyVerifier.cpp
-    src/ui/CertificateVerifier.cpp
-    src/ui/IconTheme.cpp
-    src/ui/SiteManagerDialog.cpp
-    src/ui/PreferencesDialog.cpp
-    src/ui/EditSessionManager.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/SftpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/FtpBackend.cpp
-    src/backends/FtpTlsSocket.cpp
-    src/backends/SavedSite.cpp
-    src/backends/CredentialStore.cpp
-    src/transfer/TransferManager.cpp
-    src/transfer/ChecksumVerifier.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/transfer/FolderEnumerator.cpp
-    src/compare/DirectoryComparer.cpp
-    src/compare/CompareSyncExecutor.cpp
-    src/ui/CompareDialog.cpp
-    src/ui/CompareDeleteConfirmDialog.cpp
-    resources/icons.qrc
-    resources/theme.qrc
-    ${HEADERS}
-)
-target_include_directories(keyboard-shortcuts-test PRIVATE src)
-target_compile_definitions(keyboard-shortcuts-test PRIVATE APP_VERSION="${PROJECT_VERSION}")
-target_link_libraries(keyboard-shortcuts-test PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg Qt6::Test ${LIBSSH2_TARGET} ${OPENSSL_TARGET} ${CREDENTIAL_STORE_TARGET}
-)
+# src/keyboard_shortcuts_test.cpp's own header comment).
+qt_add_executable(keyboard-shortcuts-test EXCLUDE_FROM_ALL src/keyboard_shortcuts_test.cpp)
+target_link_libraries(keyboard-shortcuts-test PRIVATE zephyrftp_core Qt6::Test)
 
 # --- Checksum verification test: ChecksumVerifier's match/mismatch/
-# busy-backend-queuing/cancellation/hidden-from-UI behavior (see
-# src/checksum_verification_test.cpp's own header comment). Full
-# dependency list cloned from smoke-test above rather than hand-trimmed —
-# same "duplicate the whole list, don't chase a minimal subset" precedent
-# sync-browsing-test/transfer-queue-test already established for any
-# target that needs TransferQueueTable.cpp (which pulls in SiteStore::
-# load(), and from there the same wide dependency graph MainWindow itself
-# needs).
-qt_add_executable(checksum-verification-test EXCLUDE_FROM_ALL
-    src/checksum_verification_test.cpp
-    src/AppSettings.cpp
-    src/ui/MainWindow.cpp
-    src/backends/QuickConnectParser.cpp
-    src/ui/FilePaneWidget.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/ConnectionDialog.cpp
-    src/ui/TransferQueueWidget.cpp
-    src/ui/TransferQueueTable.cpp
-    src/ui/CommandsPaneWidget.cpp
-    src/ui/HostKeyVerifier.cpp
-    src/ui/CertificateVerifier.cpp
-    src/ui/IconTheme.cpp
-    src/ui/SiteManagerDialog.cpp
-    src/ui/PreferencesDialog.cpp
-    src/ui/EditSessionManager.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/SftpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/FtpBackend.cpp   # MainWindow.cpp constructs one — see startConnection()
-    src/backends/FtpTlsSocket.cpp
-    src/backends/SavedSite.cpp
-    src/backends/CredentialStore.cpp
-    src/transfer/TransferManager.cpp
-    src/transfer/ChecksumVerifier.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/transfer/FolderEnumerator.cpp
-    src/compare/DirectoryComparer.cpp
-    src/compare/CompareSyncExecutor.cpp
-    src/ui/CompareDialog.cpp
-    src/ui/CompareDeleteConfirmDialog.cpp
-    resources/icons.qrc
-    resources/theme.qrc
-    ${HEADERS}
-)
-target_include_directories(checksum-verification-test PRIVATE src)
-target_compile_definitions(checksum-verification-test PRIVATE APP_VERSION="${PROJECT_VERSION}")
-target_link_libraries(checksum-verification-test PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${OPENSSL_TARGET} ${CREDENTIAL_STORE_TARGET}
-)
+# busy-backend-queuing/cancellation/hidden-from-UI behavior — see
+# src/checksum_verification_test.cpp's own header comment.
+qt_add_executable(checksum-verification-test EXCLUDE_FROM_ALL src/checksum_verification_test.cpp)
+target_link_libraries(checksum-verification-test PRIVATE zephyrftp_core)
 
 # --- Synchronized browsing test: real MainWindow (same headless
 # construction technique as smoke-test above), two LocalBackend panes,
 # no server needed — see src/sync_browsing_test.cpp's own header comment.
-qt_add_executable(sync-browsing-test EXCLUDE_FROM_ALL
-    src/sync_browsing_test.cpp
-    src/AppSettings.cpp
-    src/ui/MainWindow.cpp
-    src/backends/QuickConnectParser.cpp
-    src/ui/FilePaneWidget.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/ConnectionDialog.cpp
-    src/ui/TransferQueueWidget.cpp
-    src/ui/TransferQueueTable.cpp
-    src/ui/CommandsPaneWidget.cpp
-    src/ui/HostKeyVerifier.cpp
-    src/ui/CertificateVerifier.cpp
-    src/ui/IconTheme.cpp
-    src/ui/SiteManagerDialog.cpp
-    src/ui/PreferencesDialog.cpp
-    src/ui/EditSessionManager.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/SftpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/FtpBackend.cpp
-    src/backends/FtpTlsSocket.cpp
-    src/backends/SavedSite.cpp
-    src/backends/CredentialStore.cpp
-    src/transfer/TransferManager.cpp
-    src/transfer/ChecksumVerifier.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/transfer/FolderEnumerator.cpp
-    src/compare/DirectoryComparer.cpp
-    src/compare/CompareSyncExecutor.cpp
-    src/ui/CompareDialog.cpp
-    src/ui/CompareDeleteConfirmDialog.cpp
-    resources/icons.qrc
-    resources/theme.qrc
-    ${HEADERS}
-)
-target_include_directories(sync-browsing-test PRIVATE src)
-target_compile_definitions(sync-browsing-test PRIVATE APP_VERSION="${PROJECT_VERSION}")
-target_link_libraries(sync-browsing-test PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${OPENSSL_TARGET} ${CREDENTIAL_STORE_TARGET}
-)
+qt_add_executable(sync-browsing-test EXCLUDE_FROM_ALL src/sync_browsing_test.cpp)
+target_link_libraries(sync-browsing-test PRIVATE zephyrftp_core)
 
 # --- transfer queue functional test (moves a real file end-to-end) ---
-qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL
-    src/transfer_queue_test.cpp
-    src/AppSettings.cpp
-    src/ui/MainWindow.cpp
-    src/backends/QuickConnectParser.cpp
-    src/ui/FilePaneWidget.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/ConnectionDialog.cpp
-    src/ui/TransferQueueWidget.cpp
-    src/ui/TransferQueueTable.cpp
-    src/ui/CommandsPaneWidget.cpp
-    src/ui/HostKeyVerifier.cpp
-    src/ui/CertificateVerifier.cpp
-    src/ui/IconTheme.cpp
-    src/ui/SiteManagerDialog.cpp
-    src/ui/PreferencesDialog.cpp
-    src/ui/EditSessionManager.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/SftpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/FtpBackend.cpp   # MainWindow.cpp constructs one — see startConnection()
-    src/backends/FtpTlsSocket.cpp
-    src/backends/SavedSite.cpp
-    src/backends/CredentialStore.cpp
-    src/transfer/TransferManager.cpp
-    src/transfer/ChecksumVerifier.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/transfer/FolderEnumerator.cpp
-    src/compare/DirectoryComparer.cpp
-    src/compare/CompareSyncExecutor.cpp
-    src/ui/CompareDialog.cpp
-    src/ui/CompareDeleteConfirmDialog.cpp
-    resources/icons.qrc
-    resources/theme.qrc
-    ${HEADERS}
-)
-target_include_directories(transfer-queue-test PRIVATE src)
-target_compile_definitions(transfer-queue-test PRIVATE APP_VERSION="${PROJECT_VERSION}")
-target_link_libraries(transfer-queue-test PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${OPENSSL_TARGET} ${CREDENTIAL_STORE_TARGET}
-)
+qt_add_executable(transfer-queue-test EXCLUDE_FROM_ALL src/transfer_queue_test.cpp)
+target_link_libraries(transfer-queue-test PRIVATE zephyrftp_core)
 
 # --- SiteStore persistence test (pure QCoreApplication, no GUI needed) ---
-qt_add_executable(site-store-test EXCLUDE_FROM_ALL
-    src/site_store_test.cpp
-    src/backends/SavedSite.cpp
-)
-target_include_directories(site-store-test PRIVATE src)
-target_link_libraries(site-store-test PRIVATE Qt6::Core)
+qt_add_executable(site-store-test EXCLUDE_FROM_ALL src/site_store_test.cpp)
+target_link_libraries(site-store-test PRIVATE zephyrftp_core)
 
 # --- Connection history store test (pure QCoreApplication, no GUI
 # needed) — same shape as site-store-test above, see
 # src/connection_history_test.cpp's own header comment.
-qt_add_executable(connection-history-test EXCLUDE_FROM_ALL
-    src/connection_history_test.cpp
-    src/backends/ConnectionHistory.cpp
-)
-target_include_directories(connection-history-test PRIVATE src)
-target_link_libraries(connection-history-test PRIVATE Qt6::Core)
+qt_add_executable(connection-history-test EXCLUDE_FROM_ALL src/connection_history_test.cpp)
+target_link_libraries(connection-history-test PRIVATE zephyrftp_core)
 
 # --- AppSettings persistence test (pure QCoreApplication, no GUI needed) ---
-qt_add_executable(app-settings-test EXCLUDE_FROM_ALL
-    src/app_settings_test.cpp
-    src/AppSettings.cpp
-    src/backends/CredentialStore.cpp
-)
-target_include_directories(app-settings-test PRIVATE src)
-# CREDENTIAL_STORE_TARGET (not just Qt6::Core, as before) — AppSettings.cpp
-# now calls CredentialStore::save()/load()/remove() for the proxy
-# password (see AppSettings::setProxyPassword()). Whether the OS
-# credential store is actually available/unlocked in this environment
-# doesn't matter for what this required-suite test checks (see its own
-# comment) — only that settings.json itself never gets a plaintext
-# password, which doesn't depend on CredentialStore succeeding.
-target_link_libraries(app-settings-test PRIVATE Qt6::Core ${CREDENTIAL_STORE_TARGET})
+qt_add_executable(app-settings-test EXCLUDE_FROM_ALL src/app_settings_test.cpp)
+target_link_libraries(app-settings-test PRIVATE zephyrftp_core)
 
 # --- Bandwidth throttle pacing test: BandwidthThrottle's own math in
 # isolation (no server, no backend) — see src/bandwidth_throttle_test.cpp's
-# own header comment. Qt6::Core alone, same reasoning as app-settings-test
-# above: QCoreApplication only, no widgets/network involved. ---
-qt_add_executable(bandwidth-throttle-test EXCLUDE_FROM_ALL
-    src/bandwidth_throttle_test.cpp
-    src/backends/BandwidthThrottle.cpp
-)
-target_include_directories(bandwidth-throttle-test PRIVATE src)
-target_link_libraries(bandwidth-throttle-test PRIVATE Qt6::Core)
+# own header comment.
+qt_add_executable(bandwidth-throttle-test EXCLUDE_FROM_ALL src/bandwidth_throttle_test.cpp)
+target_link_libraries(bandwidth-throttle-test PRIVATE zephyrftp_core)
 
 # --- Trust-prompt test: drives the REAL QMessageBox HostKeyVerifier/
 # CertificateVerifier pop, same live-dialog technique
 # conflict-resolution-test uses (QT_QPA_PLATFORM=offscreen still renders a
 # real, drivable QMessageBox) ---
-qt_add_executable(trust-prompt-test EXCLUDE_FROM_ALL
-    src/trust_prompt_test.cpp
-    src/ui/HostKeyVerifier.cpp
-    src/ui/CertificateVerifier.cpp
-)
-target_include_directories(trust-prompt-test PRIVATE src)
-target_link_libraries(trust-prompt-test PRIVATE Qt6::Widgets)
+qt_add_executable(trust-prompt-test EXCLUDE_FROM_ALL src/trust_prompt_test.cpp)
+target_link_libraries(trust-prompt-test PRIVATE zephyrftp_core)
 
 # --- Navigation history test (back/forward/up, real LocalBackend + real temp dirs) ---
-qt_add_executable(navigation-test EXCLUDE_FROM_ALL
-    src/navigation_test.cpp
-    src/AppSettings.cpp
-    src/backends/CredentialStore.cpp
-    src/ui/FilePaneWidget.cpp
-    src/transfer/FolderEnumerator.cpp
-    src/transfer/TransferManager.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/IconTheme.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/RemoteBackend.h
-    resources/icons.qrc
-    resources/theme.qrc
-)
-target_include_directories(navigation-test PRIVATE src)
-target_link_libraries(navigation-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg Qt6::Test ${CREDENTIAL_STORE_TARGET})
+qt_add_executable(navigation-test EXCLUDE_FROM_ALL src/navigation_test.cpp)
+target_link_libraries(navigation-test PRIVATE zephyrftp_core Qt6::Test)
 
 # --- Transfer pause/resume orchestration test (fake backend, no real server needed) ---
-qt_add_executable(transfer-pause-test EXCLUDE_FROM_ALL
-    src/transfer_pause_test.cpp
-    src/AppSettings.cpp
-    src/backends/CredentialStore.cpp
-    src/ui/FilePaneWidget.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/IconTheme.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/RemoteBackend.h
-    src/transfer/TransferManager.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/transfer/FolderEnumerator.cpp
-    resources/icons.qrc
-    resources/theme.qrc
-)
-target_include_directories(transfer-pause-test PRIVATE src)
-target_link_libraries(transfer-pause-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
+qt_add_executable(transfer-pause-test EXCLUDE_FROM_ALL src/transfer_pause_test.cpp)
+target_link_libraries(transfer-pause-test PRIVATE zephyrftp_core)
 
 # --- File management operations test (delete/rename/create, real LocalBackend + real temp dirs) ---
-qt_add_executable(file-operations-test EXCLUDE_FROM_ALL
-    src/file_operations_test.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/RemoteBackend.h
-    src/ui/PermissionsDialog.cpp
-)
-target_include_directories(file-operations-test PRIVATE src)
-# Qt6::Widgets only for PermissionsDialog.cpp's permissionsStringToMode()/
-# modeToPermissionsString() free functions — this target was previously
-# GUI-free (Qt6::Core alone), and stays GUI-free in spirit: chmod is now
-# genuinely one of the "file operations" this test's own name promises
-# to cover, and these two functions are real, pure, no-QApplication-
-# needed logic worth verifying without pulling in a live PermissionsDialog.
-# Qt6::Concurrent also needed now — LocalBackend.cpp's downloadFile()/
-# uploadFile() background their actual copy via QtConcurrent::run() (a
-# real fix for a live-reported GUI-freeze bug; see LocalBackend.h's own
-# doc comment), and this target links LocalBackend.cpp.
-target_link_libraries(file-operations-test PRIVATE Qt6::Core Qt6::Widgets Qt6::Concurrent)
+qt_add_executable(file-operations-test EXCLUDE_FROM_ALL src/file_operations_test.cpp)
+target_link_libraries(file-operations-test PRIVATE zephyrftp_core)
 
 # --- Whole-folder transfer test (recursive enumeration + mirrored dirs, real LocalBackend) ---
-qt_add_executable(folder-transfer-test EXCLUDE_FROM_ALL
-    src/folder_transfer_test.cpp
-    src/AppSettings.cpp
-    src/backends/CredentialStore.cpp
-    src/ui/FilePaneWidget.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/IconTheme.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/RemoteBackend.h
-    src/transfer/TransferManager.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/transfer/FolderEnumerator.cpp
-    resources/icons.qrc
-    resources/theme.qrc
-)
-target_include_directories(folder-transfer-test PRIVATE src)
-target_link_libraries(folder-transfer-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
+qt_add_executable(folder-transfer-test EXCLUDE_FROM_ALL src/folder_transfer_test.cpp)
+target_link_libraries(folder-transfer-test PRIVATE zephyrftp_core)
 
 # --- Directory Compare-and-Sync test (diff classification, bottom-up delete ordering, real end-to-end copy) ---
-qt_add_executable(compare-sync-test EXCLUDE_FROM_ALL
-    src/compare_sync_test.cpp
-    src/AppSettings.cpp
-    src/backends/CredentialStore.cpp
-    src/ui/FilePaneWidget.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/IconTheme.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/RemoteBackend.h
-    src/transfer/TransferManager.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/transfer/FolderEnumerator.cpp
-    src/compare/DirectoryComparer.cpp
-    src/compare/CompareSyncExecutor.cpp
-    resources/icons.qrc
-    resources/theme.qrc
-)
-target_include_directories(compare-sync-test PRIVATE src)
-target_link_libraries(compare-sync-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
+qt_add_executable(compare-sync-test EXCLUDE_FROM_ALL src/compare_sync_test.cpp)
+target_link_libraries(compare-sync-test PRIVATE zephyrftp_core)
 
 # --- Scripting/automation test (ScriptParser + ScriptRunner, real LocalBackend, no server or open() needed) ---
-# Needs SftpBackend/FtpBackend/SavedSite compiled in even though this
-# test never exercises the `open` command (attachRemotePaneForTesting()
-# bypasses it) — ScriptRunner.cpp's runOpen() references those symbols
-# unconditionally, same reason smoke-test's own source list already
-# carries them despite not connecting to a real server either.
-qt_add_executable(script-runner-test EXCLUDE_FROM_ALL
-    src/script_runner_test.cpp
-    src/AppSettings.cpp
-    src/backends/CredentialStore.cpp
-    src/ui/FilePaneWidget.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/IconTheme.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/SftpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/FtpBackend.cpp
-    src/backends/FtpTlsSocket.cpp
-    src/backends/SavedSite.cpp
-    src/backends/RemoteBackend.h
-    src/transfer/TransferManager.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/transfer/FolderEnumerator.cpp
-    src/compare/DirectoryComparer.cpp
-    src/compare/CompareSyncExecutor.cpp
-    src/cli/ScriptParser.cpp
-    src/cli/ScriptRunner.cpp
-    resources/icons.qrc
-    resources/theme.qrc
-)
-target_include_directories(script-runner-test PRIVATE src)
-target_link_libraries(script-runner-test PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${OPENSSL_TARGET} ${CREDENTIAL_STORE_TARGET}
-)
+qt_add_executable(script-runner-test EXCLUDE_FROM_ALL src/script_runner_test.cpp)
+target_link_libraries(script-runner-test PRIVATE zephyrftp_core)
 
 # --- Destination conflict resolution test (Overwrite/Skip, Write Into/Skip, real dialog interaction) ---
-qt_add_executable(conflict-resolution-test EXCLUDE_FROM_ALL
-    src/conflict_resolution_test.cpp
-    src/AppSettings.cpp
-    src/backends/CredentialStore.cpp
-    src/ui/FilePaneWidget.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/IconTheme.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/RemoteBackend.h
-    src/transfer/TransferManager.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/transfer/FolderEnumerator.cpp
-    resources/icons.qrc
-    resources/theme.qrc
-)
-target_include_directories(conflict-resolution-test PRIVATE src)
-target_link_libraries(conflict-resolution-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
+qt_add_executable(conflict-resolution-test EXCLUDE_FROM_ALL src/conflict_resolution_test.cpp)
+target_link_libraries(conflict-resolution-test PRIVATE zephyrftp_core)
 
 # --- Recursive delete test (content-aware warning + bottom-up delete, real dialog interaction) ---
-# deleteEntriesAt() itself is called directly (the same public entry
-# point CompareSyncExecutor already uses), not through TransferManager —
-# but TransferManager.cpp/TransferQueueStore.cpp are still needed here
-# as a LINK dependency of FileTreeView.cpp below, which now calls
-# TransferManager directly for drag-out's own download-before-drag
-# flow (see FileTreeView::downloadForDragOut()) — unrelated to what
-# this test itself exercises, just an unavoidable consequence of
-# linking FileTreeView.cpp at all.
-qt_add_executable(recursive-delete-test EXCLUDE_FROM_ALL
-    src/recursive_delete_test.cpp
-    src/AppSettings.cpp
-    src/backends/CredentialStore.cpp
-    src/ui/FilePaneWidget.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/IconTheme.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/RemoteBackend.h
-    src/transfer/FolderEnumerator.cpp
-    src/transfer/TransferManager.cpp
-    src/transfer/TransferQueueStore.cpp
-    resources/icons.qrc
-    resources/theme.qrc
-)
-target_include_directories(recursive-delete-test PRIVATE src)
-target_link_libraries(recursive-delete-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
+qt_add_executable(recursive-delete-test EXCLUDE_FROM_ALL src/recursive_delete_test.cpp)
+target_link_libraries(recursive-delete-test PRIVATE zephyrftp_core)
 
 # --- External drag-in test (OS file manager -> a pane): TransferManager::
 # enqueueExternalUpload()/enqueueExternalFolder(), the isExternal branch of
 # PendingFolderConflictCheck, and FileTreeView's real dragEnterEvent()/
-# dropEvent() handling of text/uri-list data — same dependency list as
-# folder-transfer-test (also drives real TransferManager folder transfers). ---
-qt_add_executable(external-drop-test EXCLUDE_FROM_ALL
-    src/external_drop_test.cpp
-    src/AppSettings.cpp
-    src/backends/CredentialStore.cpp
-    src/ui/FilePaneWidget.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/IconTheme.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/RemoteBackend.h
-    src/transfer/TransferManager.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/transfer/FolderEnumerator.cpp
-    resources/icons.qrc
-    resources/theme.qrc
-)
-target_include_directories(external-drop-test PRIVATE src)
-target_link_libraries(external-drop-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
+# dropEvent() handling of text/uri-list data.
+qt_add_executable(external-drop-test EXCLUDE_FROM_ALL src/external_drop_test.cpp)
+target_link_libraries(external-drop-test PRIVATE zephyrftp_core)
 
 # --- FTP directory-listing parser test (MLSD/LIST, realistic sample data — no real server available) ---
-# CertificateVerifier.cpp/Widgets are pulled in because FtpBackend.cpp
-# includes CertificateVerifier.h (a Q_OBJECT header) for its
-# m_certificateVerifier member — same "always pair the two" rule this
-# codebase already follows for SftpBackend.cpp + HostKeyVerifier.cpp
-# (see CONTRIBUTING.md's AUTOMOC build gotcha). This test never actually
-# constructs one (it only calls FtpBackend's static parser functions).
-qt_add_executable(ftp-parsing-test EXCLUDE_FROM_ALL
-    src/ftp_parsing_test.cpp
-    src/backends/FtpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/FtpTlsSocket.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/RemoteBackend.h
-    src/ui/CertificateVerifier.cpp
-)
-target_include_directories(ftp-parsing-test PRIVATE src)
-target_link_libraries(ftp-parsing-test PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network ${OPENSSL_TARGET})
+qt_add_executable(ftp-parsing-test EXCLUDE_FROM_ALL src/ftp_parsing_test.cpp)
+target_link_libraries(ftp-parsing-test PRIVATE zephyrftp_core)
 
-# Protocol-selection wiring: ConnectionDialog's protocol choice, and
-# SavedSite's persistence of it. Needs Widgets (it constructs a real
-# ConnectionDialog) and Svg (IconTheme, pulled in transitively). Note
-# RemoteBackend.h listed explicitly — see CONTRIBUTING.md's build gotcha
-# on AUTOMOC and Q_OBJECT headers in test targets.
-qt_add_executable(protocol-selection-test EXCLUDE_FROM_ALL
-    src/protocol_selection_test.cpp
-    src/ui/ConnectionDialog.cpp
-    src/backends/SavedSite.cpp
-    src/backends/QuickConnectParser.cpp
-    src/backends/RemoteBackend.h
-)
-target_include_directories(protocol-selection-test PRIVATE src)
-target_link_libraries(protocol-selection-test PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
+# --- Protocol-selection wiring: ConnectionDialog's protocol choice, and
+# SavedSite's persistence of it.
+qt_add_executable(protocol-selection-test EXCLUDE_FROM_ALL src/protocol_selection_test.cpp)
+target_link_libraries(protocol-selection-test PRIVATE zephyrftp_core)
 
 # --- Sort/Commands-pane regression test: default folders-first/name-
 # descending order, a real numeric header-column sort, entryForRow()'s
 # row-independence after that sort, and CommandsPaneWidget/FilePaneWidget's
-# commandLogged forwarding (including across a setBackend() swap). Added
-# after the ten-target suite above was already an established, documented
-# count elsewhere (CLAUDE.md, CONTRIBUTING.md) — self-contained and
-# EXCLUDE_FROM_ALL like the ten, but deliberately NOT folded into that
-# specific number here; see src/sort_and_commands_test.cpp's own header
-# comment for what it covers. Needs CommandsPaneWidget.cpp explicitly
-# (the ten above don't, since none of them exercise it directly) and
-# RemoteBackend.h explicitly for the same AUTOMOC/Q_OBJECT reason
-# CONTRIBUTING.md's build gotcha describes.
-qt_add_executable(sort-and-commands-test EXCLUDE_FROM_ALL
-    src/sort_and_commands_test.cpp
-    src/AppSettings.cpp
-    src/backends/CredentialStore.cpp
-    src/ui/FilePaneWidget.cpp
-    src/transfer/FolderEnumerator.cpp
-    src/transfer/TransferManager.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/CommandsPaneWidget.cpp
-    src/ui/IconTheme.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/RemoteBackend.h
-    resources/icons.qrc
-    resources/theme.qrc
-)
-target_include_directories(sort-and-commands-test PRIVATE src)
-target_compile_definitions(sort-and-commands-test PRIVATE APP_VERSION="${PROJECT_VERSION}")
-target_link_libraries(sort-and-commands-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
+# commandLogged forwarding (including across a setBackend() swap) — see
+# src/sort_and_commands_test.cpp's own header comment.
+qt_add_executable(sort-and-commands-test EXCLUDE_FROM_ALL src/sort_and_commands_test.cpp)
+target_link_libraries(sort-and-commands-test PRIVATE zephyrftp_core)
 
 # --- Remote-to-remote (server-to-server) staged-transfer orchestration
 # test: direction/phase assignment, the phase-1 (download-to-temp) ->
 # phase-2 (upload-from-temp) transition and m_currentBackend re-pointing,
 # temp-file cleanup on success/cancel-mid-either-phase, and retryItem()'s
-# phase reset. Two independent fake RemoteBackends (see
-# src/remote_to_remote_test.cpp's own header comment) — no real server
-# needed. Self-contained and EXCLUDE_FROM_ALL like the ten and
-# sort-and-commands-test above, and — same reasoning as that one — kept as
-# an explicit twelfth target rather than folded into "the ten" count
-# CLAUDE.md/CONTRIBUTING.md document. RemoteBackend.h listed explicitly for
-# the same AUTOMOC/Q_OBJECT reason CONTRIBUTING.md's build gotcha describes.
-qt_add_executable(remote-to-remote-test EXCLUDE_FROM_ALL
-    src/remote_to_remote_test.cpp
-    src/AppSettings.cpp
-    src/backends/CredentialStore.cpp
-    src/ui/FilePaneWidget.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/IconTheme.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/RemoteBackend.h
-    src/transfer/TransferManager.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/transfer/FolderEnumerator.cpp
-    resources/icons.qrc
-    resources/theme.qrc
-)
-target_include_directories(remote-to-remote-test PRIVATE src)
-target_link_libraries(remote-to-remote-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
+# phase reset. Two independent fake RemoteBackends — no real server
+# needed. See src/remote_to_remote_test.cpp's own header comment.
+qt_add_executable(remote-to-remote-test EXCLUDE_FROM_ALL src/remote_to_remote_test.cpp)
+target_link_libraries(remote-to-remote-test PRIVATE zephyrftp_core)
 
 # --- Move (server-side rename between two panes on the same
 # filesystem/server) test: TransferManager::moveEligible()'s
@@ -991,59 +536,17 @@ target_link_libraries(remote-to-remote-test PRIVATE Qt6::Widgets Qt6::Network Qt
 # folder move skips FolderEnumerator entirely — exactly one backend call,
 # zero listDirectoryForEnumeration() calls), and LocalBackend::moveEntry()
 # against real temp files/directories (including the overwrite-an-existing-
-# file case). Self-contained and EXCLUDE_FROM_ALL like remote-to-remote-test
-# above, same "additional, not folded into the fixed count" treatment — see
-# src/move_entry_test.cpp's own header comment and
-# CONTRIBUTING.md/ARCHITECTURE.md for the full detail.
-qt_add_executable(move-entry-test EXCLUDE_FROM_ALL
-    src/move_entry_test.cpp
-    src/AppSettings.cpp
-    src/backends/CredentialStore.cpp
-    src/ui/FilePaneWidget.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/IconTheme.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/RemoteBackend.h
-    src/transfer/TransferManager.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/transfer/FolderEnumerator.cpp
-    resources/icons.qrc
-    resources/theme.qrc
-)
-target_include_directories(move-entry-test PRIVATE src)
-target_link_libraries(move-entry-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
+# file case). See src/move_entry_test.cpp's own header comment.
+qt_add_executable(move-entry-test EXCLUDE_FROM_ALL src/move_entry_test.cpp)
+target_link_libraries(move-entry-test PRIVATE zephyrftp_core)
 
 # --- Edit-in-place test: EditSessionManager's download -> real
 # QFileSystemWatcher-detected save -> re-upload -> re-edit-without-
 # re-download -> teardown-deletes-temp-file lifecycle, against a real
-# LocalBackend standing in for "the remote" (see src/edit_session_test.cpp's
-# own header comment for why that's a legitimate stand-in here, same
-# reasoning navigation-test/transfer-pause-test already rely on for
-# their own LocalBackend-backed panes). Self-contained and
-# EXCLUDE_FROM_ALL like remote-to-remote-test/move-entry-test above,
-# same "additional, not folded into the fixed count" treatment.
-qt_add_executable(edit-session-test EXCLUDE_FROM_ALL
-    src/edit_session_test.cpp
-    src/AppSettings.cpp
-    src/backends/CredentialStore.cpp
-    src/ui/FilePaneWidget.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/IconTheme.cpp
-    src/ui/EditSessionManager.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/RemoteBackend.h
-    src/transfer/TransferManager.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/transfer/FolderEnumerator.cpp
-    resources/icons.qrc
-    resources/theme.qrc
-)
-target_include_directories(edit-session-test PRIVATE src)
-target_link_libraries(edit-session-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
+# LocalBackend standing in for "the remote" — see
+# src/edit_session_test.cpp's own header comment.
+qt_add_executable(edit-session-test EXCLUDE_FROM_ALL src/edit_session_test.cpp)
+target_link_libraries(edit-session-test PRIVATE zephyrftp_core)
 
 # --- Queue persistence test: TransferQueueStore's save/load round trip,
 # TransferManager::restorePersistedQueue()'s LocalToLocal-dispatches-
@@ -1051,430 +554,135 @@ target_link_libraries(edit-session-test PRIVATE Qt6::Widgets Qt6::Network Qt6::C
 # split, and tryReclaimPendingItems()'s reconnect-matching (including a
 # non-matching reconnect leaving an item PendingReconnect, and one
 # reconnect claiming several items at once) — against a real LocalBackend
-# standing in for "the remote" (see src/queue_persistence_test.cpp's own
-# header comment). Self-contained and EXCLUDE_FROM_ALL like
-# edit-session-test/move-entry-test above, same "additional, not folded
-# into the fixed count" treatment.
-qt_add_executable(queue-persistence-test EXCLUDE_FROM_ALL
-    src/queue_persistence_test.cpp
-    src/AppSettings.cpp
-    src/backends/CredentialStore.cpp
-    src/ui/FilePaneWidget.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/IconTheme.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/SavedSite.cpp
-    src/backends/RemoteBackend.h
-    src/transfer/TransferManager.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/transfer/FolderEnumerator.cpp
-    resources/icons.qrc
-    resources/theme.qrc
-)
-target_include_directories(queue-persistence-test PRIVATE src)
-target_link_libraries(queue-persistence-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
+# standing in for "the remote". See src/queue_persistence_test.cpp's own
+# header comment.
+qt_add_executable(queue-persistence-test EXCLUDE_FROM_ALL src/queue_persistence_test.cpp)
+target_link_libraries(queue-persistence-test PRIVATE zephyrftp_core)
 
 # --- Transfer concurrency test: TransferManager's per-backend-instance
 # concurrent scheduling (two items on DIFFERENT backend instances run
 # genuinely at the same time; two on the SAME instance still serialize;
 # cancelling one concurrently-active item doesn't affect another) — see
-# src/transfer_concurrency_test.cpp's own header comment. Self-contained
-# and EXCLUDE_FROM_ALL like queue-persistence-test above, same
-# "additional, not folded into the fixed count" treatment.
-qt_add_executable(transfer-concurrency-test EXCLUDE_FROM_ALL
-    src/transfer_concurrency_test.cpp
-    src/AppSettings.cpp
-    src/backends/CredentialStore.cpp
-    src/ui/FilePaneWidget.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/IconTheme.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/RemoteBackend.h
-    src/transfer/TransferManager.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/transfer/FolderEnumerator.cpp
-    resources/icons.qrc
-    resources/theme.qrc
-)
-target_include_directories(transfer-concurrency-test PRIVATE src)
-target_link_libraries(transfer-concurrency-test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${CREDENTIAL_STORE_TARGET})
+# src/transfer_concurrency_test.cpp's own header comment.
+qt_add_executable(transfer-concurrency-test EXCLUDE_FROM_ALL src/transfer_concurrency_test.cpp)
+target_link_libraries(transfer-concurrency-test PRIVATE zephyrftp_core)
 
-# --- Live-server verification harnesses (NOT part of the ten-target
+# --- Live-server verification harnesses (NOT part of the required
 # self-contained test suite above — these need an external server
 # already running, started via tools/local-test-servers/*.sh; see each
 # .cpp's own header comment and tools/local-test-servers/README.md) ---
-qt_add_executable(verify-sftp-pubkey EXCLUDE_FROM_ALL
-    src/verify_sftp_pubkey.cpp
-    src/ui/HostKeyVerifier.cpp
-    src/backends/SftpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/RemoteBackend.h
-    src/transfer/FolderEnumerator.cpp
-)
-target_include_directories(verify-sftp-pubkey PRIVATE src)
-target_link_libraries(verify-sftp-pubkey PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent ${LIBSSH2_TARGET}
-)
+qt_add_executable(verify-sftp-pubkey EXCLUDE_FROM_ALL src/verify_sftp_pubkey.cpp)
+target_link_libraries(verify-sftp-pubkey PRIVATE zephyrftp_core)
 
-qt_add_executable(verify-sftp-pause-cancel EXCLUDE_FROM_ALL
-    src/verify_sftp_pause_cancel.cpp
-    src/ui/HostKeyVerifier.cpp
-    src/backends/SftpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/RemoteBackend.h
-)
-target_include_directories(verify-sftp-pause-cancel PRIVATE src)
-target_link_libraries(verify-sftp-pause-cancel PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent ${LIBSSH2_TARGET}
-)
+qt_add_executable(verify-sftp-pause-cancel EXCLUDE_FROM_ALL src/verify_sftp_pause_cancel.cpp)
+target_link_libraries(verify-sftp-pause-cancel PRIVATE zephyrftp_core)
 
 # --- Bandwidth throttle against a REAL server — see
-# src/verify_bandwidth_throttle_live.cpp's own header comment. Same
-# single-server precondition/source set as verify-sftp-pause-cancel
-# above (tools/local-test-servers/start-sftp-pubkey.sh already running).
-qt_add_executable(verify-bandwidth-throttle-live EXCLUDE_FROM_ALL
-    src/verify_bandwidth_throttle_live.cpp
-    src/ui/HostKeyVerifier.cpp
-    src/backends/SftpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/RemoteBackend.h
-)
-target_include_directories(verify-bandwidth-throttle-live PRIVATE src)
-target_link_libraries(verify-bandwidth-throttle-live PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent ${LIBSSH2_TARGET}
-)
+# src/verify_bandwidth_throttle_live.cpp's own header comment. Needs
+# tools/local-test-servers/start-sftp-pubkey.sh already running.
+qt_add_executable(verify-bandwidth-throttle-live EXCLUDE_FROM_ALL src/verify_bandwidth_throttle_live.cpp)
+target_link_libraries(verify-bandwidth-throttle-live PRIVATE zephyrftp_core)
 
 # --- Move (server-side rename between two panes on the same connection)
 # against a REAL server — see src/verify_sftp_move.cpp's own header
-# comment. Unlike every other verify-* target above, this drives
-# TransferManager/FilePaneWidget against real SftpBackend connections
-# (not just a raw backend), so it needs the same source set
-# move-entry-test does, plus SftpBackend/HostKeyVerifier for the real
-# connection. Needs tools/local-test-servers/start-sftp-pubkey.sh
-# already running.
-qt_add_executable(verify-sftp-move EXCLUDE_FROM_ALL
-    src/verify_sftp_move.cpp
-    src/AppSettings.cpp
-    src/backends/CredentialStore.cpp
-    src/ui/FilePaneWidget.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/IconTheme.cpp
-    src/ui/HostKeyVerifier.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/SftpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/RemoteBackend.h
-    src/transfer/TransferManager.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/transfer/FolderEnumerator.cpp
-    resources/icons.qrc
-    resources/theme.qrc
-)
-target_include_directories(verify-sftp-move PRIVATE src)
-target_link_libraries(verify-sftp-move PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${CREDENTIAL_STORE_TARGET}
-)
+# comment. Needs tools/local-test-servers/start-sftp-pubkey.sh already
+# running.
+qt_add_executable(verify-sftp-move EXCLUDE_FROM_ALL src/verify_sftp_move.cpp)
+target_link_libraries(verify-sftp-move PRIVATE zephyrftp_core)
 
 # --- Remote-to-remote staged transfer against TWO REAL, independent
 # SFTP servers — see src/verify_remote_to_remote_live.cpp's own header
 # comment for the specific "not cleanly, repeatably confirmed" gap this
-# closes. Same source set as verify-sftp-move above (drives
-# TransferManager/FilePaneWidget against real connections). Needs TWO
-# tools/local-test-servers/start-sftp-pubkey.sh instances already
-# running on different ports.
-qt_add_executable(verify-remote-to-remote-live EXCLUDE_FROM_ALL
-    src/verify_remote_to_remote_live.cpp
-    src/AppSettings.cpp
-    src/backends/CredentialStore.cpp
-    src/ui/FilePaneWidget.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/IconTheme.cpp
-    src/ui/HostKeyVerifier.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/SftpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/RemoteBackend.h
-    src/transfer/TransferManager.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/transfer/FolderEnumerator.cpp
-    resources/icons.qrc
-    resources/theme.qrc
-)
-target_include_directories(verify-remote-to-remote-live PRIVATE src)
-target_link_libraries(verify-remote-to-remote-live PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${CREDENTIAL_STORE_TARGET}
-)
+# closes. Needs TWO tools/local-test-servers/start-sftp-pubkey.sh
+# instances already running on different ports.
+qt_add_executable(verify-remote-to-remote-live EXCLUDE_FROM_ALL src/verify_remote_to_remote_live.cpp)
+target_link_libraries(verify-remote-to-remote-live PRIVATE zephyrftp_core)
 
 # --- Concurrent transfers against TWO REAL, independent SFTP servers —
 # closes the one gap transfer-concurrency-test's own header comment
 # names outright: it proves TransferManager's scheduling allows
 # concurrent InProgress items, not that two real libssh2 sessions
 # actually move bytes over the network at the same time. See
-# src/verify_concurrent_transfers_live.cpp's own header comment for the
-# full design (serial baseline, then a concurrent 3-item batch, timed
-# and compared). Same source set/server setup as
-# verify-remote-to-remote-live above.
-qt_add_executable(verify-concurrent-transfers-live EXCLUDE_FROM_ALL
-    src/verify_concurrent_transfers_live.cpp
-    src/AppSettings.cpp
-    src/backends/CredentialStore.cpp
-    src/ui/FilePaneWidget.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/IconTheme.cpp
-    src/ui/HostKeyVerifier.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/SftpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/RemoteBackend.h
-    src/transfer/TransferManager.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/transfer/FolderEnumerator.cpp
-    resources/icons.qrc
-    resources/theme.qrc
-)
-target_include_directories(verify-concurrent-transfers-live PRIVATE src)
-target_link_libraries(verify-concurrent-transfers-live PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${CREDENTIAL_STORE_TARGET}
-)
-
+# src/verify_concurrent_transfers_live.cpp's own header comment.
+qt_add_executable(verify-concurrent-transfers-live EXCLUDE_FROM_ALL src/verify_concurrent_transfers_live.cpp)
+target_link_libraries(verify-concurrent-transfers-live PRIVATE zephyrftp_core)
 
 # --- Move (server-side rename between two panes on the same connection)
 # against a REAL FTP server — the FTP counterpart to verify-sftp-move
 # above, confirming RNFR/RNTO genuinely relocates a DIRECTORY, not just
 # a file, over FTP specifically. See src/verify_ftp_move.cpp's own
-# header comment. No SftpBackend/libssh2/HostKeyVerifier needed —
-# FtpBackend uses CertificateVerifier instead (only actually exercised
-# for FTPS, but still needs linking since FtpBackend.h references the
-# type). Needs tools/local-test-servers/start-ftp.sh already running.
-qt_add_executable(verify-ftp-move EXCLUDE_FROM_ALL
-    src/verify_ftp_move.cpp
-    src/AppSettings.cpp
-    src/backends/CredentialStore.cpp
-    src/ui/FilePaneWidget.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/IconTheme.cpp
-    src/ui/CertificateVerifier.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/FtpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/FtpTlsSocket.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/RemoteBackend.h
-    src/transfer/TransferManager.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/transfer/FolderEnumerator.cpp
-    resources/icons.qrc
-    resources/theme.qrc
-)
-target_include_directories(verify-ftp-move PRIVATE src)
-target_link_libraries(verify-ftp-move PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${OPENSSL_TARGET} ${CREDENTIAL_STORE_TARGET}
-)
+# header comment. Needs tools/local-test-servers/start-ftp.sh already
+# running.
+qt_add_executable(verify-ftp-move EXCLUDE_FROM_ALL src/verify_ftp_move.cpp)
+target_link_libraries(verify-ftp-move PRIVATE zephyrftp_core)
 
 # --- SSH-daemon diversity: real Dropbear (password auth), not just
 # OpenSSH — see src/verify_sftp_vendors.cpp's own header comment for the
 # honest accounting of what this does and doesn't prove. Needs
 # tools/local-test-servers/start-dropbear.sh's podman container already
 # running. ---
-qt_add_executable(verify-sftp-vendors EXCLUDE_FROM_ALL
-    src/verify_sftp_vendors.cpp
-    src/ui/HostKeyVerifier.cpp
-    src/backends/SftpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/RemoteBackend.h
-)
-target_include_directories(verify-sftp-vendors PRIVATE src)
-target_link_libraries(verify-sftp-vendors PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent ${LIBSSH2_TARGET}
-)
+qt_add_executable(verify-sftp-vendors EXCLUDE_FROM_ALL src/verify_sftp_vendors.cpp)
+target_link_libraries(verify-sftp-vendors PRIVATE zephyrftp_core)
 
 # --- SFTP throughput vs. a real, non-loopback remote server — see
 # src/verify_sftp_throughput.cpp's own header comment. Needs a real
 # externally-provided server (host/user/password via env vars); unlike
 # every other harness above, this project can't spin up its own for this
 # since the whole point is a real, non-zero round-trip time. ---
-qt_add_executable(verify-sftp-throughput EXCLUDE_FROM_ALL
-    src/verify_sftp_throughput.cpp
-    src/ui/HostKeyVerifier.cpp
-    src/backends/SftpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/RemoteBackend.h
-)
-target_include_directories(verify-sftp-throughput PRIVATE src)
-target_link_libraries(verify-sftp-throughput PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent ${LIBSSH2_TARGET}
-)
+qt_add_executable(verify-sftp-throughput EXCLUDE_FROM_ALL src/verify_sftp_throughput.cpp)
+target_link_libraries(verify-sftp-throughput PRIVATE zephyrftp_core)
 
-qt_add_executable(verify-ftp-live EXCLUDE_FROM_ALL
-    src/verify_ftp_live.cpp
-    src/backends/FtpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/FtpTlsSocket.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/RemoteBackend.h
-    src/ui/CertificateVerifier.cpp
-)
-target_include_directories(verify-ftp-live PRIVATE src)
-target_link_libraries(verify-ftp-live PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network ${OPENSSL_TARGET})
+qt_add_executable(verify-ftp-live EXCLUDE_FROM_ALL src/verify_ftp_live.cpp)
+target_link_libraries(verify-ftp-live PRIVATE zephyrftp_core)
 
 # --- FTPS certificate trust-on-first-use, against the real self-signed
 # test server (start-ftps.sh) — see src/verify_ftps_trust.cpp's own
 # header comment for the three phases this drives. ---
-qt_add_executable(verify-ftps-trust EXCLUDE_FROM_ALL
-    src/verify_ftps_trust.cpp
-    src/ui/CertificateVerifier.cpp
-    src/backends/FtpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/FtpTlsSocket.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/RemoteBackend.h
-)
-target_include_directories(verify-ftps-trust PRIVATE src)
-target_link_libraries(verify-ftps-trust PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent ${OPENSSL_TARGET})
+qt_add_executable(verify-ftps-trust EXCLUDE_FROM_ALL src/verify_ftps_trust.cpp)
+target_link_libraries(verify-ftps-trust PRIVATE zephyrftp_core)
 
 # --- Implicit FTPS against a REAL server (vsftpd, implicit_ssl=YES) —
 # closes the gap that every other FTPS verification here only ever
 # exercises explicit AUTH TLS. See src/verify_ftps_implicit.cpp's own
 # header comment.
-qt_add_executable(verify-ftps-implicit EXCLUDE_FROM_ALL
-    src/verify_ftps_implicit.cpp
-    src/ui/CertificateVerifier.cpp
-    src/backends/FtpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/FtpTlsSocket.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/RemoteBackend.h
-)
-target_include_directories(verify-ftps-implicit PRIVATE src)
-target_link_libraries(verify-ftps-implicit PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent ${OPENSSL_TARGET})
+qt_add_executable(verify-ftps-implicit EXCLUDE_FROM_ALL src/verify_ftps_implicit.cpp)
+target_link_libraries(verify-ftps-implicit PRIVATE zephyrftp_core)
 
 # --- Real vendor-diversity verification: actual vsftpd/proftpd, not
 # pyftpdlib — see src/verify_ftp_vendors.cpp's own header comment. Needs
 # tools/local-test-servers/start-vsftpd.sh/start-proftpd.sh's podman
 # containers already running, a different (heavier) precondition than
 # verify-ftp-live's, hence its own target. ---
-qt_add_executable(verify-ftp-vendors EXCLUDE_FROM_ALL
-    src/verify_ftp_vendors.cpp
-    src/backends/FtpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/FtpTlsSocket.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/RemoteBackend.h
-    src/ui/CertificateVerifier.cpp
-)
-target_include_directories(verify-ftp-vendors PRIVATE src)
-target_link_libraries(verify-ftp-vendors PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network ${OPENSSL_TARGET})
+qt_add_executable(verify-ftp-vendors EXCLUDE_FROM_ALL src/verify_ftp_vendors.cpp)
+target_link_libraries(verify-ftp-vendors PRIVATE zephyrftp_core)
 
 # --- SOCKS5 proxy, real end to end — see src/verify_socks5_proxy.cpp's
 # own header comment. Needs tools/local-test-servers/
 # start-sftp-pubkey.sh, start-socks5-proxy.sh, start-ftp.sh, and
 # start-ftps-trusted.sh all already running (SFTP/FTP/FTPS each proxied
 # through the same real SOCKS5 proxy). ---
-qt_add_executable(verify-socks5-proxy EXCLUDE_FROM_ALL
-    src/verify_socks5_proxy.cpp
-    src/ui/HostKeyVerifier.cpp
-    src/ui/CertificateVerifier.cpp
-    src/backends/SftpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/FtpBackend.cpp
-    src/backends/FtpTlsSocket.cpp
-    src/backends/RemoteBackend.h
-)
-target_include_directories(verify-socks5-proxy PRIVATE src)
-target_link_libraries(verify-socks5-proxy PRIVATE
-    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Concurrent ${LIBSSH2_TARGET} ${OPENSSL_TARGET}
-)
+qt_add_executable(verify-socks5-proxy EXCLUDE_FROM_ALL src/verify_socks5_proxy.cpp)
+target_link_libraries(verify-socks5-proxy PRIVATE zephyrftp_core)
 
 # --- HTTP CONNECT proxy, real end to end — see
 # src/verify_http_connect_proxy.cpp's own header comment. Needs
 # tools/local-test-servers/start-sftp-pubkey.sh,
 # start-http-connect-proxy.sh, start-ftp.sh, and start-ftps-trusted.sh
 # all already running. ---
-qt_add_executable(verify-http-connect-proxy EXCLUDE_FROM_ALL
-    src/verify_http_connect_proxy.cpp
-    src/ui/HostKeyVerifier.cpp
-    src/ui/CertificateVerifier.cpp
-    src/backends/SftpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/FtpBackend.cpp
-    src/backends/FtpTlsSocket.cpp
-    src/backends/RemoteBackend.h
-)
-target_include_directories(verify-http-connect-proxy PRIVATE src)
-target_link_libraries(verify-http-connect-proxy PRIVATE
-    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Concurrent ${LIBSSH2_TARGET} ${OPENSSL_TARGET}
-)
+qt_add_executable(verify-http-connect-proxy EXCLUDE_FROM_ALL src/verify_http_connect_proxy.cpp)
+target_link_libraries(verify-http-connect-proxy PRIVATE zephyrftp_core)
 
 # --- CredentialStore against the REAL OS credential store — see
 # src/verify_credential_store.cpp's own header comment. Unlike every
 # other verify-* target above, its "external precondition" is a real,
 # already-in-use OS credential store rather than a disposable local
-# server, which is also why it isn't one of the ten self-contained
+# server, which is also why it isn't one of the required self-contained
 # EXCLUDE_FROM_ALL targets despite needing no other setup to run. ---
-qt_add_executable(verify-credential-store EXCLUDE_FROM_ALL
-    src/verify_credential_store.cpp
-    src/backends/CredentialStore.cpp
-    src/AppSettings.cpp
-)
-target_include_directories(verify-credential-store PRIVATE src)
-target_link_libraries(verify-credential-store PRIVATE Qt6::Core ${CREDENTIAL_STORE_TARGET})
+qt_add_executable(verify-credential-store EXCLUDE_FROM_ALL src/verify_credential_store.cpp)
+target_link_libraries(verify-credential-store PRIVATE zephyrftp_core)
 
 # Covers the real `open <site-name>` path script-runner-test deliberately
 # can't (no OS keyring/live-server dependency there) — see this file's
-# own header comment. Needs the same full ScriptRunner dependency set as
-# script-runner-test, plus ui/HostKeyVerifier.cpp for its one-time real
-# trust-setup phase.
-qt_add_executable(verify-script-runner-live EXCLUDE_FROM_ALL
-    src/verify_script_runner_live.cpp
-    src/AppSettings.cpp
-    src/backends/CredentialStore.cpp
-    src/ui/FilePaneWidget.cpp
-    src/backends/ConnectionHistory.cpp
-    src/ui/PermissionsDialog.cpp
-    src/ui/FileTreeView.cpp
-    src/ui/IconTheme.cpp
-    src/ui/HostKeyVerifier.cpp
-    src/backends/LocalBackend.cpp
-    src/backends/SftpBackend.cpp
-    src/backends/BandwidthThrottle.cpp
-    src/backends/ProxyConnect.cpp
-    src/backends/FtpBackend.cpp
-    src/backends/FtpTlsSocket.cpp
-    src/backends/SavedSite.cpp
-    src/backends/RemoteBackend.h
-    src/transfer/TransferManager.cpp
-    src/transfer/TransferQueueStore.cpp
-    src/transfer/FolderEnumerator.cpp
-    src/compare/DirectoryComparer.cpp
-    src/compare/CompareSyncExecutor.cpp
-    src/cli/ScriptParser.cpp
-    src/cli/ScriptRunner.cpp
-    resources/icons.qrc
-    resources/theme.qrc
-)
-target_include_directories(verify-script-runner-live PRIVATE src)
-target_link_libraries(verify-script-runner-live PRIVATE
-    Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Svg ${LIBSSH2_TARGET} ${OPENSSL_TARGET} ${CREDENTIAL_STORE_TARGET}
-)
+# own header comment.
+qt_add_executable(verify-script-runner-live EXCLUDE_FROM_ALL src/verify_script_runner_live.cpp)
+target_link_libraries(verify-script-runner-live PRIVATE zephyrftp_core)

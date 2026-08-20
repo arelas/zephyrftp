@@ -312,14 +312,40 @@ Trusted Signing). Signing needs no changes to the `.nsi` script itself:
 it runs against the finished `.exe` afterward, same as signing any
 other prebuilt binary.
 
-### A build gotcha worth knowing before it costs you an hour
+### The shared `zephyrftp_core` object library
 
-Any test target that pulls in a `Q_OBJECT` header (`RemoteBackend.h` is
-the usual one) without also compiling a `.cpp` that uses it must list
-that header explicitly in the target's sources. Otherwise AUTOMOC never
-generates its vtable and you get a link error that points nowhere near
-the actual cause. This has bitten essentially every new test target
-added to this project — check it first when a new target won't link.
+Every non-trivial test target links a single shared `zephyrftp_core`
+`OBJECT` library (defined near the top of `CMakeLists.txt`) instead of
+enumerating its own subset of source files the way every target here
+used to. This isn't just tidiness — before this existed, CMake compiled
+each shared `.cpp` once *per target that named it*: a real, measured
+cost, not a theoretical one (`MainWindow.cpp` was being compiled 14
+separate times, `TransferManager.cpp` 34 times, 1.4GB of object files
+for the test suite alone, and CI's own "Build test suite" step took
+over 3x as long as actually *running* every test). `zephyrftp_core`
+compiles the whole set exactly once; every target just links it plus
+its own entry-point `.cpp`.
+
+A new test target needs exactly two lines:
+
+```cmake
+qt_add_executable(my-new-test EXCLUDE_FROM_ALL src/my_new_test.cpp)
+target_link_libraries(my-new-test PRIVATE zephyrftp_core)
+```
+
+(add `Qt6::Test` too if the test uses `QTest::` helpers, the way
+`keyboard-shortcuts-test`/`navigation-test` do). This also structurally
+closes what used to be a real, repeatedly-hit gotcha: a target that
+pulled in a `Q_OBJECT` header without also compiling a `.cpp` that used
+it would fail AUTOMOC's vtable generation with a link error nowhere near
+the actual cause. That's no longer possible — every `Q_OBJECT` header
+in `CORE_SOURCES`/`HEADERS` is always compiled together, once, inside
+`zephyrftp_core` itself, before any target links it.
+
+If a new test genuinely needs a source file that ISN'T already in
+`zephyrftp_core` (rare — check `CORE_SOURCES` in `CMakeLists.txt`
+first), add it there rather than to the individual target; that's the
+one list every target draws from now.
 
 ### Linux distro packages (.deb/.rpm)
 

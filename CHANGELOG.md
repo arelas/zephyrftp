@@ -8,6 +8,36 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Changed (developer-facing only, no shipped behavior)
+
+- **CMakeLists.txt: every test/verify target now links one shared
+  `zephyrftp_core` `OBJECT` library instead of each enumerating its own
+  subset of source files.** Requested directly ("ensure efficiency and
+  speed without sacrificing accuracy" across the test suite). Confirmed
+  the real cost before touching anything: CI's own "Build test suite"
+  step took 6m06s versus 1m53s to actually *run* all 27 required
+  tests — `MainWindow.cpp` was being compiled 14 separate times,
+  `TransferManager.cpp` 34 times, `FilePaneWidget.cpp` 36 times, 1.4GB
+  of object files for the test suite alone, because every target that
+  named a shared source file triggered its own independent compile.
+  `CMakeLists.txt` shrank from 1481 to 688 lines in the process — every
+  target is now two lines (its entry-point `.cpp` + linking
+  `zephyrftp_core`) instead of ~30. Locally, a full clean build of the
+  app plus all 27 required targets now takes ~52s (was CI-measured at
+  well over 6 minutes for the test-build step alone), and the test
+  object directory shrank from 1.4GB to 144MB. Zero change to any
+  test's logic, assertions, or runtime behavior — confirmed by running
+  the complete 27-target required suite before and after: identical
+  100% pass, and run timing byte-for-byte unchanged (both ~107.4s
+  total), since nothing about how the tests execute changed, only how
+  their shared source files get compiled. Also structurally closes a
+  real, previously-documented AUTOMOC gotcha (a target referencing a
+  `Q_OBJECT` header without also compiling its `.cpp` used to fail with
+  a confusing link error) — every `Q_OBJECT` header is now always
+  compiled together, once, before any target links it. See
+  CONTRIBUTING.md's "The shared `zephyrftp_core` object library"
+  section for how to add a new test target under this model.
+
 ## [0.8.4] — Fix dialog input fields being inconsistent widths across platforms
 
 ### Fixed
