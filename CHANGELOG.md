@@ -6,6 +6,43 @@ project doesn't yet promise strict [Semantic Versioning](https://semver.org/)
 guarantees — it's pre-1.0 (see [Known limitations](README.md#known-limitations)
 in the README), so anything may still change between 0.x releases.
 
+## [Unreleased]
+
+### Fixed
+
+- **Transfers pane's Active/Completed/Failed tab labels were getting
+  cut off on macOS.** Reported directly. Same class of per-platform
+  `QStyle` hint already hit twice this session (`QFormLayout`'s
+  field-growth policy, `QTabBar`'s alignment) — `QStyle::
+  SH_TabBar_ElideMode` differs by platform too, and `QMacStyle`
+  defaults to eliding tab text that doesn't fit its own computed
+  width, unlike Linux/Windows; `documentMode(true)` (the earlier
+  macOS tab fix) addressed alignment/native-boxing but not eliding.
+  Gets worse once `updateTabLabel()` appends a live "(N)" count.
+  Fixed with `QTabBar::setElideMode(Qt::ElideNone)` — these tabs have
+  no scroll buttons and plenty of dock width, so there's nothing to
+  gain from ever truncating instead of sizing to real content.
+  Verified via a real screenshot from an actual macOS CI runner (a
+  temporary probe populating realistic "Completed (1)"/"Failed (2)"
+  counts, screenshotted, then removed — same technique already used
+  and removed three times this session for the .dmg's own layout):
+  both labels now display in full.
+
+### Changed (developer-facing only, no shipped behavior)
+
+- **`workflow_dispatch` can now scope a manual CI run to a single
+  build job** instead of always running the full 5-job pipeline.
+  Prompted directly ("if we are testing mac, why are we running all
+  of them?") after this session ran the complete pipeline multiple
+  times purely to verify macOS-only changes, burning ~25 minutes of
+  unused Windows/Linux/RPM/AppImage build time each time. New `job`
+  choice input (default `all`); a real tag push or PR still always
+  runs every job regardless. Verified directly: a scoped dispatch
+  targeting `build-linux-rpm` showed the other 4 jobs resolving to
+  `skipped` within seconds (confirmed via the Actions API, not just
+  the CLI's summary view) while the targeted job ran and passed
+  normally.
+
 ## [0.8.10] — Fix unreadable DMG label text by switching to the light theme palette
 
 ### Fixed
