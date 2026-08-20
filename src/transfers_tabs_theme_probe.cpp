@@ -24,6 +24,11 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
     QStandardPaths::setTestModeEnabled(true);
 
+    // Same order main.cpp itself uses: the alignment fix must run
+    // before the stylesheet is applied — replicated here since that's
+    // exactly the mechanism under test.
+    TransferQueueWidget::installTabBarAlignmentFix();
+
     // Same theme-loading step main.cpp itself does — real dark theme,
     // not the platform default this probe would otherwise render with.
     QFile themeFile(":/theme/theme.qss");

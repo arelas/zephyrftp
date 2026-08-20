@@ -7,6 +7,7 @@
 #include <QCommandLineOption>
 #include <QTimer>
 #include "ui/MainWindow.h"
+#include "ui/TransferQueueWidget.h"
 #include "ui/IconTheme.h"
 #include "cli/ScriptParser.h"
 #include "cli/ScriptRunner.h"
@@ -99,6 +100,12 @@ int main(int argc, char *argv[])
     const QString themeResourcePath = earlySettings.theme() == Theme::Light
         ? QStringLiteral(":/theme/theme-light.qss")
         : QStringLiteral(":/theme/theme.qss");
+
+    // Must run before app.setStyleSheet() below — see this function's
+    // own doc comment (TransferQueueWidget.h) for why it needs to be
+    // application-wide and this early, not a per-widget setStyle()
+    // call made later when TransferQueueWidget itself is constructed.
+    TransferQueueWidget::installTabBarAlignmentFix();
 
     // Failure here is non-fatal — the app just falls back to Qt's default
     // platform style — so this doesn't need to be more than a warning.

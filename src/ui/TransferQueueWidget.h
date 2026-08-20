@@ -35,6 +35,22 @@ public:
         return TransferQueueTable::directionText(direction);
     }
 
+    // Must be called exactly once, early — BEFORE QApplication::
+    // setStyleSheet() and before any widget is constructed (see
+    // main.cpp's own call site). Fixes this app's only QTabBar
+    // rendering left-aligned instead of QMacStyle's own centered
+    // default on macOS — deliberately NOT done via QWidget::setStyle()
+    // on the tab bar itself (tried first, twice): that call is
+    // documented to disconnect a widget from the app's own stylesheet
+    // cascade, which broke this app's QSS background-color rule for
+    // the tab bar specifically, confirmed via two separate real macOS
+    // screenshots. An app-wide QProxyStyle installed before the
+    // stylesheet even loads doesn't have this problem — Qt's own
+    // automatic QStyleSheetStyle wrapping still applies normally to
+    // every widget, including this one, same as if this function were
+    // never called at all.
+    static void installTabBarAlignmentFix();
+
     // Live Dark/Light switching — this widget doesn't take an
     // AppSettings* (unlike FilePaneWidget), so it can't self-subscribe
     // to themeChanged the same way; MainWindow::onThemeChanged() calls
