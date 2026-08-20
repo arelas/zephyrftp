@@ -264,6 +264,14 @@ Grab the latest build from [Releases](https://github.com/arelas/zephyrftp/releas
     ./zephyrftp_*.deb` resolves dependencies automatically.
   - `zephyrftp-<version>-1.x86_64.rpm` — Fedora/openSUSE/RHEL-family,
     `dnf install ./zephyrftp-*.rpm` (or your distro's equivalent).
+    Double-clicking the `.deb`/`.rpm` to open it in a GUI software
+    center (KDE Discover, GNOME Software) may show it as an unnamed
+    package with "unknown" publisher/group — that's PackageKit's own
+    local-file preview being sparse (confirmed directly: even fields
+    genuinely present in the package, like Group, show as "unknown"
+    through it), not a problem with the package itself. `dnf install`/
+    `apt install` on the file read its real metadata correctly, same
+    as `rpm -qi`/`dpkg -I` do.
   - `zephyrftp-linux-x64.tar.gz` — extracts to a single `zephyrftp`
     binary, no install/root needed, for anything else.
 
