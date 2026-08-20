@@ -6,6 +6,64 @@ project doesn't yet promise strict [Semantic Versioning](https://semver.org/)
 guarantees — it's pre-1.0 (see [Known limitations](README.md#known-limitations)
 in the README), so anything may still change between 0.x releases.
 
+## [Unreleased]
+
+### Fixed
+
+- **Transfers pane had a thin white bar above it and its tab bar
+  followed the macOS system light/dark appearance instead of this
+  app's own theme.** Reported directly. Root cause: v0.8.11's
+  `QTabWidget::setDocumentMode(true)` switched this tab bar onto
+  QMacStyle's native "unified toolbar" rendering, which paints its own
+  background/chrome outside the app's QSS.
+  Took four iterations, each verified against a real screenshot from
+  an actual macOS CI runner (there is no way to preview this any other
+  way) — worth recording precisely, since the middle two looked
+  reasonable in code but weren't:
+  1. A `QProxyStyle` overriding just `SH_TabBar_Alignment`/
+     `SH_TabBar_ElideMode`, installed on the tab bar via
+     `QWidget::setStyle()`, wrapping (not replacing) QMacStyle. Still
+     showed the same white background in a real screenshot.
+  2. Suspecting QMacStyle's own painting specifically, swapped to Qt's
+     fully cross-platform `Fusion` style instead — same
+     `QWidget::setStyle()` installation. Produced the *identical*
+     white background, pixel-for-pixel, despite being a completely
+     different style object. That match was the real clue: the
+     variable wasn't *which* style, it was calling
+     `QWidget::setStyle()` on the tab bar at all — Qt's own
+     documentation warns this disconnects a widget from the app's
+     stylesheet cascade, and alignment/eliding (plain `styleHint()`/
+     property mechanisms) had kept working across both attempts while
+     only QSS `background-color` painting failed — exactly the
+     documented split.
+  3. Fixed by moving to where it belongs: a new
+     `TransferQueueWidget::installTabBarAlignmentFix()`, called once
+     from `main.cpp` *before* `app.setStyleSheet()`, using
+     `QApplication::setStyle()` instead — which composes correctly
+     with stylesheets by design, so every widget (including this tab
+     bar) still gets Qt's normal automatic `QStyleSheetStyle`
+     wrapping. Overrides only `SH_TabBar_Alignment`; eliding stays the
+     already-verified plain `QTabBar::setElideMode(Qt::ElideNone)`
+     property, unrelated to any of this. Confirmed via a real macOS
+     screenshot: dark background flowing seamlessly under all three
+     tab labels into the table below, left-aligned, full text.
+  Along the way, caught and fixed a real bug in the fix itself before
+  it ever left the sandbox: the first `setStyle()` attempt parented
+  the new style object to the tab bar (needed since
+  `QWidget::setStyle()` doesn't take ownership) — this caused a
+  genuine SIGSEGV in `QApplication::~QApplication()` on every test
+  that tears down a real `MainWindow`, confirmed via `gdb`, fixed by
+  not parenting it at all (`QApplication::setStyle()`, used in the
+  final fix, takes ownership correctly on its own — no manual lifetime
+  workaround needed there). Also hit and correctly retried (not
+  investigated further) `conflict-resolution-test`'s own well-
+  documented, long-recurring Phase E macOS CI flake, unrelated to any
+  of this — see project memory for the standing "retry, don't
+  re-diagnose" precedent.
+  Full 27-target required suite passed after every iteration,
+  including the three tests that had been crashing 100% of the time
+  under the first `setStyle()` attempt.
+
 ## [0.8.11] — Fix Transfers pane tab labels getting cut off on macOS
 
 ### Fixed

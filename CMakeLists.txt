@@ -429,10 +429,6 @@ endif()
 qt_add_executable(smoke-test EXCLUDE_FROM_ALL src/smoke_test.cpp)
 target_link_libraries(smoke-test PRIVATE zephyrftp_core)
 
-# --- TEMP disposable probe, remove before commit ---
-qt_add_executable(transfers-tabs-theme-probe EXCLUDE_FROM_ALL src/transfers_tabs_theme_probe.cpp)
-target_link_libraries(transfers-tabs-theme-probe PRIVATE zephyrftp_core)
-
 # --- Keyboard shortcuts test: Delete/F2/F5/Ctrl+A/Ctrl+C/Ctrl+V, driven
 # via real QTest::keyClick() against a real MainWindow (see
 # src/keyboard_shortcuts_test.cpp's own header comment).
