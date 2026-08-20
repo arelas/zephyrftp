@@ -8,6 +8,34 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.8.3] — Fix v0.8.2's .rpm Packager fix, which didn't actually work
+
+### Fixed
+
+- **v0.8.2's `CPACK_RPM_PACKAGE_PACKAGER` fix for the .rpm's null
+  Packager field didn't actually do anything** — confirmed directly
+  against the real published v0.8.2 `.rpm`: `rpm -qp --queryformat
+  "%{PACKAGER}"` still printed `(none)`. Root cause, found by reading
+  CMake's own `CPackRPM.cmake` module source directly this time (not
+  assumed from the variable's plausible-looking name): its built-in
+  spec-file template has no `Packager:` line at all, for any
+  RPM-generator variable whatsoever — `grep -ri packager` across the
+  entire module finds zero matches. `CPACK_RPM_PACKAGE_VENDOR` (set
+  alongside it, and genuinely working) only works because the template
+  happens to already have a `Vendor:` line; nothing about Packager was
+  ever wired up by CMake, so no value set for it could ever have shown
+  up regardless. Real fix needs a user-supplied spec template
+  (`CPACK_RPM_USER_BINARY_SPECFILE`) — new
+  `resources/packaging/rpm-spec.in`, a byte-for-byte copy of that same
+  built-in template with exactly one `Packager:` line added. Verified
+  with a real local `.rpm` build this time (this environment now has
+  `rpmbuild`, installed specifically to close this verification gap):
+  `rpm -qip` on the real output shows `Packager: ZephyrFTP Maintainers
+  <https://github.com/arelas/zephyrftp>`, with every other field
+  (Vendor, Summary, Description, full file list) still intact — the
+  hand-copied template didn't silently break anything else in the
+  process.
+
 ## [0.8.2] — Fix missing publisher/version metadata in the .rpm, .dmg, and Windows .exe
 
 ### Fixed
@@ -2301,7 +2329,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.8.2...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.8.3...HEAD
+[0.8.3]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.3
 [0.8.2]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.2
 [0.8.1]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.1
 [0.8.0]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.0

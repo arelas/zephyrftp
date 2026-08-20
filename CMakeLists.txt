@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ZephyrFTP VERSION 0.8.2 LANGUAGES CXX)
+project(ZephyrFTP VERSION 0.8.3 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -293,16 +293,23 @@ queue with pause/resume, and whole-folder transfers.")
     # equivalents.
     set(CPACK_RPM_PACKAGE_DESCRIPTION "${CPACK_PACKAGE_DESCRIPTION}")
     set(CPACK_RPM_PACKAGE_GROUP "Applications/Internet")
-    # Same "one more field needed than you'd expect" gap as
-    # CPACK_RPM_PACKAGE_DESCRIPTION above, just for author info instead
-    # of description: the .deb generator derives its Maintainer field
-    # from CPACK_PACKAGE_CONTACT automatically, but RPM's Packager field
-    # does NOT fall back to it — confirmed directly against a real
-    # shipped v0.8.1 .rpm (`rpm -qp --queryformat "%{PACKAGER}"` printed
-    # "(none)"). Reuses the exact same contact string the .deb's
-    # Maintainer field already carries, for one consistent identity
-    # across both.
+    # Reuses the exact same contact string the .deb's Maintainer field
+    # already carries, for one consistent identity across both.
     set(CPACK_RPM_PACKAGE_PACKAGER "${CPACK_PACKAGE_CONTACT}")
+    # CPACK_RPM_PACKAGE_PACKAGER above is NOT enough on its own — a real
+    # gap found the hard way: a v0.8.2 release built with only that set
+    # still shipped a .rpm with `rpm -qp --queryformat "%{PACKAGER}"`
+    # printing "(none)". Root cause, confirmed by reading CMake's own
+    # CPackRPM.cmake module source directly (not assumed): its built-in
+    # spec-file template has NO "Packager:" line at all, for any
+    # RPM-generator variable — `grep -ri packager` across that entire
+    # module finds zero matches. Sets CPACK_RPM_PACKAGE_VENDOR above
+    # DOES work only because the template happens to already have a
+    # "Vendor:" line; Packager was simply never wired up by CMake at
+    # all. Fixed with a user-supplied spec template
+    # (resources/packaging/rpm-spec.in) — a byte-for-byte copy of that
+    # same built-in template with exactly one "Packager:" line added.
+    set(CPACK_RPM_USER_BINARY_SPECFILE "${CMAKE_SOURCE_DIR}/resources/packaging/rpm-spec.in")
     set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
 
     include(CPack)
