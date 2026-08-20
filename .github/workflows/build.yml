@@ -771,7 +771,7 @@ jobs:
       # doesn't touch them) — see the "Deploy" steps near the .dmg
       # packaging step for why this exists at all.
       - name: Install build dependencies
-        run: brew install qt libssh2 openssl@3 pkg-config dylibbundler
+        run: brew install qt libssh2 openssl@3 pkg-config dylibbundler create-dmg
 
       - uses: actions/checkout@v7
 
@@ -954,28 +954,60 @@ jobs:
             fi
           done
 
-      # Built directly with hdiutil from the exact build/zephyrftp.app
-      # tree the two deploy steps above just modified in place — NOT
-      # via `cpack -G DragNDrop` (see CMakeLists.txt's APPLE block for
-      # the full story of why that generator was dropped: it silently
-      # re-stages the bundle from CMake's own build-time manifest,
-      # dropping Contents/Frameworks since those files were added
-      # afterward and CMake has no record of them — the actual root
-      # cause of the v0.7.3 launch crash, found only after the
-      # load-command fix above still wasn't enough). Standard drag-to-
-      # install layout (the .app plus an /Applications symlink,
-      # side by side) built by hand for the same reason: an
-      # /Applications symlink can't just be a real bundle member.
+      # Staged from the exact build/zephyrftp.app tree the two deploy
+      # steps above just modified in place — NOT via `cpack -G DragNDrop`
+      # (see CMakeLists.txt's APPLE block for the full story of why that
+      # generator was dropped: it silently re-stages the bundle from
+      # CMake's own build-time manifest, dropping Contents/Frameworks
+      # since those files were added afterward and CMake has no record
+      # of them — the actual root cause of the v0.7.3 launch crash, found
+      # only after the load-command fix above still wasn't enough).
+      # create-dmg (Homebrew, installed above) is a plain filesystem
+      # copy of whatever source folder you point it at, same as the old
+      # `cp -R` line here — it doesn't re-derive the bundle from any
+      # CMake manifest, so it can't reintroduce that bug; the framework
+      # check two steps below still guards this directly either way.
+      # Gives the DMG the classic drag-to-Applications layout (custom
+      # background, positioned icons, hidden Finder chrome) requested
+      # directly ("make our mac dmg look neat, like others do") instead
+      # of the previous bare file-grid — background.png's own layout
+      # (resources/dmg/background.png) was designed around these exact
+      # icon coordinates. --app-drop-link creates and positions the
+      # /Applications alias itself, replacing the old manual `ln -s`
+      # (still can't be a real bundle member, same underlying reason).
       - name: Build .dmg package
         run: |
           set -e
           VERSION="$(grep 'CMAKE_PROJECT_VERSION:STATIC' build/CMakeCache.txt | cut -d= -f2)"
+          DMG_PATH="build/ZephyrFTP-${VERSION}-Darwin.dmg"
           rm -rf dmg-staging
           mkdir dmg-staging
           cp -R build/zephyrftp.app dmg-staging/
-          ln -s /Applications dmg-staging/Applications
-          hdiutil create -volname "ZephyrFTP" -srcfolder dmg-staging \
-            -ov -format UDZO "build/ZephyrFTP-${VERSION}-Darwin.dmg"
+          rm -f "$DMG_PATH"
+          # create-dmg has a well-known CI quirk: its Finder-scripting
+          # half can throw a benign AppleScript timing error on some
+          # runners and return non-zero even though the .dmg it produced
+          # is completely fine — so the exit code alone isn't trusted
+          # here; the explicit test -f below is the real pass/fail check,
+          # same "verify the actual artifact, not just the exit code"
+          # standard the framework-check step already applies.
+          create-dmg \
+            --volname "ZephyrFTP" \
+            --volicon "resources/icons/app-icon.icns" \
+            --background "resources/dmg/background.png" \
+            --window-pos 200 120 \
+            --window-size 660 400 \
+            --icon-size 100 \
+            --icon "zephyrftp.app" 180 170 \
+            --hide-extension "zephyrftp.app" \
+            --app-drop-link 480 170 \
+            --no-internet-enable \
+            "$DMG_PATH" \
+            "dmg-staging/" || true
+          if [ ! -f "$DMG_PATH" ]; then
+            echo "::error::create-dmg did not produce $DMG_PATH"
+            exit 1
+          fi
 
       # Belt-and-suspenders regression guard for the exact bug the two
       # steps above exist to fix: the earlier otool check only proves
@@ -1006,6 +1038,29 @@ jobs:
         with:
           name: zephyrftp-dmg
           path: build/*.dmg
+          if-no-files-found: error
+
+      # TEMPORARY — visual verification for the new create-dmg layout
+      # above, remove once confirmed. There's no way to preview an
+      # actual Finder-rendered DMG outside of a real macOS runner, so
+      # this opens the just-built .dmg for real, lets Finder actually
+      # render its window (background image, positioned icons), and
+      # screenshots it for a human to look at directly rather than
+      # trusting the layout looks right in theory.
+      - name: TEMP - screenshot the .dmg's Finder window
+        run: |
+          set -e
+          VERSION="$(grep 'CMAKE_PROJECT_VERSION:STATIC' build/CMakeCache.txt | cut -d= -f2)"
+          open "build/ZephyrFTP-${VERSION}-Darwin.dmg"
+          sleep 4
+          screencapture -x dmg-screenshot.png
+          hdiutil detach "/Volumes/ZephyrFTP" -quiet || true
+
+      - name: TEMP - upload .dmg screenshot
+        uses: actions/upload-artifact@v7
+        with:
+          name: zephyrftp-dmg-screenshot
+          path: dmg-screenshot.png
           if-no-files-found: error
 
   # Only runs on version tags (v1.0.0 etc.) — attaches both platform

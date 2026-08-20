@@ -98,8 +98,17 @@ wine/Xvfb at all since it's running native binaries directly. The
 macOS job (`build-macos`) is the same shape as `build-linux` — a plain
 native build, this time on `macos-latest` (Apple Silicon only; see
 ARCHITECTURE.md for why not universal) using Homebrew instead of
-apt/dnf — and packages a `.dmg` via `cpack -G DragNDrop` instead of a
-`.deb`/`.rpm`. All three jobs actually run the full required test
+apt/dnf — and packages a `.dmg` via `create-dmg` (Homebrew) instead of
+a `.deb`/`.rpm`; NOT `cpack -G DragNDrop`, which this line used to say
+— that generator was dropped early on (it silently re-stages the
+bundle from CMake's own build-time manifest, dropping
+`Contents/Frameworks` since those files are added by a later deploy
+step CMake has no record of — the actual root cause of the v0.7.3
+launch crash) in favor of packaging the already-fixed `build/zephyrftp.app`
+tree directly; this doc comment just hadn't caught up. See
+`build.yml`'s own "Build .dmg package" step comment for the full story,
+and `resources/dmg/background.png` for the custom drag-to-Applications
+layout. All three jobs actually run the full required test
 suite (see "Running the test suites" below for the current count), not
 just link it.
 On a `v*` tag, the `release` job packages all three
