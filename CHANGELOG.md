@@ -8,6 +8,63 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Transfers dock's Active/Completed/Failed tabs were centered and
+  clipped their own labels on macOS.** Reported directly from real
+  macOS hardware. Root cause: without `QTabWidget::documentMode` set,
+  `QMacStyle` renders tabs as native boxed controls — centered as a
+  group within the bar (`SH_TabBar_Alignment` is `Qt::AlignCenter` on
+  macOS, `Qt::AlignLeft` everywhere else) and sized off native AppKit
+  control minimums rather than actual label width, clipping longer
+  text like "Completed". The dock's existing QSS already flattens
+  these tabs (no border/background box, underline instead of a filled
+  selected state) specifically so they read as a left-aligned
+  toolbar-style tab strip, not native pills — but that's a paintable
+  style, and alignment/sizing here is a style *hint* QSS can't reach,
+  same class of bug as v0.8.4's dialog field-width fix
+  (`QFormLayout`'s field-growth policy). Fixed with the one Qt API
+  built for exactly this (`m_tabs->setDocumentMode(true)` in
+  `TransferQueueWidget`'s constructor) — Qt's own docs note the
+  property "is used differently on macOS than on other platforms."
+  Could not visually verify on real macOS hardware in this
+  environment; verified the full 27-target required suite (including
+  `transfer-queue-test`, which exercises this widget directly) still
+  passes 100% clean, confirming no functional regression on the
+  platform this could be tested on.
+- **Site Manager's starting-directory field was compressed vertically
+  on macOS.** Reported directly from real macOS hardware — the third
+  time this exact failure mode has hit this dialog (see the removed
+  code comment's own history: 440px -> 520px after the "Save password"
+  checkbox was added, -> 540px after "Simultaneous connections" was
+  added, each time because a hand-tuned fixed `resize(700, 540)` —
+  called in the constructor *before* `buildUi()` even populated the
+  form — silently ran short of what the fully-built layout actually
+  needed, and Qt's layout engine reached for the one row that happens
+  to be a nested `QVBoxLayout` (`dirFieldColumn`, the starting-
+  directory radio-buttons-plus-lineedit field) to absorb the shortfall,
+  compressing it below its own `sizeHint()` instead of spreading the
+  deficit or refusing outright. Couldn't reproduce the compression on
+  this sandbox's Linux/Qt combination even against the OLD fixed
+  540px (dialog's real `sizeHint()` here measures a comfortable
+  468px, well under 540 — this dev environment's own font/style
+  metrics have drifted since the 520/540 measurements were originally
+  taken) — consistent with this being genuinely macOS-specific: native
+  control/font metrics there run taller, and a constant tuned only
+  against this machine's own Linux measurements was never going to
+  account for that. Fixed at the root instead of bumping the constant
+  a fourth time: `resize()` now runs *after* `buildUi()`, sized from
+  the fully-built layout's own real `sizeHint()` rather than a
+  hand-tuned guess, so it adapts to whatever the current platform's
+  fonts/control heights actually need on any platform or DPI, closing
+  the entire class of bug rather than the current instance of it.
+  Width stays a fixed 700 (a splitter tree/form balance preference,
+  never the reported problem). Verified via a disposable probe
+  (`findChild<QLineEdit*>` + `height()` vs. `sizeHint().height()`,
+  removed after use) confirming the field renders at its full natural
+  height with the new code, then the full 27-target required suite
+  passing 100% clean.
+
 ### Changed (developer-facing only, no shipped behavior)
 
 - **CMakeLists.txt: every test/verify target now links one shared

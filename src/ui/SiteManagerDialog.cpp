@@ -37,33 +37,30 @@ SiteManagerDialog::SiteManagerDialog(QWidget *parent)
     , m_tree(new QTreeWidget(this))
 {
     setWindowTitle(tr("Site Manager"));
-    // 440 was correct before the "Save password" checkbox was added to
-    // the form; that extra row needs real vertical room too, and
-    // without it Qt's layout engine compresses the starting-directory
-    // field to fit — confirmed directly (440: compressed to 20px
-    // against its own 33px sizeHint; 520: renders at its full natural
-    // height) rather than guessed at.
-    //
-    // Recurred (live-reported, v0.7.26): the "Simultaneous connections"
-    // row added in v0.7.24 pushed the form's own real sizeHint() past
-    // 520 again (694x527, confirmed directly, not guessed) — this
-    // dialog's own QVBoxLayout-as-a-form-row (dirFieldColumn, the
-    // starting-directory radio-buttons-plus-lineedit field) is
-    // apparently the one row Qt's layout engine reaches for first to
-    // absorb ANY shortfall between this fixed resize() and the form's
-    // actual needed height, shrinking the line edit specifically (26px
-    // against its own 33px sizeHint at height 520) rather than the
-    // deficit being spread across the form or refused outright. Bumped
-    // with real headroom (540, not the bare 527 sizeHint) specifically
-    // so the NEXT row this dialog gains doesn't silently reopen the
-    // exact same bug a third time before someone happens to resize the
-    // window and notice.
-    resize(700, 540);
 
     m_sites = SiteStore::load();
     buildUi();
     rebuildTree();
     onTreeSelectionChanged();   // start with the (empty) selection state applied to the form
+
+    // A fixed resize(700, 540) used to sit here, BEFORE buildUi() had
+    // even run — a pixel guess with no actual feedback from the layout
+    // it was sizing. That number needed bumping twice as rows were
+    // added (440 -> 520 -> 540, each time confirmed directly: the
+    // shortfall didn't spread across the form, it silently compressed
+    // one specific row — dirFieldColumn, the starting-directory
+    // radio-buttons-plus-lineedit field — below its own sizeHint) and
+    // even the last bump still weakened, live-reported, a third time:
+    // compressed on macOS, where native control/font metrics run taller
+    // than this dev machine's own Linux measurements that 540 was tuned
+    // against. Sizing from the layout's OWN real sizeHint(), computed
+    // after buildUi() has actually populated it, adapts to whatever the
+    // current platform's fonts/control heights actually need — on any
+    // platform, at any DPI — instead of another hand-tuned constant that
+    // will just need bumping again next time. Width stays a fixed 700:
+    // that's a splitter tree/form balance preference, not something
+    // native metrics affect, and was never the reported problem.
+    resize(700, sizeHint().height());
 }
 
 void SiteManagerDialog::buildUi()

@@ -29,6 +29,21 @@ TransferQueueWidget::TransferQueueWidget(TransferManager *manager, QWidget *pare
     m_completedTable->setObjectName(QStringLiteral("completedQueueTable"));
     m_failedTable->setObjectName(QStringLiteral("failedQueueTable"));
 
+    // documentMode(true) matters only on macOS (Qt's own docs: "currently
+    // this property is used differently on macOS than on other
+    // platforms") — without it, QMacStyle renders these as native boxed
+    // tabs: centered as a group within the bar (SH_TabBar_Alignment is
+    // Qt::AlignCenter there, vs. Qt::AlignLeft everywhere else) and sized
+    // off native AppKit control minimums rather than actual label width,
+    // clipping longer text like "Completed". Reported directly from real
+    // macOS hardware. The QSS above already flattens these tabs (no
+    // border/background box, underline instead of a filled selected
+    // state) specifically so they read as a left-aligned document/toolbar
+    // tab strip, not native pill-shaped controls — documentMode(true) is
+    // the actual Qt-level switch for that on macOS; QSS alone can't reach
+    // this the same way it can't reach QFormLayout's field-growth policy.
+    m_tabs->setDocumentMode(true);
+
     m_tabs->addTab(m_activeTable, tr("Active"));
     m_tabs->addTab(m_completedTable, tr("Completed"));
     m_tabs->addTab(m_failedTable, tr("Failed"));
