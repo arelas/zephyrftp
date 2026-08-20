@@ -77,10 +77,15 @@ void UpdateChecker::check()
         const QVersionNumber currentVersion = QVersionNumber::fromString(QStringLiteral(APP_VERSION));
         const bool updateAvailable = QVersionNumber::compare(latestVersion, currentVersion) > 0;
 
+        // Fallback only — GitHub's API always populates html_url on a
+        // real release object, so this realistically never fires. NOT
+        // .../releases/latest: see kReleasesUrl's own comment above for
+        // why that specific URL is broken for this repo — .../releases
+        // (the list) is the one fallback that's actually reliable here.
         const QString releaseUrl = obj.value(QStringLiteral("html_url")).toString();
         emit checked(updateAvailable, latest,
                      releaseUrl.isEmpty()
-                         ? QStringLiteral("https://github.com/arelas/zephyrftp/releases/latest")
+                         ? QStringLiteral("https://github.com/arelas/zephyrftp/releases")
                          : releaseUrl);
     });
 }

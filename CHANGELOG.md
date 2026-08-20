@@ -6,6 +6,30 @@ project doesn't yet promise strict [Semantic Versioning](https://semver.org/)
 guarantees — it's pre-1.0 (see [Known limitations](README.md#known-limitations)
 in the README), so anything may still change between 0.x releases.
 
+## [Unreleased]
+
+### Changed (developer-facing only, no shipped behavior)
+
+- **Three findings from a self-review of everything since v0.8.0** (a
+  fresh pass over `UpdateChecker`/the update dialog, requested directly
+  after the feature shipped): HTML-escaped `latestVersion`/`releaseUrl`
+  before interpolating them into the Update Available dialog's rich
+  text — both are network-sourced (GitHub's API response), not a
+  compile-time literal like every other string this app already
+  interpolates into HTML, so left unescaped it was a real inconsistency
+  with this project's own "don't introduce XSS" discipline even though
+  not currently exploitable (a real GitHub response for this repo is
+  always well-formed). Fixed `UpdateChecker`'s own fallback release URL,
+  which still pointed at `.../releases/latest` — the exact endpoint
+  pattern already proven broken for this repo (excludes prereleases;
+  every release here is one) — to `.../releases` instead; practically
+  dead code since GitHub's API always populates `html_url`, but it was
+  a landmine reintroducing a bug this same session already fixed twice
+  elsewhere. Removed an unused `class QNetworkReply;` forward
+  declaration left over in `UpdateChecker.h`. Verified against the real
+  GitHub API again (disposable probe, removed) plus the full 27-target
+  required suite passing clean.
+
 ## [0.8.7] — Add a manual "Check for Updates..." to the Help menu
 
 ### Added

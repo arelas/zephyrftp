@@ -4,7 +4,6 @@
 #include <QString>
 
 class QNetworkAccessManager;
-class QNetworkReply;
 class AppSettings;
 
 // One-shot GitHub "latest release" check, driving the Help menu's

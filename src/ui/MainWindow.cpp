@@ -792,11 +792,16 @@ void MainWindow::onCheckForUpdatesTriggered()
             // Rich-text QMessageBox with an <a href> link, same pattern
             // onAboutTriggered() already uses for its GitHub link —
             // QMessageBox opens it via the system browser automatically
-            // when clicked, no extra wiring needed.
+            // when clicked, no extra wiring needed. Unlike that call
+            // though, latestVersion/releaseUrl are network-sourced (from
+            // GitHub's API response), not a compile-time literal — HTML-
+            // escaped before interpolation as defense-in-depth, even
+            // though a real GitHub response for this repo is always
+            // well-formed today.
             QMessageBox::information(this, tr("Update Available"),
                 tr("<p>Version %1 is available — you're on %2.</p>"
                    "<p><a href=\"%3\">View the release on GitHub</a></p>")
-                    .arg(latestVersion, QStringLiteral(APP_VERSION), releaseUrl));
+                    .arg(latestVersion.toHtmlEscaped(), QStringLiteral(APP_VERSION), releaseUrl.toHtmlEscaped()));
         } else {
             QMessageBox::information(this, tr("Check for Updates"),
                 tr("You're up to date — version %1 is the latest release.").arg(QStringLiteral(APP_VERSION)));
