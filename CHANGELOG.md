@@ -6,6 +6,31 @@ project doesn't yet promise strict [Semantic Versioning](https://semver.org/)
 guarantees — it's pre-1.0 (see [Known limitations](README.md#known-limitations)
 in the README), so anything may still change between 0.x releases.
 
+## [Unreleased]
+
+### Fixed
+
+- **The new .dmg's icon labels were unreadable — black text against
+  the dark background v0.8.9 shipped.** Reported directly. Root cause,
+  confirmed by re-examining the real screenshots already taken to
+  verify v0.8.9's layout: Finder draws a DMG window's icon-view label
+  text ("ZephyrFTP", "Applications") black by default, effectively
+  regardless of the actual background image — not tied to the Mac's
+  own system light/dark appearance setting the way it might seem;
+  Finder's `.DS_Store`-based background customization is a static
+  image with no light/dark-mode hook at all (the second thing asked
+  about). A dark custom background always collides with that fixed
+  black label text, which is exactly why the near-universal community
+  convention for `create-dmg`-based DMGs is a light background, not a
+  dark one. Regenerated `resources/dmg/background.png` using the app's
+  own official *light*-theme palette (`theme-light.qss`'s
+  `--zf-bg`/`--zf-surface`/`--zf-text-secondary` tokens) instead of the
+  dark-theme one it used before, so it's still on-brand. Verified
+  non-vacuously again: a temporary CI step (added, used, then removed
+  — same technique as v0.8.9's own verification) opened the real
+  packaged .dmg on an actual macOS runner and screenshotted Finder's
+  real rendered window, confirming both labels now read clearly.
+
 ## [0.8.9] — Give the macOS .dmg the classic drag-to-Applications layout
 
 ### Changed
