@@ -9,6 +9,9 @@
 #include <QMessageBox>
 #include <QProgressDialog>
 #include <QMenu>
+#include <QProxyStyle>
+#include <QStyleOption>
+#include <QStyleHintReturn>
 
 TransferQueueWidget::TransferQueueWidget(TransferManager *manager, QWidget *parent)
     : QWidget(parent)
@@ -29,35 +32,65 @@ TransferQueueWidget::TransferQueueWidget(TransferManager *manager, QWidget *pare
     m_completedTable->setObjectName(QStringLiteral("completedQueueTable"));
     m_failedTable->setObjectName(QStringLiteral("failedQueueTable"));
 
-    // documentMode(true) matters only on macOS (Qt's own docs: "currently
-    // this property is used differently on macOS than on other
-    // platforms") — without it, QMacStyle renders these as native boxed
-    // tabs: centered as a group within the bar (SH_TabBar_Alignment is
-    // Qt::AlignCenter there, vs. Qt::AlignLeft everywhere else) and sized
-    // off native AppKit control minimums rather than actual label width,
-    // clipping longer text like "Completed". Reported directly from real
-    // macOS hardware. The QSS above already flattens these tabs (no
-    // border/background box, underline instead of a filled selected
-    // state) specifically so they read as a left-aligned document/toolbar
-    // tab strip, not native pill-shaped controls — documentMode(true) is
-    // the actual Qt-level switch for that on macOS; QSS alone can't reach
-    // this the same way it can't reach QFormLayout's field-growth policy.
-    m_tabs->setDocumentMode(true);
-
-    // Same class of per-platform QStyle hint as documentMode above
-    // (and QFormLayout's own field-growth policy elsewhere in this
-    // app) — QStyle::SH_TabBar_ElideMode differs by platform, and
-    // QMacStyle defaults to eliding tab text that doesn't fit its own
-    // computed width, unlike Linux/Windows. Reported directly from
-    // real macOS hardware: labels ("Completed"/"Failed", worse once
-    // updateTabLabel() appends a live "(N)" count) were getting cut
-    // off there specifically. Forced to no eliding at all — these tabs
-    // have no scroll buttons and plenty of dock width, so there's
-    // nothing to gain from ever truncating instead of just sizing the
-    // tab to its real text, matching this dock's own convention (see
-    // QDockWidget's own comment above) of tabs sizing to content, not
-    // a fixed slot.
-    m_tabs->tabBar()->setElideMode(Qt::ElideNone);
+    // Two per-platform QStyle hints needed fixing on macOS — same class
+    // of platform-specific default already hit elsewhere in this app
+    // (QFormLayout's own field-growth policy): SH_TabBar_Alignment
+    // defaults to Qt::AlignCenter on QMacStyle (vs. Qt::AlignLeft
+    // everywhere else), and SH_TabBar_ElideMode defaults to eliding
+    // text that doesn't fit its own computed width (vs. no eliding
+    // elsewhere) — worse once updateTabLabel() appends a live "(N)"
+    // count. Both reported directly from real macOS hardware.
+    //
+    // The first fix attempt (v0.8.5) used QTabWidget::setDocumentMode(true)
+    // instead, which does address both — but ALSO, reported directly
+    // from real macOS hardware afterward, introduced a visible native
+    // seam between the tab bar and the pane below it, and made the tab
+    // bar's own background follow the OS's system light/dark appearance
+    // instead of this app's own in-app theme choice. documentMode(true)
+    // is Qt's switch for macOS's native "unified toolbar" tab
+    // rendering — a real, different native drawing path, not just a
+    // couple of style-hint values, which is almost certainly why it
+    // could bypass this app's own QSS the same way QSS can't reach
+    // QFormLayout's field-growth policy, just for background/palette
+    // instead of layout this time.
+    //
+    // Fixed more narrowly instead: a QProxyStyle overriding ONLY these
+    // two specific styleHint() queries, installed on just this tab bar,
+    // wrapping (not replacing) its current style — everything else,
+    // including this app's own QSS cascade, keeps flowing through to
+    // the real underlying style completely unchanged. Never opts into
+    // documentMode's own broader native rendering mode at all, which
+    // this app's QSS has no trouble overriding normally, the same way
+    // it already does for every other native Mac widget in this app.
+    class LeftAlignedTabBarStyle : public QProxyStyle {
+    public:
+        using QProxyStyle::QProxyStyle;
+        int styleHint(StyleHint hint, const QStyleOption *option = nullptr,
+                      const QWidget *widget = nullptr,
+                      QStyleHintReturn *returnData = nullptr) const override
+        {
+            if (hint == QStyle::SH_TabBar_Alignment)
+                return Qt::AlignLeft;
+            if (hint == QStyle::SH_TabBar_ElideMode)
+                return Qt::ElideNone;
+            return QProxyStyle::styleHint(hint, option, widget, returnData);
+        }
+    };
+    // QWidget::setStyle() doesn't take ownership, and this style object
+    // must genuinely outlive the widget it's installed on — confirmed
+    // the hard way: parenting it to the tab bar (the obvious first
+    // attempt) crashed every test that tears down a real MainWindow
+    // with a real SIGSEGV inside QApplication::~QApplication(), a
+    // real, non-vacuous "sabotage and restore" catch (reverting the
+    // parenting and re-running the exact same suite immediately fixed
+    // it) — QObject child-deletion order during widget teardown
+    // apparently races against QApplication's own internal style
+    // bookkeeping. There's exactly one TransferQueueWidget for the
+    // whole app's lifetime, so a deliberate, permanent, unparented
+    // allocation (never explicitly deleted) is simpler and safer here
+    // than getting fully-correct manual teardown ordering right.
+    static auto *tabBarStyle = new LeftAlignedTabBarStyle(m_tabs->tabBar()->style());
+    m_tabs->tabBar()->setStyle(tabBarStyle);
 
     m_tabs->addTab(m_activeTable, tr("Active"));
     m_tabs->addTab(m_completedTable, tr("Completed"));

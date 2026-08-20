@@ -1071,6 +1071,33 @@ jobs:
           path: build/*.dmg
           if-no-files-found: error
 
+      # TEMPORARY — visual verification for the Transfers-tab
+      # QProxyStyle fix (replacing v0.8.11's setDocumentMode(true)),
+      # reported directly from real macOS hardware: a native visual
+      # seam below the tab bar, and the tab bar's own background
+      # following the SYSTEM light/dark appearance instead of this
+      # app's own theme. Unlike the earlier tab-clipping probe, this
+      # one loads the app's REAL theme.qss — the whole point is
+      # confirming the tab bar now follows the APP's theme, not just
+      # that text isn't clipped. Remove once confirmed.
+      - name: TEMP - build and screenshot the Transfers tabs (themed)
+        run: |
+          set -e
+          cmake --build build --target transfers-tabs-theme-probe -- -j$(sysctl -n hw.ncpu)
+          cd build
+          ./transfers-tabs-theme-probe &
+          PROBE_PID=$!
+          sleep 3
+          screencapture -x ../transfers-tabs-theme-screenshot.png
+          kill "$PROBE_PID" || true
+
+      - name: TEMP - upload themed Transfers tabs screenshot
+        uses: actions/upload-artifact@v7
+        with:
+          name: zephyrftp-transfers-tabs-theme-screenshot
+          path: transfers-tabs-theme-screenshot.png
+          if-no-files-found: error
+
   # Only runs on version tags (v1.0.0 etc.) — attaches both platform
   # builds as zipped/tarred assets on a GitHub Release, matching the
   # Phat32 pipeline pattern. Plain ubuntu-latest (no PowerShell needed) —
