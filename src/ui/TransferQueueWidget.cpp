@@ -9,9 +9,7 @@
 #include <QMessageBox>
 #include <QProgressDialog>
 #include <QMenu>
-#include <QProxyStyle>
-#include <QStyleOption>
-#include <QStyleHintReturn>
+#include <QStyleFactory>
 
 TransferQueueWidget::TransferQueueWidget(TransferManager *manager, QWidget *parent)
     : QWidget(parent)
@@ -32,65 +30,47 @@ TransferQueueWidget::TransferQueueWidget(TransferManager *manager, QWidget *pare
     m_completedTable->setObjectName(QStringLiteral("completedQueueTable"));
     m_failedTable->setObjectName(QStringLiteral("failedQueueTable"));
 
-    // Two per-platform QStyle hints needed fixing on macOS — same class
-    // of platform-specific default already hit elsewhere in this app
-    // (QFormLayout's own field-growth policy): SH_TabBar_Alignment
-    // defaults to Qt::AlignCenter on QMacStyle (vs. Qt::AlignLeft
-    // everywhere else), and SH_TabBar_ElideMode defaults to eliding
-    // text that doesn't fit its own computed width (vs. no eliding
-    // elsewhere) — worse once updateTabLabel() appends a live "(N)"
-    // count. Both reported directly from real macOS hardware.
+    // This tab bar needs to render left-aligned, non-eliding, and
+    // themed by this app's own QSS everywhere, including macOS — none
+    // of which QMacStyle does by default (SH_TabBar_Alignment defaults
+    // to Qt::AlignCenter there, not Qt::AlignLeft; longer labels like
+    // "Completed (N)" get elided; and it paints native chrome that can
+    // follow the OS's own system light/dark appearance rather than
+    // this app's in-app theme choice — all three reported directly
+    // from real macOS hardware, across two separate fix attempts:
+    // QTabWidget::setDocumentMode(true) (v0.8.5) addressed alignment/
+    // eliding but visibly introduced the native-background/system-
+    // theme problem; a QProxyStyle wrapping QMacStyle and overriding
+    // just the two style HINTS (v0.8.11's follow-up) still left the
+    // background problem in a real screenshot — QMacStyle's own
+    // background/chrome painting isn't reached by overriding
+    // styleHint() alone, and continuing to wrap-and-delegate to it
+    // keeps whatever native-chrome behavior causes this).
     //
-    // The first fix attempt (v0.8.5) used QTabWidget::setDocumentMode(true)
-    // instead, which does address both — but ALSO, reported directly
-    // from real macOS hardware afterward, introduced a visible native
-    // seam between the tab bar and the pane below it, and made the tab
-    // bar's own background follow the OS's system light/dark appearance
-    // instead of this app's own in-app theme choice. documentMode(true)
-    // is Qt's switch for macOS's native "unified toolbar" tab
-    // rendering — a real, different native drawing path, not just a
-    // couple of style-hint values, which is almost certainly why it
-    // could bypass this app's own QSS the same way QSS can't reach
-    // QFormLayout's field-growth policy, just for background/palette
-    // instead of layout this time.
-    //
-    // Fixed more narrowly instead: a QProxyStyle overriding ONLY these
-    // two specific styleHint() queries, installed on just this tab bar,
-    // wrapping (not replacing) its current style — everything else,
-    // including this app's own QSS cascade, keeps flowing through to
-    // the real underlying style completely unchanged. Never opts into
-    // documentMode's own broader native rendering mode at all, which
-    // this app's QSS has no trouble overriding normally, the same way
-    // it already does for every other native Mac widget in this app.
-    class LeftAlignedTabBarStyle : public QProxyStyle {
-    public:
-        using QProxyStyle::QProxyStyle;
-        int styleHint(StyleHint hint, const QStyleOption *option = nullptr,
-                      const QWidget *widget = nullptr,
-                      QStyleHintReturn *returnData = nullptr) const override
-        {
-            if (hint == QStyle::SH_TabBar_Alignment)
-                return Qt::AlignLeft;
-            if (hint == QStyle::SH_TabBar_ElideMode)
-                return Qt::ElideNone;
-            return QProxyStyle::styleHint(hint, option, widget, returnData);
-        }
-    };
-    // QWidget::setStyle() doesn't take ownership, and this style object
-    // must genuinely outlive the widget it's installed on — confirmed
-    // the hard way: parenting it to the tab bar (the obvious first
-    // attempt) crashed every test that tears down a real MainWindow
-    // with a real SIGSEGV inside QApplication::~QApplication(), a
-    // real, non-vacuous "sabotage and restore" catch (reverting the
-    // parenting and re-running the exact same suite immediately fixed
-    // it) — QObject child-deletion order during widget teardown
-    // apparently races against QApplication's own internal style
-    // bookkeeping. There's exactly one TransferQueueWidget for the
-    // whole app's lifetime, so a deliberate, permanent, unparented
-    // allocation (never explicitly deleted) is simpler and safer here
-    // than getting fully-correct manual teardown ordering right.
-    static auto *tabBarStyle = new LeftAlignedTabBarStyle(m_tabs->tabBar()->style());
+    // Fixed by not using a native style for this tab bar at ALL: swaps
+    // in Qt's own Fusion style, which is algorithmic (never draws
+    // native OS chrome/vibrancy on any platform), left-aligns tabs by
+    // default, and — being the same style Linux already uses here —
+    // is exactly the rendering already confirmed correct via real
+    // screenshots on this project's own Linux CI. QWidget::setStyle()
+    // doesn't take ownership, and the style object must genuinely
+    // outlive the widget it's installed on — confirmed the hard way:
+    // parenting it to the tab bar (an earlier attempt) crashed every
+    // test that tears down a real MainWindow with a real SIGSEGV
+    // inside QApplication::~QApplication() (QObject child-deletion
+    // order during widget teardown apparently races against
+    // QApplication's own internal style bookkeeping). There's exactly
+    // one TransferQueueWidget for the whole app's lifetime, so a
+    // deliberate, permanent, unparented allocation (never explicitly
+    // deleted) is simpler and safer here than getting fully-correct
+    // manual teardown ordering right.
+    static auto *tabBarStyle = QStyleFactory::create(QStringLiteral("Fusion"));
     m_tabs->tabBar()->setStyle(tabBarStyle);
+    // Not a style hint this time — a plain, direct QTabBar property,
+    // independent of whichever style is installed; already verified
+    // via a real macOS screenshot (v0.8.11) to correctly show full
+    // "Completed (N)"/"Failed (N)" text with no truncation.
+    m_tabs->tabBar()->setElideMode(Qt::ElideNone);
 
     m_tabs->addTab(m_activeTable, tr("Active"));
     m_tabs->addTab(m_completedTable, tr("Completed"));
