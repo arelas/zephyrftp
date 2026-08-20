@@ -6,7 +6,7 @@ project doesn't yet promise strict [Semantic Versioning](https://semver.org/)
 guarantees — it's pre-1.0 (see [Known limitations](README.md#known-limitations)
 in the README), so anything may still change between 0.x releases.
 
-## [Unreleased]
+## [0.8.11] — Fix Transfers pane tab labels getting cut off on macOS
 
 ### Fixed
 
@@ -2675,6 +2675,7 @@ nobody mistakes silence for a claim of correctness:
   real FTP server
 
 [Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.8.4...HEAD
+[0.8.11]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.11
 [0.8.10]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.10
 [0.8.9]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.9
 [0.8.8]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.8
