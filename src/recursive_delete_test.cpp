@@ -15,11 +15,14 @@
 // it via QApplication::activeModalWidget(), and clicks a button by text.
 #include <QApplication>
 #include <QTimer>
+#include <QElapsedTimer>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QMessageBox>
 #include <QAbstractButton>
+#include <functional>
+#include <memory>
 #include "ui/FilePaneWidget.h"
 #include "backends/LocalBackend.h"
 
@@ -69,6 +72,14 @@ int main(int argc, char *argv[])
         qDebug() << (condition ? "[PASS]" : "[FAIL]") << label;
         if (!condition) allPass = false;
     };
+
+    // Wall-clock deadline for Phase E's own poll below — lets it exit as
+    // soon as the recursive delete is actually confirmed done instead of
+    // always waiting out the full 20800ms this test used to take
+    // unconditionally, while keeping that same 20800ms as an unchanged
+    // safety-net ceiling.
+    QElapsedTimer clock;
+    clock.start();
 
     auto *pane = new FilePaneWidget(new LocalBackend());
 
@@ -207,15 +218,32 @@ int main(int argc, char *argv[])
               "in the mixed batch", clicked);
     });
 
-    QTimer::singleShot(20800, &app, [&]() {
-        check("Phase E: accepting deleted the non-empty folder too",
-              !QDir(base + "/pane/mixed_full").exists());
-        check("Phase E: accepting deleted its file",
-              !QFile::exists(base + "/pane/mixed_full/onlyfile.txt"));
+    // The delete itself is a fast local-filesystem op once the dialog is
+    // answered — poll every 100ms (via the top-level event loop's own
+    // self-rescheduling QTimer, the same safe technique
+    // conflict-resolution-test's own Phase H poll uses — NOT a nested
+    // processEvents() spin, which that file's own Phase E comment
+    // documents as unsound for waiting on a still-open modal dialog;
+    // this poll only waits on plain filesystem state, so that concern
+    // doesn't apply here) and exit as soon as both conditions are true,
+    // falling back to the original 20800ms total as an unchanged
+    // safety-net ceiling if it's ever genuinely slower.
+    auto pollPhaseE = std::make_shared<std::function<void()>>();
+    *pollPhaseE = [&app, &allPass, &check, &clock, base, pollPhaseE]() {
+        const bool folderGone = !QDir(base + "/pane/mixed_full").exists();
+        const bool fileGone = !QFile::exists(base + "/pane/mixed_full/onlyfile.txt");
+        if (!(folderGone && fileGone) && clock.elapsed() < 20800) {
+            QTimer::singleShot(100, &app, *pollPhaseE);
+            return;
+        }
+
+        check("Phase E: accepting deleted the non-empty folder too", folderGone);
+        check("Phase E: accepting deleted its file", fileGone);
 
         qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
         app.exit(allPass ? 0 : 1);
-    });
+    };
+    QTimer::singleShot(18800, &app, *pollPhaseE);
 
     return app.exec();
 }

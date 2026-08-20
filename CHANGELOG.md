@@ -37,6 +37,31 @@ in the README), so anything may still change between 0.x releases.
   compiled together, once, before any target links it. See
   CONTRIBUTING.md's "The shared `zephyrftp_core` object library"
   section for how to add a new test target under this model.
+- **`conflict-resolution-test` and `recursive-delete-test` no longer
+  always wait out their full worst-case margin before exiting.** The
+  second half of the same test-suite efficiency pass, after the
+  `zephyrftp_core` change above — these two were CI's slowest required
+  tests (24.95s and 21.01s) because each one's *last* step was a fixed
+  `QTimer::singleShot` (25000ms / 20800ms) that unconditionally waited
+  the whole way out before checking its final assertions and exiting,
+  even though the real work it was waiting on (a handful of local
+  filesystem deletes; six already-in-flight dialogs being dismissed at
+  a steady, already-polling 250ms cadence) actually finishes well
+  before that. Every *other* margin in both files — including several
+  with their own documented real-CI-failure history (see
+  `conflict_resolution_test.cpp`'s Phase D/F/G comments) — is
+  deliberately untouched; only the trailing step changed, and only to
+  poll for its own completion instead of blocking on a fixed delay.
+  Each now exits as soon as its condition is actually true, falling
+  back to the exact same old deadline (25000ms / 20800ms, tracked via
+  `QElapsedTimer`) as an unchanged safety-net ceiling if it's ever
+  genuinely slower. Saves ~3s and ~2-3s respectively (~6s off the full
+  27-target suite's ~107.4s total); zero change to what either test
+  actually verifies. Verified non-vacuously: both rebuilt and re-run
+  standalone 15-20+ times each (100% pass, real qDebug output
+  confirmed via the `QT_FORCE_STDERR_LOGGING`/`QT_LOGGING_CONF`
+  workaround this sandbox needs), then the full 27-target required
+  suite run clean start to finish.
 
 ## [0.8.4] — Fix dialog input fields being inconsistent widths across platforms
 

@@ -14,6 +14,7 @@
 // rather than just appearance.
 #include <QApplication>
 #include <QTimer>
+#include <QElapsedTimer>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -98,6 +99,14 @@ int main(int argc, char *argv[])
         qDebug() << (condition ? "[PASS]" : "[FAIL]") << label;
         if (!condition) allPass = false;
     };
+
+    // Wall-clock deadline for Phase H's own poll below — lets it exit as
+    // soon as all 6 warnings are actually confirmed dismissed instead of
+    // always waiting out the full 25000ms this test used to take
+    // unconditionally, while keeping that same 25000ms as an unchanged
+    // safety-net ceiling.
+    QElapsedTimer clock;
+    clock.start();
 
     auto *srcPane = new FilePaneWidget(new LocalBackend());
     auto *dstPane = new FilePaneWidget(new LocalBackend());
@@ -518,32 +527,33 @@ int main(int argc, char *argv[])
     });
 
     // The polling loop itself is already patient (keeps retrying every
-    // 250ms with no fixed timeout of its own, only stopping once all 6
-    // are shown) — widened here is the delay before the FIRST poll
+    // 250ms, only stopping once all 6 are shown OR the 25000ms deadline
+    // below is reached) — widened here is the delay before the FIRST poll
     // (giving the burst above more time to actually be dispatched and
-    // its first failure reply delivered) and the final deadline check
-    // below, same CI-runner-load reasoning as Phase G's own widening
-    // just above.
+    // its first failure reply delivered), same CI-runner-load reasoning
+    // as Phase G's own widening just above. The deadline is the SAME
+    // 25000ms this test always used to wait unconditionally — now a
+    // ceiling the poll can finish well short of, not the only exit path.
     auto warningsShown = std::make_shared<int>(0);
     auto clickNextWarning = std::make_shared<std::function<void()>>();
-    *clickNextWarning = [&app, warningsShown, clickNextWarning]() {
+    *clickNextWarning = [&app, &allPass, &check, &clock, warningsShown, clickNextWarning]() {
         if (auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
             ++*warningsShown;
             box->accept();
         }
-        if (*warningsShown < 6)
+        if (*warningsShown < 6 && clock.elapsed() < 25000) {
             QTimer::singleShot(250, &app, *clickNextWarning);
-    };
-    QTimer::singleShot(20500, &app, *clickNextWarning);
+            return;
+        }
 
-    QTimer::singleShot(25000, &app, [&]() {
         check("Phase H: all 6 genuine createDirectory failures were shown and dismissed, one "
               "at a time, without crashing (the reentrancy guard actually works)",
               *warningsShown == 6);
 
         qDebug() << (allPass ? "[test] ALL PASS" : "[test] AT LEAST ONE FAILURE");
         app.exit(allPass ? 0 : 1);
-    });
+    };
+    QTimer::singleShot(20500, &app, *clickNextWarning);
 
     return app.exec();
 }
