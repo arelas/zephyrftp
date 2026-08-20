@@ -8,6 +8,33 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.8.4] — Fix dialog input fields being inconsistent widths across platforms
+
+### Fixed
+
+- **Dialog input fields were inconsistent widths across platforms** —
+  reported directly from real hardware testing on all three: fields
+  ran full dialog width on Windows, were narrowest on macOS, and
+  varied on Linux depending on the system theme in use. Root cause:
+  every dialog's `QFormLayout` (Connect, Site Manager, Preferences)
+  left its field-growth behavior at the platform style's own default
+  (`QStyle::SH_FormLayoutFieldGrowthPolicy`), which genuinely differs
+  by native style — this app's QSS theme can't reach it at all, since
+  it's a layout policy, not a paintable property, so the earlier
+  dialog-consistency audit (v0.7.45, focused on QSS-level rendering)
+  never would have caught it. Fixed by explicitly setting
+  `QFormLayout::AllNonFixedFieldsGrow` on all 6 form layouts across the
+  three dialogs, so every field is exactly as wide as its dialog on
+  every platform — matching the full-width Windows behavior. Could not
+  visually reproduce the platform difference in this environment
+  (headless Linux `offscreen` rendering already defaults to full-width
+  fields either way, confirmed with a byte-identical before/after
+  screenshot) — verified at the code level instead (zero prior
+  `setFieldGrowthPolicy` calls anywhere, confirmed via direct search)
+  and via Qt's own documented per-style default mechanism, consistent
+  with the direct cross-platform report. Full 27-target required suite
+  passed.
+
 ## [0.8.3] — Fix v0.8.2's .rpm Packager fix, which didn't actually work
 
 ### Fixed
@@ -2329,7 +2356,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.8.4...HEAD
+[0.8.4]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.4
 [0.8.3]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.3
 [0.8.2]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.2
 [0.8.1]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.1

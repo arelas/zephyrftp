@@ -156,6 +156,16 @@ PreferencesDialog::PreferencesDialog(AppSettings *settings, QWidget *parent)
     // confusion, not a functional bug (the setting itself always worked;
     // see FilePaneWidget's own showHiddenFilesChanged handling).
     auto *form = new QFormLayout;
+    // QFormLayout's default field width comes from QStyle::
+    // SH_FormLayoutFieldGrowthPolicy, which genuinely differs by native
+    // style/platform (confirmed by a direct cross-platform report:
+    // fields ran full dialog width on Windows, narrowest on macOS, and
+    // varied on Linux depending on the system style/theme in use) — the
+    // app's QSS theme can't reach this at all, it's a layout policy, not
+    // a paintable property. Forced explicitly so every field is exactly
+    // as wide as its dialog on every platform, matching the Windows
+    // behavior specifically requested.
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     form->addRow(m_showHiddenFilesCheck);
     form->addRow(tr("Default protocol for new connections:"), m_defaultProtocolCombo);
     form->addRow(tr("Theme:"), m_themeCombo);

@@ -289,6 +289,16 @@ void SiteManagerDialog::buildUi()
     keyPathRow->addWidget(browseButton);
     auto *keyPageLayout = new QFormLayout(keyPage);
     keyPageLayout->setContentsMargins(0, 0, 0, 0);
+    // QFormLayout's default field width comes from QStyle::
+    // SH_FormLayoutFieldGrowthPolicy, which genuinely differs by native
+    // style/platform (confirmed by a direct cross-platform report:
+    // fields ran full dialog width on Windows, narrowest on macOS, and
+    // varied on Linux depending on the system style/theme in use) — the
+    // app's QSS theme can't reach this at all, it's a layout policy, not
+    // a paintable property. Forced explicitly so every field is exactly
+    // as wide as its dialog on every platform, matching the Windows
+    // behavior specifically requested.
+    keyPageLayout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     keyPageLayout->addRow(tr("Key file:"), keyPathRow);
     auto *keyNote = new QLabel(
         tr("If the key has a passphrase, you'll be asked for it each time you connect — "
@@ -343,6 +353,9 @@ void SiteManagerDialog::buildUi()
     dirFieldColumn->addWidget(m_startingDirEdit);
 
     auto *form = new QFormLayout;
+    // See keyPageLayout's own comment above on why this is forced
+    // explicitly rather than left at the platform style's default.
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     form->addRow(tr("Site name:"), m_nameEdit);
     form->addRow(tr("Group:"), m_groupCombo);
     form->addRow(tr("Protocol:"), m_protocolCombo);

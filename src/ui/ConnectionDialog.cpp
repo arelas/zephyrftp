@@ -93,6 +93,16 @@ ConnectionDialog::ConnectionDialog(QWidget *parent)
     auto *passwordPage = new QWidget(this);
     auto *passwordPageLayout = new QFormLayout(passwordPage);
     passwordPageLayout->setContentsMargins(0, 0, 0, 0);
+    // QFormLayout's default field width comes from QStyle::
+    // SH_FormLayoutFieldGrowthPolicy, which genuinely differs by native
+    // style/platform (confirmed by a direct cross-platform report:
+    // fields ran full dialog width on Windows, narrowest on macOS, and
+    // varied on Linux depending on the system style/theme in use) — the
+    // app's QSS theme can't reach this at all, it's a layout policy, not
+    // a paintable property. Forced explicitly so every field is exactly
+    // as wide as its dialog on every platform, matching the Windows
+    // behavior specifically requested.
+    passwordPageLayout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     passwordPageLayout->addRow(tr("Password:"), m_passwordEdit);
 
     // Page 1: private key path (with Browse…) + optional passphrase.
@@ -105,6 +115,9 @@ ConnectionDialog::ConnectionDialog(QWidget *parent)
 
     auto *keyPageLayout = new QFormLayout(keyPage);
     keyPageLayout->setContentsMargins(0, 0, 0, 0);
+    // See passwordPageLayout's own comment above on why this is forced
+    // explicitly rather than left at the platform style's default.
+    keyPageLayout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     keyPageLayout->addRow(tr("Private key file:"), keyPathRow);
     keyPageLayout->addRow(tr("Passphrase:"), m_passphraseEdit);
 
@@ -112,6 +125,9 @@ ConnectionDialog::ConnectionDialog(QWidget *parent)
     m_authFieldsStack->addWidget(keyPage);         // index 1
 
     m_form = new QFormLayout;
+    // See passwordPageLayout's own comment above on why this is forced
+    // explicitly rather than left at the platform style's default.
+    m_form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     m_form->addRow(tr("Protocol:"), m_protocolCombo);
     m_form->addRow(tr("Host:"), m_hostEdit);
     m_form->addRow(tr("Port:"), m_portSpin);
