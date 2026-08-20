@@ -88,6 +88,7 @@ qt_standard_project_setup()
 # free instead of costing a full extra compile).
 set(CORE_SOURCES
     src/AppSettings.cpp
+    src/UpdateChecker.cpp
     src/ui/MainWindow.cpp
     src/backends/QuickConnectParser.cpp
     src/ui/FilePaneWidget.cpp
@@ -128,6 +129,7 @@ set(CORE_SOURCES
 
 set(HEADERS
     src/AppSettings.h
+    src/UpdateChecker.h
     src/ui/MainWindow.h
     src/ui/FilePaneWidget.h
     src/ui/FileTreeView.h

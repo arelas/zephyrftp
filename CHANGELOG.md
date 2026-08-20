@@ -6,6 +6,47 @@ project doesn't yet promise strict [Semantic Versioning](https://semver.org/)
 guarantees — it's pre-1.0 (see [Known limitations](README.md#known-limitations)
 in the README), so anything may still change between 0.x releases.
 
+## [Unreleased]
+
+### Added
+
+- **Help menu: "Check for Updates..." — a manual, one-shot check
+  against GitHub's real release list, with a link to the release page
+  when a newer version exists.** Scoped first (manual check only —
+  automatic/background checking is a separate, explicitly opt-in
+  follow-up given the direct tension with this project's own "no
+  account, nothing phones home" messaging). New `UpdateChecker` class
+  (`src/UpdateChecker.h/.cpp`) — the first thing in this app to use
+  Qt's own HTTP stack (`QNetworkAccessManager`) rather than a raw
+  socket, since every transfer protocol goes through
+  FtpBackend/SftpBackend/libssh2 instead; respects the same global
+  proxy setting every SFTP/FTP/FTPS connection already does. Verified
+  with real, non-mocked end-to-end runs against the actual GitHub API
+  (disposable probes, removed) — both the JSON-parsing/comparison
+  logic and the full menu-action-to-dialog path via a real `MainWindow`
+  instance and a screenshot of the resulting dialog.
+- **Along the way, found and fixed a real, previously-shipped bug this
+  same non-vacuous verification surfaced**: GitHub's `/releases/latest`
+  endpoint deliberately excludes prereleases, and every release this
+  project has ever published is flagged prerelease (it matches the
+  project's actual beta status) — so that endpoint always 404s for
+  this repo, confirmed directly against the live API, not assumed.
+  `UpdateChecker` was written against `/releases/latest` first, caught
+  this via its own probe rather than shipping it, and was fixed to use
+  `/releases` (the full list) plus the first non-draft entry instead.
+  The marketing site's `site/latest.php` (gitignored, deployed
+  separately) had the *exact same* endpoint, meaning its live
+  version/download-link fetch has silently 503'd on every real page
+  load since it was written — cache/latest.json was never once
+  created, and site.js's own `.catch()` quietly fell back to
+  index.html's static text every time, which is why it's needed manual
+  bumping after every release rather than actually updating itself as
+  designed. Fixed with the same list-plus-first-non-draft approach and
+  redeployed; confirmed live (`curl https://www.zephyrftp.com/latest.php`
+  now returns real JSON with the correct version, direct release page,
+  and direct per-asset download URLs, `X-Cache: HIT` confirming the
+  disk cache is finally actually being written).
+
 ## [0.8.6] — Add Site Manager group rename; fix Preferences external-editor field clipping
 
 ### Added

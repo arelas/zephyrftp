@@ -12,6 +12,7 @@
 #include "CompareDialog.h"
 #include "ProtocolCombo.h"
 #include "../AppSettings.h"
+#include "../UpdateChecker.h"
 #include "../backends/LocalBackend.h"
 #include "../backends/SftpBackend.h"
 #include "../backends/FtpBackend.h"
@@ -316,6 +317,11 @@ void MainWindow::buildMenuBar()
     });
 
     QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
+    // No toolbar icon, unlike Preferences/About — checked rarely enough
+    // (and needs a network round trip) that it doesn't earn permanent
+    // toolbar space the way those two do.
+    QAction *checkForUpdatesAction = helpMenu->addAction(tr("Check for &Updates..."));
+    connect(checkForUpdatesAction, &QAction::triggered, this, &MainWindow::onCheckForUpdatesTriggered);
     QAction *aboutAction = helpMenu->addAction(tr("&About ZephyrFTP..."));
     connect(aboutAction, &QAction::triggered, this, &MainWindow::onAboutTriggered);
 
@@ -768,6 +774,42 @@ void MainWindow::onAboutTriggered()
            "<p>GPL-3.0-or-later licensed. &copy; Bad Cluster.<br>"
            "<a href=\"https://github.com/arelas/zephyrftp\">github.com/arelas/zephyrftp</a></p>")
             .arg(QStringLiteral(APP_VERSION)));
+}
+
+void MainWindow::onCheckForUpdatesTriggered()
+{
+    statusBar()->showMessage(tr("Checking for updates..."));
+
+    // Parented to `this` for safety (cleaned up on window close even if
+    // the reply never arrives), explicitly deleteLater()'d the moment
+    // its one result signal fires either way — a one-shot object with
+    // no reason to outlive this single check.
+    auto *checker = new UpdateChecker(m_settings, this);
+    connect(checker, &UpdateChecker::checked, this,
+            [this, checker](bool updateAvailable, const QString &latestVersion, const QString &releaseUrl) {
+        statusBar()->clearMessage();
+        if (updateAvailable) {
+            // Rich-text QMessageBox with an <a href> link, same pattern
+            // onAboutTriggered() already uses for its GitHub link —
+            // QMessageBox opens it via the system browser automatically
+            // when clicked, no extra wiring needed.
+            QMessageBox::information(this, tr("Update Available"),
+                tr("<p>Version %1 is available — you're on %2.</p>"
+                   "<p><a href=\"%3\">View the release on GitHub</a></p>")
+                    .arg(latestVersion, QStringLiteral(APP_VERSION), releaseUrl));
+        } else {
+            QMessageBox::information(this, tr("Check for Updates"),
+                tr("You're up to date — version %1 is the latest release.").arg(QStringLiteral(APP_VERSION)));
+        }
+        checker->deleteLater();
+    });
+    connect(checker, &UpdateChecker::failed, this, [this, checker](const QString &reason) {
+        statusBar()->clearMessage();
+        QMessageBox::warning(this, tr("Check for Updates"),
+                              tr("Couldn't check for updates:\n%1").arg(reason));
+        checker->deleteLater();
+    });
+    checker->check();
 }
 
 void MainWindow::onPreferencesTriggered()

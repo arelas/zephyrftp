@@ -125,6 +125,7 @@ private slots:
     void onTransferSucceeded();
     void onAboutTriggered();
     void onPreferencesTriggered();
+    void onCheckForUpdatesTriggered();
 
     // Fired by AppSettings::themeChanged — live Dark/Light switching, no
     // restart. Re-applies the app-wide QSS, re-tints every icon this
