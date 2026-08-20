@@ -17,15 +17,42 @@ name: Build
 # or the Actions tab's "Run workflow" button — so nothing here is lost,
 # just no longer automatic on ordinary pushes. Revisit if a PR-based
 # workflow makes per-push checks worth the cost again.
+#
+# `job` input: lets a manual dispatch scope itself to just ONE platform
+# — added after repeatedly burning all ~25 minutes of the other 4
+# jobs' CI time to verify a single macOS-only change (the .dmg layout,
+# then a Transfers-tab fix) multiple times in one session. Each build
+# job's own `if:` below checks this; a real tag push or PR always runs
+# every job regardless (this input only exists on workflow_dispatch to
+# begin with, so `inputs.job` is unset/falsy for those events — the
+# `github.event_name != 'workflow_dispatch'` half of each job's
+# condition is what actually guarantees that, not relying on the
+# default alone). The `release` job is unaffected either way — it only
+# ever runs on a tag push (see its own `if:` below), never on
+# workflow_dispatch, with or without this input.
 on:
   push:
     tags: ['v*']
   pull_request:
     branches: [main]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      job:
+        description: 'Which job to run (default: all)'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - build-windows
+          - build-linux
+          - build-linux-rpm
+          - build-linux-appimage
+          - build-macos
 
 jobs:
   build-windows:
+    if: github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'build-windows'
     runs-on: ubuntu-latest
     # Cross-compiles for Windows from a Fedora container rather than
     # building natively on windows-latest — matches this project's local
@@ -342,6 +369,7 @@ jobs:
           if-no-files-found: error
 
   build-linux:
+    if: github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'build-linux'
     runs-on: ubuntu-latest
     # Native build, not a container — no cross-compile toolchain needed,
     # ubuntu-latest already has everything but the app's own deps. Package
@@ -498,6 +526,7 @@ jobs:
   # developed and verified against, bumped deliberately rather than
   # silently drifting on `latest`.
   build-linux-rpm:
+    if: github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'build-linux-rpm'
     runs-on: ubuntu-latest
     container:
       image: fedora:44
@@ -625,6 +654,7 @@ jobs:
   # including the real, one-at-a-time missing-library gaps
   # tools/build-appimage.sh's own comments explain.
   build-linux-appimage:
+    if: github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'build-linux-appimage'
     runs-on: ubuntu-latest
     container:
       image: debian:12
@@ -753,6 +783,7 @@ jobs:
   # differences are Homebrew instead of apt/dnf and cpack -G DragNDrop
   # instead of -G DEB.
   build-macos:
+    if: github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'build-macos'
     runs-on: macos-latest
 
     steps:
