@@ -1040,29 +1040,6 @@ jobs:
           path: build/*.dmg
           if-no-files-found: error
 
-      # TEMPORARY — visual verification for the new create-dmg layout
-      # above, remove once confirmed. There's no way to preview an
-      # actual Finder-rendered DMG outside of a real macOS runner, so
-      # this opens the just-built .dmg for real, lets Finder actually
-      # render its window (background image, positioned icons), and
-      # screenshots it for a human to look at directly rather than
-      # trusting the layout looks right in theory.
-      - name: TEMP - screenshot the .dmg's Finder window
-        run: |
-          set -e
-          VERSION="$(grep 'CMAKE_PROJECT_VERSION:STATIC' build/CMakeCache.txt | cut -d= -f2)"
-          open "build/ZephyrFTP-${VERSION}-Darwin.dmg"
-          sleep 4
-          screencapture -x dmg-screenshot.png
-          hdiutil detach "/Volumes/ZephyrFTP" -quiet || true
-
-      - name: TEMP - upload .dmg screenshot
-        uses: actions/upload-artifact@v7
-        with:
-          name: zephyrftp-dmg-screenshot
-          path: dmg-screenshot.png
-          if-no-files-found: error
-
   # Only runs on version tags (v1.0.0 etc.) — attaches both platform
   # builds as zipped/tarred assets on a GitHub Release, matching the
   # Phat32 pipeline pattern. Plain ubuntu-latest (no PowerShell needed) —

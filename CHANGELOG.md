@@ -6,6 +6,42 @@ project doesn't yet promise strict [Semantic Versioning](https://semver.org/)
 guarantees — it's pre-1.0 (see [Known limitations](README.md#known-limitations)
 in the README), so anything may still change between 0.x releases.
 
+## [Unreleased]
+
+### Changed
+
+- **The macOS .dmg now has the classic drag-to-Applications layout**
+  instead of a bare file grid — requested directly ("make our mac dmg
+  look neat, like others do"). A custom branded background
+  (`resources/dmg/background.png`), positioned app/Applications icons,
+  a custom volume icon, and hidden Finder chrome, built via `create-dmg`
+  (Homebrew) instead of hand-rolled `hdiutil`. Still packages the exact
+  same already-fixed `build/ZephyrFTP.app` tree (dylibbundler/
+  install_name_tool already applied) — `create-dmg` does a plain
+  filesystem copy of whatever folder you point it at, same as the old
+  `cp -R`, so it can't reintroduce the v0.7.3 `cpack -G DragNDrop` bug
+  this pipeline already worked around once; the existing
+  framework-verification step still guards this directly either way.
+- **The app bundle itself is now `ZephyrFTP.app`, not lowercase
+  `zephyrftp.app`.** Found via the very screenshot taken to verify the
+  layout above: `MACOSX_BUNDLE_BUNDLE_NAME` only sets an internal
+  Info.plist field, not the actual on-disk bundle folder name Finder
+  displays as the icon's label, so the DMG's own app icon read
+  "zephyrftp" underneath it. Fixed with `OUTPUT_NAME "ZephyrFTP"`
+  (APPLE-only; Linux/Windows binary names unchanged), with every
+  `build.yml` step that referenced the old path
+  (`build/zephyrftp.app`, `Contents/MacOS/zephyrftp`) updated to match
+  — both bundle-deploy steps, both verification steps, and the DMG
+  packaging step itself.
+- Verified non-vacuously, twice: pushed to `main` and triggered a real
+  `workflow_dispatch` CI run (no version tag) for each change, using a
+  temporary CI step (since removed) that opened the actual built .dmg
+  on a real macOS runner, screenshotted Finder's real rendered window,
+  and uploaded it as an artifact — there's no way to preview an actual
+  Finder-rendered DMG outside of real macOS, so this was checked
+  against genuine screenshots, not just "should look right in theory."
+  The second screenshot confirmed the label fix.
+
 ## [0.8.8] — Fix three findings from a self-review of everything since v0.8.0
 
 ### Changed (developer-facing only, no shipped behavior)
