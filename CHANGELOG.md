@@ -8,6 +8,38 @@ in the README), so anything may still change between 0.x releases.
 
 ## [Unreleased]
 
+## [0.8.2] — Fix missing publisher/version metadata in the .rpm, .dmg, and Windows .exe
+
+### Fixed
+
+- **Three packages/installers were missing real publisher metadata,
+  found while checking a user report that the .rpm's author field
+  showed null.** Confirmed each directly against the actual shipped
+  v0.8.1 artifacts, not assumed: the `.rpm`'s Packager field really was
+  `(none)` (`CPACK_RPM_PACKAGE_PACKAGER` was never set — unlike the
+  `.deb`'s Maintainer field, RPM's generator doesn't fall back to
+  `CPACK_PACKAGE_CONTACT` automatically); the macOS `.app`/`.dmg`'s
+  `Info.plist` had an `NSHumanReadableCopyright` key present but
+  genuinely empty (`MACOSX_BUNDLE_COPYRIGHT` was never set); and —the
+  most significant gap — the actual `zephyrftp.exe` binary itself (both
+  the portable `.zip` and inside the new installer) carried NO
+  version-resource metadata at all: `CompanyName`/`FileDescription`/
+  `LegalCopyright`/`ProductName`/`FileVersion` were absent from the
+  compiled binary entirely, since `resources/app-icon.rc` only ever
+  embedded the icon, never a `VERSIONINFO` block. Fixed by templating
+  it (`app-icon.rc.in` + `configure_file()`) so the real version number
+  and publisher info are substituted in from `PROJECT_VERSION` at
+  configure time rather than hardcoded or left out. The `.deb`'s
+  Maintainer field was already correct (confirmed, not assumed) and
+  needed no change. Verified directly: rebuilt the Windows `.exe`
+  locally and confirmed all the expected UTF-16LE-encoded strings
+  (`CompanyName`, `FileDescription`, `LegalCopyright`, `ProductName`,
+  `FileVersion`, the real version number) are now present in both the
+  compiled `.res` object and the final linked binary. The RPM and
+  macOS fixes couldn't be verified locally (no `rpmbuild`, no macOS
+  toolchain in this environment) — first real verification is CI's own
+  `build-linux-rpm`/`build-macos` jobs.
+
 ## [0.8.1] — Add a real Windows installer
 
 ### Added
@@ -2269,7 +2301,8 @@ nobody mistakes silence for a claim of correctness:
   `QTcpSocket`/`QSslSocket`, no UI wiring yet) but has never touched a
   real FTP server
 
-[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.2
 [0.8.1]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.1
 [0.8.0]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.0
 [0.7.45]: https://github.com/arelas/zephyrftp/releases/tag/v0.7.45

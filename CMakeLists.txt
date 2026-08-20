@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(ZephyrFTP VERSION 0.8.1 LANGUAGES CXX)
+project(ZephyrFTP VERSION 0.8.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -103,11 +103,15 @@ set(SOURCES
 
 # .rc files are a Windows-only resource-compiler input (embeds app-icon.ico
 # as the .exe's native icon, shown in File Explorer/taskbar before the app
-# even runs — separate from the Qt runtime window icon set in main.cpp).
-# CMake only knows what to do with this on Windows; guarded rather than
-# added unconditionally so it's a clean no-op on Linux, not a build error.
+# even runs — separate from the Qt runtime window icon set in main.cpp —
+# and a VERSIONINFO block, see app-icon.rc.in's own header comment for why
+# that's templated through configure_file() rather than a plain committed
+# .rc). CMake only knows what to do with this on Windows; guarded rather
+# than added unconditionally so it's a clean no-op on Linux, not a build
+# error.
 if(WIN32)
-    list(APPEND SOURCES resources/app-icon.rc)
+    configure_file(resources/app-icon.rc.in ${CMAKE_BINARY_DIR}/app-icon.rc @ONLY)
+    list(APPEND SOURCES ${CMAKE_BINARY_DIR}/app-icon.rc)
 endif()
 
 # .icns is the macOS analog of the .rc/.ico handling above — the app
@@ -289,6 +293,16 @@ queue with pause/resume, and whole-folder transfers.")
     # equivalents.
     set(CPACK_RPM_PACKAGE_DESCRIPTION "${CPACK_PACKAGE_DESCRIPTION}")
     set(CPACK_RPM_PACKAGE_GROUP "Applications/Internet")
+    # Same "one more field needed than you'd expect" gap as
+    # CPACK_RPM_PACKAGE_DESCRIPTION above, just for author info instead
+    # of description: the .deb generator derives its Maintainer field
+    # from CPACK_PACKAGE_CONTACT automatically, but RPM's Packager field
+    # does NOT fall back to it — confirmed directly against a real
+    # shipped v0.8.1 .rpm (`rpm -qp --queryformat "%{PACKAGER}"` printed
+    # "(none)"). Reuses the exact same contact string the .deb's
+    # Maintainer field already carries, for one consistent identity
+    # across both.
+    set(CPACK_RPM_PACKAGE_PACKAGER "${CPACK_PACKAGE_CONTACT}")
     set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
 
     include(CPack)
@@ -312,6 +326,13 @@ if(APPLE)
         MACOSX_BUNDLE_ICON_FILE "app-icon.icns"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
         MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        # Maps to Info.plist's NSHumanReadableCopyright — shown in
+        # Finder's Get Info panel and the app's own About box on macOS.
+        # Confirmed missing directly: a real shipped v0.8.1 .dmg's
+        # Info.plist had this key present but genuinely empty
+        # (<string></string>), CMake's own default template leaves it
+        # blank when this property isn't set.
+        MACOSX_BUNDLE_COPYRIGHT "Copyright (C) 2026 Bad Cluster"
     )
 
     install(TARGETS zephyrftp BUNDLE DESTINATION .)

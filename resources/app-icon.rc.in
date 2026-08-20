@@ -1,0 +1,46 @@
+// Embeds app-icon.ico as the compiled .exe's native icon resource — this
+// is what File Explorer, the taskbar, and Alt-Tab show for the .exe file
+// itself, distinct from (and in addition to) the Qt runtime window icon
+// set via QApplication::setWindowIcon() in main.cpp. Only compiled when
+// targeting Windows — see CMakeLists.txt.
+IDI_ICON1 ICON "@CMAKE_SOURCE_DIR@/resources/icons/app-icon.ico"
+
+// VERSIONINFO — without this block the compiled zephyrftp.exe carries
+// NO file metadata at all: Explorer's Properties > Details tab shows
+// every field (Company, Description, Copyright, Product/File version)
+// blank. Confirmed directly against a real shipped v0.8.1 .exe: none
+// of CompanyName/FileDescription/LegalCopyright/ProductName/FileVersion
+// appeared anywhere in the binary. A plain committed .rc (rather than
+// this templated .rc.in + configure_file()) can't embed the real
+// version number without either hardcoding it (drifts from
+// CMakeLists.txt's own PROJECT_VERSION every release) or relying on
+// the resource compiler inheriting target_compile_definitions for .rc
+// sources, which isn't guaranteed the same way it is for .c/.cpp
+// sources across generators — configure_file() sidesteps that
+// uncertainty entirely by substituting the real values at CMake
+// configure time instead.
+1 VERSIONINFO
+FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+FILEOS 0x40004
+FILETYPE 0x1
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "Bad Cluster"
+            VALUE "FileDescription", "ZephyrFTP - dual-pane SFTP/FTP client"
+            VALUE "FileVersion", "@PROJECT_VERSION@"
+            VALUE "InternalName", "zephyrftp"
+            VALUE "LegalCopyright", "Copyright (C) 2026 Bad Cluster"
+            VALUE "OriginalFilename", "zephyrftp.exe"
+            VALUE "ProductName", "ZephyrFTP"
+            VALUE "ProductVersion", "@PROJECT_VERSION@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

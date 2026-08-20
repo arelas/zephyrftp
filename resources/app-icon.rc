@@ -1,6 +1,0 @@
-// Embeds app-icon.ico as the compiled .exe's native icon resource — this
-// is what File Explorer, the taskbar, and Alt-Tab show for the .exe file
-// itself, distinct from (and in addition to) the Qt runtime window icon
-// set via QApplication::setWindowIcon() in main.cpp. Only compiled when
-// targeting Windows — see CMakeLists.txt.
-IDI_ICON1 ICON "icons/app-icon.ico"
