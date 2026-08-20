@@ -898,7 +898,7 @@ jobs:
       - name: Deploy Qt frameworks into app bundle
         run: |
           QT_PREFIX="$(brew --prefix qt)"
-          "$QT_PREFIX/bin/macdeployqt" build/zephyrftp.app
+          "$QT_PREFIX/bin/macdeployqt" build/ZephyrFTP.app
 
       # macdeployqt only walks Qt's own frameworks/plugins — it doesn't
       # know about libssh2/openssl@3, which zephyrftp links directly
@@ -915,8 +915,8 @@ jobs:
           # silently destroyed everything macdeployqt had just placed
           # there in the previous step, undoing that fix's whole point.
           dylibbundler -of -b \
-            -x build/zephyrftp.app/Contents/MacOS/zephyrftp \
-            -d build/zephyrftp.app/Contents/Frameworks \
+            -x build/ZephyrFTP.app/Contents/MacOS/ZephyrFTP \
+            -d build/ZephyrFTP.app/Contents/Frameworks \
             -p @executable_path/../Frameworks/
 
       # Cheap regression guard for the exact bug above: after
@@ -932,9 +932,9 @@ jobs:
       - name: Verify app bundle has no dangling Homebrew references
         run: |
           set -e
-          if otool -L build/zephyrftp.app/Contents/MacOS/zephyrftp | grep -q "/opt/homebrew"; then
-            echo "::error::zephyrftp binary still references the runner's own Homebrew prefix after macdeployqt:"
-            otool -L build/zephyrftp.app/Contents/MacOS/zephyrftp | grep "/opt/homebrew"
+          if otool -L build/ZephyrFTP.app/Contents/MacOS/ZephyrFTP | grep -q "/opt/homebrew"; then
+            echo "::error::ZephyrFTP binary still references the runner's own Homebrew prefix after macdeployqt:"
+            otool -L build/ZephyrFTP.app/Contents/MacOS/ZephyrFTP | grep "/opt/homebrew"
             exit 1
           fi
           # Also confirm the files these load commands point at genuinely
@@ -944,17 +944,17 @@ jobs:
           # what macdeployqt had already placed there) without this
           # step catching it, since it only checked the binary's load
           # commands, not the actual directory contents.
-          for f in build/zephyrftp.app/Contents/Frameworks/QtWidgets.framework/Versions/A/QtWidgets \
-                   build/zephyrftp.app/Contents/Frameworks/libssh2.*.dylib; do
+          for f in build/ZephyrFTP.app/Contents/Frameworks/QtWidgets.framework/Versions/A/QtWidgets \
+                   build/ZephyrFTP.app/Contents/Frameworks/libssh2.*.dylib; do
             if [ ! -f "$f" ]; then
               echo "::error::Expected bundled file missing after deploy steps: $f"
-              echo "Contents of build/zephyrftp.app/Contents/Frameworks/:"
-              ls -la build/zephyrftp.app/Contents/Frameworks/ || echo "(directory does not exist)"
+              echo "Contents of build/ZephyrFTP.app/Contents/Frameworks/:"
+              ls -la build/ZephyrFTP.app/Contents/Frameworks/ || echo "(directory does not exist)"
               exit 1
             fi
           done
 
-      # Staged from the exact build/zephyrftp.app tree the two deploy
+      # Staged from the exact build/ZephyrFTP.app tree the two deploy
       # steps above just modified in place — NOT via `cpack -G DragNDrop`
       # (see CMakeLists.txt's APPLE block for the full story of why that
       # generator was dropped: it silently re-stages the bundle from
@@ -982,7 +982,7 @@ jobs:
           DMG_PATH="build/ZephyrFTP-${VERSION}-Darwin.dmg"
           rm -rf dmg-staging
           mkdir dmg-staging
-          cp -R build/zephyrftp.app dmg-staging/
+          cp -R build/ZephyrFTP.app dmg-staging/
           rm -f "$DMG_PATH"
           # create-dmg has a well-known CI quirk: its Finder-scripting
           # half can throw a benign AppleScript timing error on some
@@ -998,8 +998,8 @@ jobs:
             --window-pos 200 120 \
             --window-size 660 400 \
             --icon-size 100 \
-            --icon "zephyrftp.app" 180 170 \
-            --hide-extension "zephyrftp.app" \
+            --icon "ZephyrFTP.app" 180 170 \
+            --hide-extension "ZephyrFTP.app" \
             --app-drop-link 480 170 \
             --no-internet-enable \
             "$DMG_PATH" \
@@ -1023,7 +1023,7 @@ jobs:
           VERSION="$(grep 'CMAKE_PROJECT_VERSION:STATIC' build/CMakeCache.txt | cut -d= -f2)"
           MOUNT_DIR="$(mktemp -d)"
           hdiutil attach "build/ZephyrFTP-${VERSION}-Darwin.dmg" -mountpoint "$MOUNT_DIR" -nobrowse -quiet
-          FRAMEWORK="$MOUNT_DIR/zephyrftp.app/Contents/Frameworks/QtWidgets.framework/Versions/A/QtWidgets"
+          FRAMEWORK="$MOUNT_DIR/ZephyrFTP.app/Contents/Frameworks/QtWidgets.framework/Versions/A/QtWidgets"
           FOUND=1
           if [ -f "$FRAMEWORK" ]; then
             FOUND=0

@@ -359,6 +359,18 @@ endif()
 if(APPLE)
     set_target_properties(zephyrftp PROPERTIES
         MACOSX_BUNDLE TRUE
+        # Renames the actual bundle folder/executable to match
+        # MACOSX_BUNDLE_BUNDLE_NAME below — without this, the bundle is
+        # still named after the CMake TARGET (zephyrftp, lowercase),
+        # which is all MACOSX_BUNDLE_BUNDLE_NAME's Info.plist entry
+        # controls; Finder's icon-view label shows the actual on-disk
+        # folder name, not that Info.plist value, so a DMG built from
+        # the un-renamed bundle showed "zephyrftp" under its own icon —
+        # confirmed directly via a real screenshot of the packaged .dmg,
+        # not assumed. APPLE-only: Linux/Windows keep their own lowercase
+        # `zephyrftp`/`zephyrftp.exe` binary names unchanged, matching
+        # every existing reference to them elsewhere in this file.
+        OUTPUT_NAME "ZephyrFTP"
         MACOSX_BUNDLE_BUNDLE_NAME "ZephyrFTP"
         MACOSX_BUNDLE_GUI_IDENTIFIER "io.github.arelas.zephyrftp"
         MACOSX_BUNDLE_ICON_FILE "app-icon.icns"
