@@ -1506,19 +1506,28 @@ jobs:
           Copy-Item $vcpkgDlls.FullName dist\
           Write-Host "Copied $($vcpkgDlls.Count) vcpkg DLL(s): $($vcpkgDlls.Name -join ', ')"
 
+      # Upstream NSIS (the plain zip AND the setup.exe winget installed,
+      # confirmed directly by extracting both) ships ZERO amd64 stub
+      # support at all - only x86-ansi/x86-unicode. tools/windows-
+      # installer.nsi's own `Target amd64-unicode` directive needs the
+      # amd64-unicode stubs (and, via MUI2.nsh's MUI_PAGE_STARTMENU
+      # macro, the amd64-unicode StartMenu.dll plugin) that only exist
+      # in Fedora's own `mingw64-nsis` repackaging - the exact same
+      # package build-windows's cross-compile job already depends on.
+      # See tools/nsis-amd64-unicode/README.md for full provenance.
       - name: Build Windows installer
         run: |
           $ErrorActionPreference = 'Stop'
+          Copy-Item tools\nsis-amd64-unicode\Stubs\* "C:\Program Files (x86)\NSIS\Stubs\" -Force
+          New-Item -ItemType Directory -Force -Path "C:\Program Files (x86)\NSIS\Plugins\amd64-unicode" | Out-Null
+          Copy-Item tools\nsis-amd64-unicode\Plugins\amd64-unicode\* "C:\Program Files (x86)\NSIS\Plugins\amd64-unicode\" -Force
+
           $version = (Select-String -Path build\CMakeCache.txt -Pattern 'CMAKE_PROJECT_VERSION:STATIC=(.*)').Matches[0].Groups[1].Value
           makensis "-DVERSION=$version" "-DDISTDIR=$(Get-Location)\dist" `
             "-DLICENSEFILE=$(Get-Location)\LICENSE" "-DICONFILE=$(Get-Location)\resources\icons\app-icon.ico" `
             "-DOUTFILE=$(Get-Location)\zephyrftp-windows-x64-setup-native.exe" `
             tools\windows-installer.nsi
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "::error::makensis failed - listing available stubs for diagnosis"
-            Get-ChildItem "C:\Program Files (x86)\NSIS\Stubs" -ErrorAction SilentlyContinue
-            exit 1
-          }
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::makensis failed"; exit 1 }
 
       # Real native install/launch/uninstall - no wine/Xvfb emulation
       # quirks at all, the whole point of this job existing. Matches the
