@@ -1212,7 +1212,11 @@ jobs:
             & $env:PYTHON_EXE -m pip install --upgrade --quiet aqtinstall
             if ($LASTEXITCODE -ne 0) { Write-Host "::error::pip install aqtinstall failed"; exit 1 }
 
-            & $env:PYTHON_EXE -m aqt install-qt windows desktop $qtVersion $qtArch -m qtsvg -O C:\Qt
+            # No -m qtsvg: confirmed via a real run's module listing that
+            # 6.8.2/win64_msvc2022_64 has no separate qtsvg addon at all
+            # (unlike qtcharts/qtmultimedia/etc., which are real addons
+            # here) - Svg is already part of the base essential download.
+            & $env:PYTHON_EXE -m aqt install-qt windows desktop $qtVersion $qtArch -O C:\Qt
             if ($LASTEXITCODE -ne 0) {
               Write-Host "::error::aqt install-qt failed (exit $LASTEXITCODE) - see the module list below for the real addon name"
               & $env:PYTHON_EXE -m aqt list-qt windows desktop --modules $qtVersion $qtArch
@@ -1222,6 +1226,14 @@ jobs:
 
           if (-not (Test-Path "$qtDir\bin\qmake.exe")) {
             Write-Host "::error::qmake.exe not found at $qtDir\bin after install"
+            exit 1
+          }
+          # Non-vacuous check that dropping -m qtsvg above was actually
+          # correct (Svg bundled into the base kit) rather than silently
+          # missing - this project's CMakeLists.txt requires the Svg
+          # component (find_package(Qt6 REQUIRED COMPONENTS ... Svg ...)).
+          if (-not (Test-Path "$qtDir\lib\Qt6Svg.lib")) {
+            Write-Host "::error::Qt6Svg.lib not found at $qtDir\lib - Svg may need a separate module after all"
             exit 1
           }
 
