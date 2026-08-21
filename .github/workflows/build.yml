@@ -1241,6 +1241,43 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "QT_PREFIX=$qtDir"
           & "$qtDir\bin\qmake.exe" --version
 
+      # libssh2 (SftpBackend) and openssl (FtpTlsSocket's raw-OpenSSL FTPS
+      # layer) — matching what the MinGW cross-compile job links, just
+      # built for real MSVC this time. vcpkg's own bootstrap/build logic
+      # locates the VS toolchain itself (vswhere-based, same as this job's
+      # own bootstrap step) without needing a vcvars-sourced shell first —
+      # confirmed from vcpkg's own documented behavior, not assumed.
+      # Cloned to a fixed C:\vcpkg root for the same persistence reason as
+      # C:\Qt above. openssl in particular is a slow vcpkg build from
+      # source (no prebuilt binary caching set up yet) — expect the FIRST
+      # run here to take a real while; later runs are a fast no-op once
+      # both ports are already installed for this triplet.
+      - name: Install libssh2 + openssl (vcpkg, x64-windows)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vcpkgRoot = "C:\vcpkg"
+
+          if (-not (Test-Path "$vcpkgRoot\vcpkg.exe")) {
+            if (-not (Test-Path "$vcpkgRoot\.git")) {
+              git clone https://github.com/microsoft/vcpkg.git $vcpkgRoot
+              if ($LASTEXITCODE -ne 0) { Write-Host "::error::git clone vcpkg failed"; exit 1 }
+            }
+            & "$vcpkgRoot\bootstrap-vcpkg.bat" -disableMetrics
+            if ($LASTEXITCODE -ne 0) { Write-Host "::error::vcpkg bootstrap failed"; exit 1 }
+          }
+
+          & "$vcpkgRoot\vcpkg.exe" install libssh2 openssl --triplet x64-windows
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::vcpkg install failed"; exit 1 }
+
+          $toolchainFile = "$vcpkgRoot\scripts\buildsystems\vcpkg.cmake"
+          if (-not (Test-Path $toolchainFile)) {
+            Write-Host "::error::vcpkg toolchain file not found at $toolchainFile"
+            exit 1
+          }
+          Add-Content -Path $env:GITHUB_ENV -Value "VCPKG_ROOT=$vcpkgRoot"
+          Add-Content -Path $env:GITHUB_ENV -Value "VCPKG_TOOLCHAIN_FILE=$toolchainFile"
+          Write-Host "vcpkg ready -> $vcpkgRoot (toolchain: $toolchainFile)"
+
   # TEMPORARY — diagnostic probe for EAS-DEFIANT (the self-hosted Windows
   # runner), added to scope out what's actually installed there before
   # committing to a real native-Windows build job design. Only reachable
