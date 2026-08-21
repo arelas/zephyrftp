@@ -60,7 +60,7 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
     setWindowTitle(tr("ZephyrFTP v%1").arg(QStringLiteral(APP_VERSION)));
-    resize(1100, 780);   // fallback default — overridden below if a previous session saved real geometry
+    resize(1280, 900);   // fallback default — overridden below if a previous session saved real geometry
 
     m_settings = new AppSettings(this);
     m_transferManager = new TransferManager(this);
@@ -333,6 +333,14 @@ void MainWindow::buildMenuBar()
 void MainWindow::buildToolbar()
 {
     auto *toolbar = addToolBar(tr("Main"));
+    // Distinct from the translatable display title above — saveState()/
+    // restoreState() identify a QToolBar by objectName, not its title
+    // (same reasoning as m_transfersDock/m_commandsDock's own
+    // setObjectName() calls elsewhere in this file); without this, Qt
+    // warns "'objectName' not set for QToolBar ... 'Main'" at every
+    // saveState() call and silently can't persist this toolbar's own
+    // position/floating/visibility state at all.
+    toolbar->setObjectName(QStringLiteral("MainToolBar"));
 
     // Icon/color mapping straight from the design package's ICON-MAP.md —
     // connect=green (create/upload/success family), disconnect=red
@@ -406,6 +414,9 @@ void MainWindow::buildToolbar()
     // the same one.
     addToolBarBreak(Qt::TopToolBarArea);
     m_quickConnectToolBar = addToolBar(tr("Quick Connect"));
+    // See the "Main" toolbar's own setObjectName() call above for why —
+    // same fix, same reason.
+    m_quickConnectToolBar->setObjectName(QStringLiteral("QuickConnectToolBar"));
 
     // Separate host/username/password/port/protocol fields plus an
     // explicit Connect button — replaces an earlier single free-text
@@ -492,7 +503,7 @@ void MainWindow::buildLayout()
 
     splitter->addWidget(m_leftPane);
     splitter->addWidget(m_rightPane);
-    splitter->setSizes({550, 550});
+    splitter->setSizes({640, 640});
 
     setCentralWidget(splitter);
 
@@ -558,10 +569,14 @@ void MainWindow::buildTransferQueue()
     addDockWidget(Qt::BottomDockWidgetArea, m_transfersDock);
 
     // Without this, the table's own sizeHint claims more first-run height
-    // than the pane actually needs. ~200px matches buildCommandsPane()'s
-    // own target below (title bar + content), so on a brand new
-    // settings.json both docks start out the same height rather than one
-    // dwarfing the other.
+    // than the pane actually needs. Taller than buildCommandsPane()'s own
+    // 140px target below (title bar + content) — deliberately, not a
+    // leftover mismatch: at equal heights the two docks were pixel-identical
+    // (confirmed directly, both fresh and via a real saved windowState) but
+    // Commands still read as visually roomier, since its content is a
+    // single welcome line versus Transfers' own tab bar + column header
+    // eating into the same space. 200px here balances how they actually look
+    // on a brand new settings.json, not just how tall they measure.
     resizeDocks({m_transfersDock}, {200}, Qt::Vertical);
 }
 
@@ -583,9 +598,19 @@ void MainWindow::buildCommandsPane()
     // tall first-run height that crowds out the file panes below it —
     // only matters for a brand new settings.json; restoreState() further
     // down overrides this on every later launch with whatever size (if
-    // any) the person actually left it at. 200px matches buildTransferQueue()'s
-    // own target above, so Commands and Transfers start out the same height.
-    resizeDocks({m_commandsDock}, {200}, Qt::Vertical);
+    // any) the person actually left it at. Shorter than buildTransferQueue()'s
+    // own 200px target above — see its own comment: equal heights measured
+    // pixel-identical but Commands still looked visibly larger, since its
+    // one-line welcome message leaves almost the entire dock as
+    // undifferentiated blank space, unlike Transfers' tab bar + column
+    // header. 140px is sized to look right, not just measure equal — also
+    // confirmed as the real floor of what's achievable: values below
+    // ~97px get silently clamped by Qt's own minimumSizeHint for the
+    // QPlainTextEdit inside (CommandsPaneWidget sets no explicit minimum
+    // of its own), confirmed directly via instrumented measurement both
+    // at construction time and after a full show()/layout pass — not a
+    // timing issue, a genuine floor either way.
+    resizeDocks({m_commandsDock}, {140}, Qt::Vertical);
 }
 
 void MainWindow::onLeftFileActivated(const QString &name)

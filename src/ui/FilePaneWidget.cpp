@@ -436,30 +436,49 @@ void FilePaneWidget::buildUi()
     // explicit initial width below, sized so Name is always the
     // largest on open: comfortably wider than any one of Size/Modified/
     // Permissions individually, while still leaving the app's own
-    // fallback default window size (1100x780, MainWindow::MainWindow())
+    // fallback default window size (1280x900, MainWindow::MainWindow())
     // free of a horizontal scrollbar — and, same reasoning as
     // TransferQueueTable's own File column, the one column whose
     // content (arbitrarily long filenames) actually benefits from a
     // user dragging it wider still.
+    //
+    // These four widths (Name/Size/Modified/Permissions below) were
+    // re-derived together from real QFontMetrics/QHeaderView::
+    // sectionSizeHint() measurements against this app's actual UI font,
+    // not eyeballed: Modified and Permissions sized to the tightest width
+    // that doesn't clip their own binding constraint (content for
+    // Modified, the header label itself for Permissions — Qt's own
+    // sectionSizeHint() reflects header-label width only, which is why
+    // it alone would rank Permissions above Modified even though
+    // Modified's actual timestamp content is the wider of the two), Size
+    // given deliberate breathing room rather than its own tight minimum,
+    // and Name expanded to take the remaining width at the new default
+    // window size.
     m_view->header()->setStretchLastSection(false);
     m_view->header()->setSectionResizeMode(ColName, QHeaderView::Interactive);
-    m_view->setColumnWidth(ColName, 200);
-    // Comfortably fits an 8-digit byte count ("60000000") without
-    // needing to be dragged wider first.
+    m_view->setColumnWidth(ColName, 280);
+    // Header label ("Size") needs only ~22px and a realistic 8-digit byte
+    // count ("12345678") ~55px raw (both measured via QFontMetrics) — this
+    // is deliberately looser than either tight minimum, not sized to them.
     m_view->header()->setSectionResizeMode(ColSize, QHeaderView::Interactive);
-    m_view->setColumnWidth(ColSize, 78);
-    // Wide enough for the full "yyyy-MM-dd hh:mm:ss" text below without
-    // needing to be dragged wider first; the maxWidths cap further down
-    // still allows shrinking it back down interactively.
+    m_view->setColumnWidth(ColSize, 90);
+    // The full "yyyy-MM-dd hh:mm:ss" timestamp is the binding constraint
+    // here, not the "Modified" header label — measured at ~113px raw via
+    // QFontMetrics, so 140px leaves a real (~27px) margin without being
+    // needlessly loose; the maxWidths cap further down still allows
+    // dragging it wider interactively.
     m_view->header()->setSectionResizeMode(ColModified, QHeaderView::Interactive);
-    m_view->setColumnWidth(ColModified, 155);
-    // Comfortably fits the "Permissions" header label itself (the
-    // longest of the four) alongside a full "rwxr-xr-x" value. Now that
-    // stretchLastSection is off, this is a genuine bounded column with
-    // its own right-hand divider (QHeaderView::section's border-right
-    // in both theme files) instead of an unbounded stretch with no
-    // visible end — the trailing space past it just shows the pane's
-    // own background, matching every other empty area in the app.
+    m_view->setColumnWidth(ColModified, 140);
+    // Here the "Permissions" header LABEL is the binding constraint, not
+    // the "rwxr-xr-x" value itself (~68px vs ~51px raw, measured via
+    // QFontMetrics) — 95px is already close to the genuine tight minimum
+    // before the label itself would clip, not much further room to shrink
+    // it without doing that. Now that stretchLastSection is off, this is
+    // a genuine bounded column with its own right-hand divider
+    // (QHeaderView::section's border-right in both theme files) instead
+    // of an unbounded stretch with no visible end — the trailing space
+    // past it just shows the pane's own background, matching every other
+    // empty area in the app.
     m_view->header()->setSectionResizeMode(ColPermissions, QHeaderView::Interactive);
     m_view->setColumnWidth(ColPermissions, 95);
     // Same real bug, same fix as TransferQueueWidget's identical File
