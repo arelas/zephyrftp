@@ -6150,6 +6150,264 @@ without deep Keychain-API-level debugging has now been exhausted.
 Every other test target on this job passes clean, including a real
 full Qt6 Homebrew build from scratch on native arm64.
 
+**Linux self-hosted migration — `eas-linrunner` replacing `eas-ubuntu26`
+(2026-08-21).** The original Linux probe (above, in the now-superseded
+blocked-then-deferred history) found `eas-ubuntu26` bare and requiring a
+password for `sudo` — unusable for unattended CI bootstrap. Replaced
+with a fresh box, `eas-linrunner`, configured with passwordless `sudo`
+specifically to remove that blocker; re-probed rather than assuming
+anything else carried over. `build-linux` (plain native, no container)
+needed zero changes to its own steps beyond the same non-PR-only
+`runs-on` conditional every self-hosted job uses — passed clean on the
+first real dispatched run.
+
+**`build-linux-rpm`/`build-linux-appimage` (both `container:` jobs) needed
+Docker installed first, and Docker can't be self-provisioned inside the
+job that needs it** — a job's `container:` is set up by the runner
+*before* any of that job's own steps run, so by the time a step could
+`apt-get install docker.io`, the runner has already tried (and failed) to
+start the container. Fixed with a separate `provision-docker-linux` job
+that both container jobs depend on via `needs:`, guarded with
+`if: always() && (needs.provision-docker-linux.result == 'success' ||
+needs.provision-docker-linux.result == 'skipped')` — the `skipped` half
+matters because a PR-triggered run (where provisioning correctly doesn't
+run at all, since `ubuntu-latest` already has Docker) would otherwise be
+blocked by `needs:`'s default skip-propagates-to-skip behavior. Installed
+via Ubuntu's own `docker.io` package rather than Docker's official apt
+repo — this box runs a very new Ubuntu release ("resolute", 26.04), new
+enough that Docker's external repo might not yet have a signed release
+for that exact codename. A second gotcha: `usermod -aG docker` doesn't
+take effect for the already-running runner service process (a new group
+membership only applies to a *new* login/process, and the runner can't
+restart itself mid-job without killing the job) — fixed same-run with
+`chmod 666 /var/run/docker.sock` (the group add was kept too, for
+whenever the runner service next restarts naturally). Verified
+non-vacuously: `docker run --rm hello-world` for the daemon itself, then
+real dispatched runs of both jobs with full build/test/packaging, all
+green on the first attempt.
+
+**`ccache` added to all three Linux jobs (2026-08-21)** — a genuine
+capability unlocked specifically by these no longer being ephemeral
+GitHub-hosted VMs. `build-linux` (native) uses ccache's own default
+`~/.cache/ccache`, which persists naturally since the runner's real HOME
+persists across runs. The two `container:` jobs needed a
+`container.volumes` bind mount instead
+(`/opt/zephyrftp-ccache/<job>:/ccache`, `CCACHE_DIR=/ccache` at job
+level) — a container's own filesystem is thrown away every run, so
+without the bind mount, ccache would see a permanently cold cache no
+matter how it was configured *inside* the container. Verified
+non-vacuously, not just "no error": a genuine second dispatch of each job
+showed real hits (`build-linux` went 0/95 → 95/95 direct hits;
+`build-linux-rpm` the same, through the bind mount, confirming it
+persists across separate container runs and isn't just visible within
+one run).
+
+**A separate, real bug surfaced immediately after ccache landed**: the
+first post-ccache dispatch of `build-linux` failed in `actions/checkout`
+itself, with `Permission denied`. Root cause: all three Linux jobs share
+one host workspace directory for this repo, and the two container jobs
+run as root inside their containers — anything they write there ends up
+root-owned on the host. `build-linux` runs as the plain runner user, so
+checkout's own clean/reset logic couldn't touch whatever the last
+container job had left behind. Fixed with a `sudo chown -R
+"$(id -u):$(id -g)" .` reclaim step before checkout in `build-linux`
+(passwordless sudo already configured for exactly this kind of thing),
+plus a defensive, symmetric `chown` in the two container jobs too (lower
+risk there since root can normally read/write regardless of ownership,
+but costs nothing to stay consistent). **Worth remembering for any future
+multi-job self-hosted setup mixing `container:` and non-`container:`
+jobs on shared infrastructure**: they will fight over workspace ownership
+unless something explicitly reclaims it.
+
+**A second runner instance, `eas-linrunner-2`, added for real parallelism
+(2026-08-21)** — so two of the three Linux jobs can run concurrently
+instead of always queuing behind each other on one runner process,
+recovering some of what running on three separate GitHub-hosted VMs used
+to give for free. Registered with the same `self-hosted,Linux,X64`
+labels as the first, so `runs-on: [self-hosted, Linux]` picks up either
+one interchangeably. Paired with a build-parallelism cap
+(`-j$(nproc)` → `-j4`, later `-j8` after a hardware bump — see below)
+across all three jobs' build/test-build steps, sized so two simultaneous
+builds don't oversubscribe the box. Verified non-vacuously: dispatched
+`build-linux` and `build-linux-rpm` at the exact same moment and
+confirmed via the Actions API's own `runner_name` field (not just the
+CLI summary) that they genuinely ran on two different runners
+concurrently, both completing successfully.
+
+**Hardware upgrade re-tunes the parallelism cap, not a one-time
+number** — `eas-linrunner`'s underlying hardware went from 8 cores/~7.2GB
+RAM to 16 cores/~15GB RAM. `-j4` (sized for the original 8-core box, so
+two concurrent `-j4` builds wouldn't oversubscribe it) was re-derived to
+`-j8` for the doubled capacity — verified via `probe-linux`'s own
+`nproc`/`free -h` checks rather than trusting the claim, then confirmed
+with a real concurrent dispatch of all three jobs (~4m45s and ~6m55s,
+genuinely parallel). **Re-derive this again if the hardware changes
+further** — it's sized to the specific box, not a fixed constant.
+
+**`EAS-WINRUNNER` replacing `EAS-DEFIANT` (2026-08-21)** — a fresh
+Windows box, re-probed and re-verified from scratch rather than assuming
+anything carried over from `EAS-DEFIANT`, correctly so since it differed
+in two real ways: script execution was disabled by default (the default
+`Restricted` PowerShell execution policy — fixed directly on the machine
+with `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope
+LocalMachine -Force`, since a workflow step can't fix the exact mechanism
+blocking workflow steps), and PowerShell 7 (`pwsh`) wasn't preinstalled
+(this box only had legacy Windows PowerShell 5.1) — added
+`Microsoft.PowerShell` to the bootstrap's `winget` install list rather
+than risk 5.1/7 behavioral differences across the whole already-debugged
+step sequence, all of which was written and tested against `pwsh`
+specifically. The bootstrap step itself has to stay 5.1-compatible
+regardless (`pwsh` doesn't exist yet when it starts) but every step after
+it correctly picks up `pwsh` once installed and on `GITHUB_PATH`. A
+third, smaller bug: `winget install Microsoft.PowerShell` failed with a
+certificate error because the package ID exists in both the community
+`winget` source and `msstore`, and the ambiguous match forced a search of
+`msstore` too, which failed outright on this network — fixed by pinning
+`--source winget` on every `EnsureWinget` call, not just this one ID.
+
+**A local-deploy step lands the latest known-good Windows build outside
+the CI workspace, for manual testing on the runner box itself
+(2026-08-21).** David: wanted the latest build to land automatically on
+whichever machine is running the Windows CI, as part of the release
+process itself, rather than needing a separate manual download-and-copy
+step. Added as the final step of `build-windows-native`, deliberately
+*after* the real installer install/launch/uninstall verification (so it
+only ever updates on a genuinely known-good build, never a build that
+merely compiled): `robocopy dist "C:\ZephyrFTP-Latest" /MIR` plus a copy
+of the installer to `C:\ZephyrFTP-Latest-Setup.exe`, both outside the CI
+workspace so they survive the next run's checkout. **Real gotcha caught
+on the first attempt**: the step failed even though the deploy itself
+genuinely succeeded (its own "Deployed to..." message printed first) —
+PowerShell's `$LASTEXITCODE` isn't reset by non-external cmdlets like
+`Copy-Item`/`Write-Host`, so it still held robocopy's own non-zero-but-
+successful exit code (commonly `1`, meaning "files copied") by the time
+the step ended, and the runner treated that stale code as failure. Fixed
+with an explicit `exit 0` after the script's own success confirmation.
+**Worth remembering for any future robocopy-in-PowerShell CI step**, not
+just this one — robocopy's exit-code convention (0-7 are various success
+states, only 8+ is a real failure) doesn't compose safely with
+PowerShell's own `$LASTEXITCODE` semantics without an explicit override.
+
+**`v0.8.13` — a real tagged release cut purely to validate the whole
+self-hosted pipeline end to end (2026-08-21).** No application code
+changed this cycle; David's call was to cut a real version bump anyway,
+specifically so the migration above got proven against an actual tagged
+release rather than only individual `workflow_dispatch` runs. Confirmed
+non-vacuously: every job succeeded (`build-windows-native` on
+`EAS-WINRUNNER`, `build-windows` still on GitHub-hosted infra as the
+actual release-asset producer for that architecture, all three Linux
+jobs genuinely parallel across the two `eas-linrunner` instances,
+`build-macos` on `Mac`), and `gh release view v0.8.13` confirmed all 7
+expected assets published for real.
+
+**`EAS-WINRUNNER` service persistence: the real root cause was clock
+skew, not service configuration (2026-08-21).** Goal: make the Windows
+runner survive reboot/logoff without an interactive `run.cmd` session
+staying open — install it as a proper background service. Turned into
+the longest single investigation of this whole migration, because the
+actual cause was hiding behind a generic, misleading runner error message
+that pointed at all the wrong things.
+
+Symptom, identical under every launch method tried (a true Windows
+Service via `config.cmd --runasservice`, a Task Scheduler task, and even
+plain interactive `run.cmd`): connects, then fails within seconds —
+`Failed to create a session. The runner registration has been deleted
+from the server, please re-configure.` — then exits cleanly, no retry.
+
+Ten real causes were checked and ruled out, each verified directly rather
+than assumed, before finding the actual one:
+1. Wrong install path/service account — the documented fix for this
+   exact console error in GitHub's own `actions/runner#717` issue (a
+   runner installed under a user-profile path, run by the default
+   `NT AUTHORITY\NETWORK SERVICE` account, which lacks access to that
+   profile). Both applied and independently confirmed via Event Viewer
+   and `sc.exe qc` (`C:\actions-runner\bin\RunnerService.exe`,
+   `EAS-WINRUNNER\Sysadmin`). Made zero difference — identical failure
+   persisted.
+2. Two competing listener processes — `Get-Process -Name
+   Runner.Listener` came back completely empty during a clean, isolated
+   test. Not a race.
+3. Antivirus/Defender quarantining the `.credentials` file on creation —
+   `Get-MpThreatDetection` returned nothing.
+4. `config.cmd` silently failing to write credential files — disproven
+   directly: `Test-Path` on `.credentials`/`.credentials_rsaparams`
+   confirmed `True` immediately after a fresh `config.cmd remove` +
+   reconfigure cycle.
+5. Stale/mismatched credential files left over from the path-migration
+   remove/reconfigure churn — ruled out by the same fresh-registration
+   test; `.runner`'s `agentId` matched the just-created registration.
+6. The registration actually being deleted server-side (the error
+   message's own literal claim) — disproven: `gh api
+   repos/.../actions/runners` showed the registration still existing,
+   `status: offline`, moments after a "has been deleted" failure. The
+   runner's own error text was not describing what actually happened.
+7. A rate-limit/abuse-protection heuristic on rapidly re-registering the
+   same runner name (tested after 3 rapid register/remove cycles on
+   "EAS-WINRUNNER" during troubleshooting) — superseded before the test
+   fully completed once the real cause was found; not confirmed either
+   way, but no longer relevant.
+8. TCP-level firewall block on the Actions service domain — `Test-
+   NetConnection pipelinesghubeus23.actions.githubusercontent.com -Port
+   443` succeeded.
+9. TLS interception by a corporate SSL-inspecting proxy — checked the
+   actual certificate presented via `[System.Net.HttpWebRequest]`:
+   genuine `Let's Encrypt` cert for `*.actions.githubusercontent.com`,
+   correct subject, not proxy-substituted.
+10. A GitHub-wide service outage — githubstatus.com showed all systems
+    operational throughout.
+
+**Real root cause, found only once diagnosis moved to a Claude Code
+session running directly on `EAS-WINRUNNER` itself** (set up mid-
+investigation specifically to get real execution access instead of
+continuing a slow manual copy-paste relay, which had itself become the
+actual bottleneck): reading the full *content* of the freshest
+`_diag\Runner_*.log` file — not just checking whether a new one existed,
+which every earlier check in this investigation had done, and which kept
+looking like nothing new was ever written — surfaced the real exception,
+one level below the generic console message:
+
+```
+[ERR GitHubActionsService] POST to vstoken.actions.githubusercontent.com/.../oauth2/token/... failed. HTTP Status: BadRequest
+[ERR BrokerMessageListener] VssOAuthTokenRequestException: The token expired on 08/21/2026 15:41:25. Current server time is 08/21/2026 18:36:26.
+```
+
+**Roughly 3 hours of clock skew.** `W32Time` was set to `Manual` start
+(not automatic/triggered) on this non-domain machine, so it wasn't
+reliably resyncing and had drifted badly. The runner signs a short-lived
+OAuth JWT locally to create a session; with the local clock hours behind,
+the token is born already-expired by GitHub's clock, so the very first
+session-creation call is rejected instantly — before `Runner.Listener`'s
+main diagnostic-logging path meaningfully engages, which is why the
+console output and every surface-level check looked clean. The
+"registration has been deleted" text is the runner's generic catch-all
+fallback for *any* session-creation failure, not a literal, trustworthy
+description of the actual cause.
+
+Fixed by flipping `W32Time` to automatic/triggered start (so this can't
+silently recur), then a clean `config.cmd remove` + fresh `config.cmd
+--unattended --runasservice --windowslogonaccount "EAS-WINRUNNER\
+Sysadmin" ...` install. Independently verified from two sides — the API
+(`gh api repos/.../actions/runners` showing `status: online`) and direct
+on-box checks (`sc.exe qc` showing the correct binary path and account,
+both `RunnerService.exe` and `Runner.Listener.exe` running as real
+processes, and the freshest `_diag` log showing a clean `Session
+created.` → `Listening for Jobs` with no error). A follow-up comparison
+run on the newly-bumped 16-core/16GB hardware completed in 6m10s versus
+a 7m42s baseline from the most recent prior successful run — a real
+improvement, though not a rigorously isolated one, since the exact
+timing of the hardware bump relative to that baseline run isn't known
+precisely.
+
+**Lesson for any future non-domain self-hosted runner box**: check
+`W32Time`'s start type as part of initial bootstrap, before it ever
+causes a mysterious failure, not after. A domain-joined machine gets
+automatic time sync for free via its domain controller; a standalone one
+does not, and this specific class of failure (a generic "registration
+deleted" message from a JWT-based auth flow) gives almost no surface-level
+signal pointing back to a clock — the real exception is genuinely one
+layer below what the runner prints to its own console, and requires
+reading `_diag` log *content*, not just checking for a log's existence.
+
 ## Known gaps (flagged, not fixed)
 
 - **FTP/FTPS has now actually touched a real server on every one of its
