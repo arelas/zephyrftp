@@ -1136,6 +1136,18 @@ jobs:
             if ($p) { Add-Content -Path $env:GITHUB_PATH -Value $p }
           }
 
+          # NSIS's own installer, unlike Git's/CMake's MSIs, does not
+          # register itself on PATH at all (confirmed directly: it
+          # installed cleanly via winget, "Successfully installed", but
+          # makensis was still unresolvable after the registry-based PATH
+          # refresh above) — add its known install directory explicitly.
+          foreach ($nsisDir in @("${env:ProgramFiles(x86)}\NSIS", "${env:ProgramFiles}\NSIS")) {
+            if ((Test-Path "$nsisDir\makensis.exe") -and -not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+              $env:PATH = "$env:PATH;$nsisDir"
+              Add-Content -Path $env:GITHUB_PATH -Value $nsisDir
+            }
+          }
+
           Write-Host "=== Verification ==="
           $failed = $false
           foreach ($tool in @("git", "cmake", "ninja", "makensis", "python")) {
