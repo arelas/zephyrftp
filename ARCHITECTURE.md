@@ -5382,6 +5382,105 @@ to drive FileZilla itself for a same-desktop comparison.
   is exactly the distinction this fix restores for the hand-wired menu
   actions too.
 
+**`UpdateChecker` (Help menu's "Check for Updates...") is the first
+thing in this codebase to use Qt's own HTTP stack
+(`QNetworkAccessManager`) rather than a raw socket** — every transfer
+protocol goes through `FtpBackend`/`SftpBackend`/libssh2 instead, so
+there was nothing here to reuse. A one-shot GET against GitHub's real
+release list (`/repos/arelas/zephyrftp/releases`, NOT `/releases/latest`
+— see below), compared against `APP_VERSION` via `QVersionNumber`,
+respecting the same global proxy setting every SFTP/FTP/FTPS
+connection already does (`AppSettings::resolvedProxyConfig()` ->
+`QNetworkProxy`). Manual only, deliberately — automatic/background
+checking was explicitly scoped OUT of this feature given the direct
+tension with this project's own "no account, nothing phones home"
+marketing message; that remains a separate, not-yet-built, explicitly
+opt-in follow-up if it's ever wanted.
+**Non-vacuous testing against the REAL API immediately caught a real
+bug before it ever shipped**: `/releases/latest` deliberately excludes
+prereleases, and every release this project has EVER published is
+flagged prerelease (it matches this project's actual beta status), so
+that endpoint 404s, always, for this specific repo — confirmed
+directly against the live API, not assumed. Checking whether the
+marketing site's own `site/latest.php` (gitignored, deployed
+separately — see CONTRIBUTING.md) had the identical bug found that it
+did, and had for its ENTIRE deployed life: its own "live version"
+fetch had been silently 503'ing on every real page load since the file
+was written (confirmed: its own disk cache file had never once been
+successfully created), meaning the site's dynamic download-link
+feature had never actually worked — it only ever looked current
+because of manual static-HTML version bumps after every release. Both
+fixed identically: fetch the full releases list (newest first) and
+take the first non-draft entry, instead of relying on `/releases/latest`
+at all.
+
+**The Transfers pane's tab bar took four real iterations to get right
+on macOS, and the final shape is a reusable lesson for any future
+per-platform `QStyle` override in this codebase.** The underlying need
+— `QTabBar` rendering left-aligned (`QMacStyle` centers tabs by
+default) with no eliding, themed by this app's own QSS rather than
+native macOS chrome — went through: (1) `QTabWidget::
+setDocumentMode(true)`, which fixed alignment/eliding but visibly put
+the tab bar onto QMacStyle's native "unified toolbar" rendering path,
+reported directly as a white seam plus a tab bar that followed the
+OS's own system light/dark appearance instead of this app's theme;
+(2) a `QProxyStyle` overriding just the two relevant `styleHint()`
+queries, installed on the tab bar itself via `QWidget::setStyle()` —
+still showed the identical white background in a real screenshot; (3)
+swapping to Qt's fully cross-platform `Fusion` style, same per-widget
+installation — produced the *pixel-identical* white background despite
+being a completely different style object, which was the actual
+diagnostic turning point: the variable was never *which* style, it was
+calling `QWidget::setStyle()` on that widget at all. Qt's own
+documentation warns this disconnects a widget from the app's
+stylesheet cascade; alignment/eliding (plain `styleHint()`/property
+mechanisms) kept working across every attempt while only QSS
+`background-color` painting failed — exactly that documented split.
+(4) **The actual fix**: a new `TransferQueueWidget::
+installTabBarAlignmentFix()`, called once from `main.cpp` *before*
+`QApplication::setStyleSheet()` and before any widget exists, using
+`QApplication::setStyle()` instead of any per-widget call —
+`QApplication::setStyle()` composes correctly with stylesheets by
+design, so every widget (including this one) still gets Qt's normal
+automatic `QStyleSheetStyle` wrapping, same as if the function had
+never been called at all. The installed `QProxyStyle` overrides only
+`SH_TabBar_Alignment`, delegating everything else unchanged, so it has
+zero visual effect on any other widget in the app despite being
+installed application-wide; `QTabBar::setElideMode(Qt::ElideNone)`
+stays a plain widget property, unrelated to any of this, set directly
+in the constructor. Confirmed via a real macOS screenshot: dark
+background flowing seamlessly under all three tab labels into the
+table below, left-aligned, full text. Caught and fixed a real bug in
+the fix itself along the way, before it ever left the sandbox:
+attempt (2)'s `QWidget::setStyle()` doesn't take ownership, and
+parenting the new style object to the tab bar (the obvious fix for
+that) caused a genuine SIGSEGV in `QApplication::~QApplication()` on
+every test that tears down a real `MainWindow`, confirmed via `gdb` —
+`QApplication::setStyle()`, used in the final fix, takes ownership
+correctly on its own, no manual lifetime workaround needed there.
+**The generalizable lesson**: any per-platform `QStyle::StyleHint`
+override in a Qt app using global stylesheets belongs at the
+`QApplication::setStyle()` level, called once at startup before the
+stylesheet loads — never via `widget->setStyle()` on the specific
+widget that needs the fix, however tempting that narrower-looking
+scope seems.
+
+**Two smaller Site Manager/Preferences fixes from the same session**:
+`SiteManagerDialog` gained a right-click "Rename Group..." on a group
+folder in the site tree — groups were never a separate stored entity
+(a group is just a string every member site happens to share, see
+`m_groupCombo`'s own doc comment), so renaming one restamps that
+string on every site currently in it; renaming onto an existing
+different group's name is allowed deliberately, merging the two.
+`PreferencesDialog`'s external-editor field was clipping its own
+placeholder text ("Leave blank to use your system's default
+application") because `QLineEdit::sizeHint()` doesn't account for
+placeholder length at all — fixed by sizing the field's minimum width
+explicitly from the placeholder's real rendered width via
+`QFontMetrics::horizontalAdvance()`. Unlike the macOS-only bugs above,
+this one reproduced cleanly on Linux too — a disposable probe measured
+the unfixed field clipping by a real 124px.
+
 ## Design system
 
 The dark theme and icon set come from a design package (not included in
@@ -5488,6 +5587,47 @@ as part of the job, not just link it — matching CONTRIBUTING.md's
 "these need to actually pass" rule for CI too, not only local
 development.
 
+**Every test/verify target links one shared `zephyrftp_core` `OBJECT`
+library instead of each independently enumerating its own subset of
+source files** (2026-08). Before this, a target that happened to need
+`MainWindow.cpp` (say) compiled it fresh, on its own, every single
+time any OTHER target that also needed it was built in the same job —
+confirmed directly before touching anything: `MainWindow.cpp` was
+being compiled 14 separate times across the 44 real/test targets that
+existed then, `TransferManager.cpp` 34 times, `FilePaneWidget.cpp` 36
+times, 1.4GB of object files for the test suite alone. CI's own
+"Build test suite" step measured at 6m06s versus 1m53s to actually
+*run* all 27 required tests — the build step, not the tests
+themselves, was the real cost. Collapsing every target's source list
+into one shared `OBJECT` library (linked `PUBLIC`, so include
+dirs/compile definitions/link libraries all propagate automatically)
+shrank every target to a two-line pattern — its own entry-point `.cpp`
+plus `target_link_libraries(<name> PRIVATE zephyrftp_core)` — and
+dropped `CMakeLists.txt` from 1481 to 688 lines. Verified byte-for-byte
+behavior-identical before/after: the same 27 tests, same 100% pass
+rate, same run timing, only the compile step got cheaper. Also
+structurally closes a real, previously-recurring gotcha: a target
+referencing a `Q_OBJECT` header without also compiling its matching
+`.cpp` used to fail with a confusing link error — every `Q_OBJECT`
+header's `.cpp` is now always compiled exactly once, in
+`zephyrftp_core`, before anything can link it.
+
+**`workflow_dispatch` can scope a manual run to a single build job**
+(2026-08), via a `job` choice input (`gh workflow run build.yml --ref
+main -f job=build-macos`, default `all`) — added after repeatedly
+burning the other four jobs' ~20-25 minutes of CI time to verify a
+single macOS-only UI/packaging change. Each build job's own `if:`
+short-circuits true (runs unconditionally) for anything that ISN'T a
+`workflow_dispatch` event, so a real `v*` tag push or a pull request
+always runs every job regardless — this only ever narrows an
+on-demand manual run. Verified directly: a scoped dispatch targeting
+one job showed the other four resolving to `skipped` within seconds
+(confirmed via the Actions API's own `conclusion` field, not just the
+CLI's summary view), while the targeted job ran and completed
+normally. The `release` job is unaffected either way — it only ever
+runs on a real tag push (`if: startsWith(github.ref, 'refs/tags/v')`),
+never on `workflow_dispatch`, with or without this input.
+
 **`build-windows`** cross-compiles with MinGW from a `fedora:44`
 container on `ubuntu-latest`, rather than building natively on
 `windows-latest` — no `cl.exe`, no Qt-for-Windows download, no vcpkg.
@@ -5554,14 +5694,45 @@ exists specifically for this job; `verify-credential-store` runs here
 same as every other platform, and is the one target that actually
 proves that backend round-trips against a real, live keychain rather
 than just compiling. Packaging differs from every other job, and
-differently than it used to: `CMakeLists.txt`'s `if(APPLE)` block
-still sets `MACOSX_BUNDLE` properties (bundle identifier, `.icns`,
-version) and `install(TARGETS zephyrftp BUNDLE DESTINATION .)`, but
-the `.dmg` itself is now built directly in `build.yml` with `hdiutil`
-(a hand-assembled staging directory holding the `.app` plus an
-`/Applications` symlink, the same drag-to-install convention every Mac
-user expects), NOT via CPack's `DragNDrop` generator the way every
-other packaged format in this project still is. Found the hard way
+differently than it used to (twice now): `CMakeLists.txt`'s `if(APPLE)`
+block sets `MACOSX_BUNDLE` properties (bundle identifier, `.icns`,
+version) plus `OUTPUT_NAME "ZephyrFTP"` and
+`install(TARGETS zephyrftp BUNDLE DESTINATION .)` — `OUTPUT_NAME` is
+what actually determines the on-disk bundle folder/executable name
+(`ZephyrFTP.app`, `Contents/MacOS/ZephyrFTP`); the CMake TARGET itself
+stays the lowercase `zephyrftp` identifier `--target` flags use
+throughout this file, unaffected. This split matters: before
+`OUTPUT_NAME` was set (2026-08), the bundle was still named after the
+target, and a real screenshot of the packaged `.dmg` showed Finder's
+icon-view label reading lowercase "zephyrftp" underneath the app
+icon — `MACOSX_BUNDLE_BUNDLE_NAME`'s own Info.plist entry (unaffected,
+still `ZephyrFTP`) has no bearing on what Finder actually displays as
+that folder's name.
+The `.dmg` itself is built via `create-dmg` (Homebrew) — not CPack's
+`DragNDrop` generator, and not hand-rolled `hdiutil` either, its own
+immediate predecessor (2026-08): `create-dmg` gives the packaged `.dmg`
+a real drag-to-install layout (positioned app/Applications icons, a
+custom background, hidden Finder chrome) instead of a bare file grid,
+requested directly ("make our mac dmg look neat, like others do").
+It stages from the exact `build/ZephyrFTP.app` tree the deploy steps
+below already fixed in place — a plain filesystem copy of whatever
+folder you point it at, same as the `hdiutil` step's own `cp -R`
+before it, so it can't reintroduce the `DragNDrop` bug described just
+below. `resources/dmg/background.png` deliberately uses this app's
+own LIGHT-theme palette, not the dark one the rest of the app defaults
+to: a dark background was tried first and, confirmed via a real
+screenshot, made Finder's own black icon-view label text unreadable —
+Finder's DMG label-text color isn't tied to the Mac's system light/
+dark appearance the way it might seem, it's effectively a fixed
+default, and there's no supported way to make a DMG's own background
+switch with system appearance at all (`.DS_Store`-based background
+customization is a static image, full stop) — a light background is
+the actual, permanent fix, and the reason nearly every polished Mac
+app's own `.dmg` already uses one.
+
+Neither `create-dmg` nor its `hdiutil` predecessor ever risked
+reintroducing the ORIGINAL packaging bug this project hit first,
+CPack's `DragNDrop` generator — found the hard way
 (2026-08, see the packaging-bug writeup below): `cpack -G DragNDrop`
 re-stages the bundle from that `install()` rule's own build-time
 manifest rather than copying whatever the build tree currently

@@ -104,17 +104,20 @@ a `.deb`/`.rpm`; NOT `cpack -G DragNDrop`, which this line used to say
 bundle from CMake's own build-time manifest, dropping
 `Contents/Frameworks` since those files are added by a later deploy
 step CMake has no record of — the actual root cause of the v0.7.3
-launch crash) in favor of packaging the already-fixed `build/zephyrftp.app`
-tree directly; this doc comment just hadn't caught up. See
-`build.yml`'s own "Build .dmg package" step comment for the full story,
-and `resources/dmg/background.png` for the custom drag-to-Applications
-layout. All three jobs actually run the full required test
-suite (see "Running the test suites" below for the current count), not
-just link it.
-On a `v*` tag, the `release` job packages all three
-(`zephyrftp-windows-x64.zip`, `zephyrftp-linux-x64.tar.gz`,
-`ZephyrFTP.dmg`) onto the same GitHub Release, alongside the `.deb`/
-`.rpm`/AppImage. All of this has been confirmed on GitHub's own
+launch crash) in favor of packaging the already-fixed `build/ZephyrFTP.app`
+tree directly (`ZephyrFTP.app`, capitalized — the bundle's `OUTPUT_NAME`,
+not the lowercase `zephyrftp` CMake target name it used to share; see
+`build.yml`'s own "Build .dmg package" step comment for that story too).
+See `resources/dmg/background.png` for the custom drag-to-Applications
+layout (the app's own light-theme palette, deliberately — a dark
+background broke Finder's own black icon-label text). All three jobs
+actually run the full required test suite (see "Running the test
+suites" below for the current count), not just link it.
+On a `v*` tag, the `release` job packages all seven build artifacts
+onto the same GitHub Release: `zephyrftp-windows-x64-setup.exe` and
+`zephyrftp-windows-x64.zip`, `zephyrftp-linux-x64.tar.gz`,
+`ZephyrFTP-<version>-Darwin.dmg`, and the `.deb`/`.rpm`/AppImage. All
+of this has been confirmed on GitHub's own
 runners, not just locally — including a real tagged release (see the
 `v0.2.0` release) that exercised the `release` job for real, which is
 what caught the one thing local `podman` testing couldn't: GitHub
@@ -137,6 +140,23 @@ gh workflow run build.yml --ref main
 
 (or the "Run workflow" button on the Actions tab) — same jobs, same
 verification, just opt-in instead of automatic.
+
+To run just one platform's job instead of all five (e.g. iterating on a
+macOS-only fix), pass the `job` input:
+
+```
+gh workflow run build.yml --ref main -f job=build-macos
+```
+
+Valid values: `all` (the default), `build-windows`, `build-linux`,
+`build-linux-rpm`, `build-linux-appimage`, `build-macos`. Each build job
+has a matching `if:` condition, so the other four resolve to `skipped`
+in seconds rather than actually running — confirm with
+`gh api repos/.../actions/runs/<id>/jobs --jq '.jobs[] | {name,
+status, conclusion}'` if you want to see that directly rather than
+trusting the Actions UI summary. This only affects `workflow_dispatch`
+runs — the `push`/`pull_request` triggers, and the tag-triggered
+`release` job, are unaffected either way.
 
 ### Cross-compiling for Windows locally (MinGW, from Fedora)
 

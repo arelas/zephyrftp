@@ -55,8 +55,10 @@ during this phase.
   reach it.
 - **SFTP with password or private-key login.**
 - **Site Manager** — save connections you use often, organized into
-  folders (type a new folder name right on the site's details, or pick
-  an existing one from the dropdown), so you don't have to re-type the
+  folders (type a new folder name right on the site's details, pick an
+  existing one from the dropdown, or right-click an existing folder in
+  the tree to rename it — every site inside moves with it), so you
+  don't have to re-type the
   host, port, and username every time. Each saved site can also default
   to a specific starting folder on the server instead of your home
   directory — handy if you always go straight to the same upload folder.
@@ -241,6 +243,11 @@ during this phase.
   widely-supported extension most servers accept, but it's not part of
   the FTP standard, so a server that doesn't implement it will tell you
   so rather than silently doing nothing).
+- **Check for Updates** (Help menu) — a manual, one-click check against
+  GitHub's real release list, with a link straight to the new version's
+  release page if one's available. Deliberately manual, not automatic
+  or run in the background — nothing is checked unless you click it
+  yourself.
 
 ## Download
 
@@ -252,9 +259,10 @@ Grab the latest build from [Releases](https://github.com/arelas/zephyrftp/releas
   unzip-and-run alternative if you'd rather not install anything. Neither
   is code-signed yet (see the feature-freeze note above), so the
   installer will get a Windows SmartScreen warning on first run.
-- **macOS**: `ZephyrFTP.dmg` — Apple Silicon only (no Intel Mac build
-  yet, see Known limitations). Open the `.dmg` and drag ZephyrFTP into
-  Applications. The build is unsigned and unnotarized (no paid Apple
+- **macOS**: `ZephyrFTP-<version>-Darwin.dmg` — Apple Silicon only (no
+  Intel Mac build yet, see Known limitations). Open the `.dmg` and
+  drag ZephyrFTP into Applications. The build is unsigned and
+  unnotarized (no paid Apple
   Developer account behind this project), so the first launch needs a
   right-click → Open to get past Gatekeeper's "cannot be opened because
   Apple cannot check it for malicious software" warning — after that
