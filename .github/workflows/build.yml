@@ -1084,38 +1084,56 @@ jobs:
     steps:
       - name: Diagnose available toolchain
         run: |
+          $ErrorActionPreference = 'Continue'
+          function Probe($label, $cmdName, $versionArgs) {
+            Write-Host "=== $label ==="
+            $cmd = Get-Command $cmdName -ErrorAction SilentlyContinue
+            if ($cmd) {
+              Write-Host "found: $($cmd.Source)"
+              if ($versionArgs) {
+                try { & $cmdName @versionArgs 2>&1 | Write-Host } catch { Write-Host "(version check failed: $_)" }
+              }
+            } else {
+              Write-Host "NOT FOUND"
+            }
+          }
+
           Write-Host "=== OS ==="
           [System.Environment]::OSVersion.VersionString
           Write-Host "=== PowerShell ==="
           $PSVersionTable.PSVersion
-          Write-Host "=== git ==="
-          git --version
-          Write-Host "=== cmake ==="
-          cmake --version
-          Write-Host "=== ninja ==="
-          Get-Command ninja -ErrorAction SilentlyContinue
-          Write-Host "=== qmake (Qt) ==="
-          Get-Command qmake -ErrorAction SilentlyContinue
-          if (Get-Command qmake -ErrorAction SilentlyContinue) { qmake --version }
+
+          Probe "git" "git" @("--version")
+          Probe "cmake" "cmake" @("--version")
+          Probe "ninja" "ninja" @("--version")
+          Probe "qmake (Qt)" "qmake" @("--version")
+          Probe "cl.exe" "cl" $null
+          Probe "makensis (NSIS)" "makensis" $null
+          Probe "vcpkg" "vcpkg" @("version")
+          Probe "choco" "choco" @("--version")
+          Probe "winget" "winget" @("--version")
+
           Write-Host "=== Qt install roots (common locations) ==="
           Get-ChildItem -Path "C:\Qt" -ErrorAction SilentlyContinue
+          Get-ChildItem -Path "C:\" -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*Qt*" }
+
           Write-Host "=== Visual Studio (vswhere) ==="
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           if (Test-Path $vswhere) { & $vswhere -latest -products * -format json } else { Write-Host "vswhere not found" }
-          Write-Host "=== cl.exe on PATH ==="
-          Get-Command cl -ErrorAction SilentlyContinue
-          Write-Host "=== makensis (NSIS) ==="
-          Get-Command makensis -ErrorAction SilentlyContinue
-          Write-Host "=== vcpkg ==="
-          Get-Command vcpkg -ErrorAction SilentlyContinue
+          Get-ChildItem -Path "${env:ProgramFiles}\Microsoft Visual Studio" -ErrorAction SilentlyContinue
+          Get-ChildItem -Path "${env:ProgramFiles(x86)}\Microsoft Visual Studio" -ErrorAction SilentlyContinue
+
+          Write-Host "=== VCPKG_ROOT env ==="
           $env:VCPKG_ROOT
-          Write-Host "=== choco / winget ==="
-          Get-Command choco -ErrorAction SilentlyContinue
-          Get-Command winget -ErrorAction SilentlyContinue
+
           Write-Host "=== Runner work dir / disk space ==="
           Get-PSDrive -PSProvider FileSystem
+
           Write-Host "=== Full PATH ==="
           $env:PATH -split ';'
+
+          Write-Host "=== Done (always exits 0 - diagnostic only) ==="
+          exit 0
 
   # Only runs on version tags (v1.0.0 etc.) — attaches both platform
   # builds as zipped/tarred assets on a GitHub Release, matching the
