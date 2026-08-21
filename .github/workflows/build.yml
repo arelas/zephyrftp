@@ -373,7 +373,16 @@ jobs:
 
   build-linux:
     if: github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'build-linux'
-    runs-on: ubuntu-latest
+    # self-hosted (eas-linrunner) for push/tag/workflow_dispatch — never
+    # for pull_request, since this repo is public and a stranger's PR
+    # running code on real, persistent hardware (rather than a GitHub-
+    # hosted ephemeral VM) is exactly the anti-pattern GitHub's own docs
+    # warn against. Verified bare when probed (2026-08-21): no docker/
+    # podman (rules out build-linux-rpm/build-linux-appimage below, both
+    # container: jobs, moving here too — for now), but passwordless sudo
+    # now works, so this job's existing `sudo apt-get install` step needs
+    # no changes at all to run here.
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted", "Linux"]') }}
     # Native build, not a container — no cross-compile toolchain needed,
     # ubuntu-latest already has everything but the app's own deps. Package
     # names below match CONTRIBUTING.md's Debian/Ubuntu build instructions
