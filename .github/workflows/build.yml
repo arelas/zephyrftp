@@ -1154,6 +1154,22 @@ jobs:
               # ordering for python at all.
               if ($tool -eq "python") {
                 Add-Content -Path $env:GITHUB_ENV -Value "PYTHON_EXE=$($cmd.Source)"
+                # PYTHON_EXE above only helps THIS job's own steps - a
+                # third-party action that internally shells out to bare
+                # "python" (confirmed directly: negrutiu/nsis-install's
+                # own composite action does exactly this) has no way to
+                # know about it and hits the identical Store-nag stub.
+                # The real, durable fix is removing the stub itself -
+                # these are tiny reparse-point-style placeholder files,
+                # not anything real Python needs, and every user/process
+                # on the machine benefits once they're gone.
+                foreach ($stub in @("python.exe", "python3.exe")) {
+                  $stubPath = "$env:LOCALAPPDATA\Microsoft\WindowsApps\$stub"
+                  if (Test-Path $stubPath) {
+                    Remove-Item $stubPath -Force -ErrorAction SilentlyContinue
+                    Write-Host "Removed App Execution Alias stub: $stubPath"
+                  }
+                }
               }
             } else {
               Write-Host "::error::$tool still not found after install/PATH refresh"
