@@ -886,8 +886,16 @@ jobs:
       # so macdeployqt below — which only walks Qt's own frameworks —
       # doesn't touch them) — see the "Deploy" steps near the .dmg
       # packaging step for why this exists at all.
+      # cmake is on this list at all only because of the self-hosted Mac
+      # runner: GitHub-hosted macos-latest ships it preinstalled in the
+      # runner image, so it was never needed here before — a bare
+      # self-hosted Mac has no such image and genuinely lacks it
+      # (confirmed directly: "cmake: command not found" on this job's
+      # first real self-hosted run). Harmless to also install via brew
+      # on macos-latest, where it's a fast no-op alongside one already
+      # on PATH.
       - name: Install build dependencies
-        run: brew install qt libssh2 openssl@3 pkg-config dylibbundler create-dmg
+        run: brew install cmake qt libssh2 openssl@3 pkg-config dylibbundler create-dmg
 
       - uses: actions/checkout@v7
 
