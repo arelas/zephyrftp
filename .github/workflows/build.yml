@@ -1176,6 +1176,43 @@ jobs:
 
           if ($failed) { exit 1 }
 
+      # aqtinstall (pip, not the Qt Maintenance Tool GUI) pulls the same
+      # LGPL open-source binaries from Qt's own CDN with no account/login
+      # needed — the standard CI-friendly way to get Qt on Windows.
+      # Installed to a fixed C:\Qt root (not this job's ephemeral working
+      # directory) specifically so it persists across runs on this
+      # self-hosted machine and later runs can skip the ~1-2GB download
+      # entirely, same idempotency reasoning as the bootstrap step above.
+      - name: Install Qt6 (MSVC, via aqtinstall)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $qtVersion = "6.8.2"
+          $qtArch = "win64_msvc2022_64"
+          $qtDir = "C:\Qt\$qtVersion\msvc2022_64"
+
+          if (Test-Path "$qtDir\bin\qmake.exe") {
+            Write-Host "Qt $qtVersion ($qtArch) already installed at $qtDir, skipping."
+          } else {
+            python -m pip install --upgrade --quiet aqtinstall
+            if ($LASTEXITCODE -ne 0) { Write-Host "::error::pip install aqtinstall failed"; exit 1 }
+
+            python -m aqt install-qt windows desktop $qtVersion $qtArch -m qtsvg -O C:\Qt
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "::error::aqt install-qt failed (exit $LASTEXITCODE) - see 'aqt list-qt windows desktop' output below for available versions"
+              python -m aqt list-qt windows desktop
+              exit 1
+            }
+          }
+
+          if (-not (Test-Path "$qtDir\bin\qmake.exe")) {
+            Write-Host "::error::qmake.exe not found at $qtDir\bin after install"
+            exit 1
+          }
+
+          Add-Content -Path $env:GITHUB_PATH -Value "$qtDir\bin"
+          Add-Content -Path $env:GITHUB_ENV -Value "QT_PREFIX=$qtDir"
+          & "$qtDir\bin\qmake.exe" --version
+
   # TEMPORARY — diagnostic probe for EAS-DEFIANT (the self-hosted Windows
   # runner), added to scope out what's actually installed there before
   # committing to a real native-Windows build job design. Only reachable
