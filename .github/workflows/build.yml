@@ -45,6 +45,7 @@ on:
         options:
           - all
           - build-windows
+          - build-windows-native
           - build-linux
           - build-linux-rpm
           - build-linux-appimage
@@ -1071,6 +1072,97 @@ jobs:
           name: zephyrftp-dmg
           path: build/*.dmg
           if-no-files-found: error
+
+  # Native build on EAS-DEFIANT (self-hosted Windows Server 2025), replacing
+  # the MinGW-cross-compile-from-Fedora approach above for real MSVC/Qt/
+  # vcpkg builds and real (non-wine) test execution. Never runs on
+  # pull_request — self-hosted runners on a public repo's PR-triggered
+  # workflow would let any external PR execute code directly on this real
+  # machine; PR checks stay on GitHub-hosted build-windows above. Built up
+  # incrementally (bootstrap toolchain -> Qt -> vcpkg deps -> configure/
+  # build/test -> package/verify), each stage verified via a real dispatched
+  # run before adding the next, matching this project's own established
+  # "verify each step against real hardware, don't guess ahead" discipline
+  # (see ARCHITECTURE.md's Transfers-tab QApplication::setStyle() saga for
+  # the precedent). Machine was completely bare when first probed
+  # (2026-08-21): no git/cmake/ninja/Qt/MSVC/NSIS, only winget.
+  build-windows-native:
+    if: github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'build-windows-native')
+    runs-on: [self-hosted, Windows]
+    steps:
+      # Idempotent — skips anything already installed, so only the FIRST
+      # run on this machine pays the full download cost; later runs are a
+      # fast no-op per tool. winget installers register PATH via the
+      # registry, not this already-running process's environment, so the
+      # PATH refresh below (reading Machine+User scope fresh) is required
+      # for the rest of this step and for GITHUB_PATH to expose the same
+      # tools to every later step in this job.
+      - name: Bootstrap toolchain (git, cmake, ninja, NSIS, Python, VS Build Tools)
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function EnsureWinget($id, $overrideArgs) {
+            winget list --id $id -e | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "Installing $id..."
+              $wingetArgs = @('install', '--id', $id, '-e', '--silent',
+                              '--accept-package-agreements', '--accept-source-agreements')
+              if ($overrideArgs) { $wingetArgs += @('--override', $overrideArgs) }
+              winget @wingetArgs
+              if ($LASTEXITCODE -ne 0) {
+                Write-Host "::error::winget install failed for $id (exit $LASTEXITCODE)"
+                exit 1
+              }
+            } else {
+              Write-Host "$id already installed, skipping."
+            }
+          }
+
+          EnsureWinget "Git.Git" $null
+          EnsureWinget "Kitware.CMake" $null
+          EnsureWinget "Ninja-build.Ninja" $null
+          EnsureWinget "NSIS.NSIS" $null
+          EnsureWinget "Python.Python.3.12" $null
+          # VS Build Tools' plain install has no C++ compiler at all —
+          # --override passes through to the underlying VS installer to
+          # select the C++ workload specifically (VCTools) plus its
+          # recommended components (Windows SDK, MSBuild, etc.).
+          EnsureWinget "Microsoft.VisualStudio.2022.BuildTools" "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+
+          $machinePath = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+          $userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
+          $env:PATH = "$machinePath;$userPath"
+          foreach ($p in (($machinePath -split ';') + ($userPath -split ';'))) {
+            if ($p) { Add-Content -Path $env:GITHUB_PATH -Value $p }
+          }
+
+          Write-Host "=== Verification ==="
+          $failed = $false
+          foreach ($tool in @("git", "cmake", "ninja", "makensis", "python")) {
+            $cmd = Get-Command $tool -ErrorAction SilentlyContinue
+            if ($cmd) {
+              Write-Host "$tool -> $($cmd.Source)"
+            } else {
+              Write-Host "::error::$tool still not found after install/PATH refresh"
+              $failed = $true
+            }
+          }
+
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (Test-Path $vswhere) {
+            $vsInstall = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            if ($vsInstall) {
+              Write-Host "VS Build Tools (with C++ workload) -> $vsInstall"
+            } else {
+              Write-Host "::error::vswhere found no VS install with the C++ (VC.Tools) component"
+              $failed = $true
+            }
+          } else {
+            Write-Host "::error::vswhere not found after VS Build Tools install"
+            $failed = $true
+          }
+
+          if ($failed) { exit 1 }
 
   # TEMPORARY — diagnostic probe for EAS-DEFIANT (the self-hosted Windows
   # runner), added to scope out what's actually installed there before
