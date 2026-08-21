@@ -1379,6 +1379,16 @@ jobs:
           $ErrorActionPreference = 'Stop'
           Set-Location build
           $env:QT_QPA_PLATFORM = "offscreen"
+          # Every test binary reports PASS/FAIL exclusively via qDebug()
+          # — confirmed the first real run here produced ZERO visible
+          # output even for smoke-test, which PASSED, so this isn't
+          # specific to a failing test. QT_FORCE_STDERR_LOGGING forces
+          # qDebug() to actually reach the console rather than being lost
+          # (a real, known Qt-on-Windows gotcha for GUI-subsystem apps,
+          # separate from this project's own already-documented Fedora
+          # qtlogging.ini default — see project memory
+          # qt-debug-logging-suppressed-locally for that unrelated case).
+          $env:QT_FORCE_STDERR_LOGGING = "1"
 
           function RunTest($name) {
             Write-Host "::group::run_test $name"
