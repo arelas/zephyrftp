@@ -1814,6 +1814,31 @@ jobs:
           }
           Write-Host "[PASS] uninstall: files + shortcut genuinely removed"
 
+      # Keeps a real, always-current build on this machine for manual
+      # testing — David is often on this exact box (EAS-WINRUNNER)
+      # already. `dist\` (still on disk, untouched by the install/
+      # uninstall cycle above, which uses a SEPARATE copy under
+      # `C:\Program Files\ZephyrFTP`) only ever reaches this point after
+      # every prior step — build, full test suite, packaging, and the
+      # real installer verification — has actually passed, so this only
+      # ever updates to a genuinely known-good build, never a broken or
+      # half-finished one. `C:\ZephyrFTP-Latest\` is deliberately
+      # OUTSIDE the CI workspace (`_work\zephyrftp\zephyrftp\`), which
+      # the next run's checkout will clean — this survives that.
+      # robocopy /MIR mirrors exactly (removes anything at the
+      # destination no longer in dist\ too, not just an additive copy);
+      # its own exit codes are 0-7 for "succeeded" in various forms and
+      # only 8+ means a real failure, unlike a normal 0-only convention.
+      - name: Deploy latest known-good build for local testing
+        run: |
+          robocopy dist "C:\ZephyrFTP-Latest" /MIR /NFL /NDL /NJH /NJS
+          if ($LASTEXITCODE -ge 8) {
+            Write-Host "::error::robocopy failed (exit $LASTEXITCODE)"
+            exit 1
+          }
+          Copy-Item zephyrftp-windows-x64-setup-native.exe "C:\ZephyrFTP-Latest-Setup.exe" -Force
+          Write-Host "Deployed to C:\ZephyrFTP-Latest\ (app) and C:\ZephyrFTP-Latest-Setup.exe (installer)"
+
   # TEMPORARY — diagnostic probe for Mac (the self-hosted macOS runner),
   # checking for Homebrew/existing deps and passwordless sudo before
   # deciding how build-macos's own dependency-install step needs to
