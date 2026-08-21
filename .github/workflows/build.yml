@@ -1723,6 +1723,13 @@ jobs:
           echo "=== whoami / groups ==="
           whoami
           groups
+          echo "=== keychain state ==="
+          security list-keychains
+          security default-keychain
+          security show-keychain-info ~/Library/Keychains/login.keychain-db 2>&1
+          echo "=== session type ==="
+          launchctl managername 2>&1
+          echo "SSH_TTY=$SSH_TTY SSH_CONNECTION=$SSH_CONNECTION"
           exit 0
 
   # TEMPORARY — diagnostic probe for eas-ubuntu26 (the self-hosted Linux
