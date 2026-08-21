@@ -6408,6 +6408,57 @@ signal pointing back to a clock — the real exception is genuinely one
 layer below what the runner prints to its own console, and requires
 reading `_diag` log *content*, not just checking for a log's existence.
 
+**`build-windows-native` promoted to the primary Windows release source
+(2026-08-21)**, `build-windows` (the original MinGW/wine cross-compile
+job) held back as a reserve rather than retired. Until this point,
+despite everything above, `build-windows-native` had never actually
+shipped anything: it only built, tested, verified, and locally deployed
+on `EAS-WINRUNNER` — every real release's Windows `.zip`/`.exe` still
+came exclusively from `build-windows`, which uploaded artifacts under the
+canonical names (`zephyrftp-windows-x64`, `zephyrftp-windows-installer`)
+the `release` job downloads. Confirmed by actually reading both jobs'
+`upload-artifact` steps directly rather than assuming from the job names
+alone.
+
+**The swap**: `build-windows-native` now uploads under those same
+canonical names — one new step for the `dist\` folder right after
+"Assemble deployable folder", one for the installer (copied from its
+working name `zephyrftp-windows-x64-setup-native.exe` to the canonical
+`zephyrftp-windows-x64-setup.exe` via a dedicated copy step, rather than
+renaming the original file itself, since that name is still referenced
+directly by the verification and local-deploy steps later in the same
+job). `build-windows` kept fully unchanged otherwise — still builds,
+tests, packages, and wine-verifies every run exactly as before — but its
+own uploads were renamed to `zephyrftp-windows-x64-mingw-legacy` /
+`zephyrftp-windows-installer-mingw-legacy` so the two jobs' artifacts
+don't collide within one run (`actions/upload-artifact@v7` requires
+unique names per run). `release`'s `needs:` gained `build-windows-native`
+alongside the existing `build-windows` — the held-back job still gates a
+release (a regression there is still worth blocking over), it just no
+longer feeds what actually ships. No changes were needed to `release`'s
+own download/zip/publish steps at all, since they already referenced the
+canonical names.
+
+**Verified non-vacuously**: a real `job=all` dispatch confirmed both jobs
+succeed and all six Windows-related artifacts appear with the right names
+and no collision — `zephyrftp-windows-x64`/`zephyrftp-windows-installer`
+(58.1MB/57.2MB, now genuinely from native) and
+`zephyrftp-windows-x64-mingw-legacy`/`zephyrftp-windows-installer-mingw-legacy`
+(46.2MB/44.5MB, from the held-back cross-compile job) present side by
+side, checked directly via the Actions API's artifact listing, not just
+the run summary. **One thing not yet exercised**: `release` only runs on
+a real `v*` tag push, so this dispatch never touched the actual
+download→zip→publish path — the artifact-naming swap is confirmed
+correct, but the full release flow shipping native's build still needs
+its first real tag to be fully proven; don't assume it's already proven
+before that happens.
+
+**Next natural step, deliberately not done yet**: fully retiring
+`build-windows` once native has proven itself as primary across a few
+more real releases — this was the explicit "hold the old one back"
+framing from David's own request, not an oversight. Don't retire it
+prematurely if this comes up again.
+
 ## Known gaps (flagged, not fixed)
 
 - **FTP/FTPS has now actually touched a real server on every one of its
