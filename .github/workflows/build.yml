@@ -1389,6 +1389,20 @@ jobs:
           # qtlogging.ini default — see project memory
           # qt-debug-logging-suppressed-locally for that unrelated case).
           $env:QT_FORCE_STDERR_LOGGING = "1"
+          # The offscreen QPA platform uses Qt's own FreeType-based font
+          # engine (no real display/GDI to fall back on), and Qt itself
+          # warned directly in the first real run here: "Cannot find font
+          # directory C:/Qt/.../lib/fonts. Note that Qt no longer ships
+          # fonts." Degenerate font metrics from having literally zero
+          # available fonts (QFont::setPointSizeF: Point size <= 0)
+          # correlate exactly with where navigation-test's menu/dialog-
+          # driven "race" phases (fileOpRace, renameRace) started
+          # failing — geometry/hit-testing for a simulated right-click
+          # menu depends on real font metrics. Linux/macOS CI jobs never
+          # hit this: their Qt6 packages pull in fontconfig/system fonts
+          # transitively. Point the offscreen font engine at Windows' own
+          # real system fonts rather than bundling a font ourselves.
+          $env:QT_QPA_FONTDIR = "C:\Windows\Fonts"
 
           function RunTest($name) {
             Write-Host "::group::run_test $name"
