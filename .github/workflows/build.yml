@@ -1626,6 +1626,11 @@ jobs:
           echo "=== whoami / groups ==="
           whoami
           groups
+          echo "=== build deps already present? ==="
+          for pkg in cmake g++ pkg-config; do
+            command -v $pkg >/dev/null 2>&1 && echo "$pkg: $(command -v $pkg)" || echo "$pkg: NOT FOUND"
+          done
+          dpkg -l | grep -E "qt6-base-dev|qt6-svg-dev|libssh2-1-dev|libssl-dev|libsecret-1-dev" 2>/dev/null || echo "none of the qt6/libssh2/openssl/libsecret dev packages found via dpkg"
           exit 0
 
   # TEMPORARY — diagnostic probe for EAS-DEFIANT (the self-hosted Windows
