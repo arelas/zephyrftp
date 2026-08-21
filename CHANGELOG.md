@@ -6,6 +6,36 @@ project doesn't yet promise strict [Semantic Versioning](https://semver.org/)
 guarantees — it's pre-1.0 (see [Known limitations](README.md#known-limitations)
 in the README), so anything may still change between 0.x releases.
 
+## [0.8.13] — CI now builds on self-hosted runners
+
+### Changed
+
+- **Windows, Linux (native/.rpm/AppImage), and macOS builds now run on
+  self-hosted infrastructure** for tag/push/manual-dispatch triggers,
+  rather than exclusively on GitHub-hosted runners — cuts real Actions
+  minutes usage (macOS in particular is billed at a steep multiplier)
+  and, for Linux, enables cross-run compiler caching (`ccache`) and
+  genuine two-job parallelism that an ephemeral GitHub-hosted VM could
+  never offer. **Pull-request-triggered runs deliberately stay on
+  GitHub-hosted runners** — this repo is public, and a self-hosted
+  runner on a PR-triggered workflow is a well-documented anti-pattern
+  (a stranger's PR could execute code on real, persistent hardware
+  instead of a throwaway VM).
+- Added a real **native Windows build** (`build-windows-native`, MSVC/
+  Qt6/vcpkg) alongside the existing MinGW-cross-compile-from-Linux
+  pipeline — the first time this project's test suite has ever run
+  natively on real Windows hardware rather than under `wine`
+  emulation. It caught one genuine, previously-invisible platform gap
+  `wine`'s looser emulation had been silently masking (a `QMenu`
+  popup-registration difference in Qt's `offscreen` platform on real
+  Windows) — documented in ARCHITECTURE.md, not yet shipped in the
+  release pipeline itself (`build-windows`, the existing cross-compile
+  job, still produces the actual released Windows assets).
+
+No application behavior changes in this release — every shipped
+binary is functionally identical to v0.8.12; this is purely CI
+infrastructure.
+
 ## [0.8.12] — Fix Transfers pane white seam and system-theme-following tab bar
 
 ### Fixed
@@ -2733,6 +2763,7 @@ nobody mistakes silence for a claim of correctness:
   real FTP server
 
 [Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.8.4...HEAD
+[0.8.13]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.13
 [0.8.12]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.12
 [0.8.11]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.11
 [0.8.10]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.10
