@@ -860,7 +860,16 @@ jobs:
   # instead of -G DEB.
   build-macos:
     if: github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'build-macos'
-    runs-on: macos-latest
+    # self-hosted (the "Mac" runner) for push/tag/workflow_dispatch,
+    # same non-PR-only pattern as build-linux/build-windows-native — PR-
+    # triggered runs stay on macos-latest. Runner was initially
+    # registered from the WRONG package (osx-x64 on real Apple Silicon
+    # hardware, running the whole agent under Rosetta) — reinstalled as
+    # osx-arm64 and reverified (sysctl.proc_translated: 0, real native
+    # execution) before wiring this up. No sudo needed anywhere in this
+    # job's own steps (Homebrew doesn't need it), so the runner's own
+    # sudo-needs-a-password state doesn't block anything here.
+    runs-on: ${{ github.event_name == 'pull_request' && 'macos-latest' || fromJSON('["self-hosted", "macOS"]') }}
 
     steps:
       # qt is Homebrew's Qt6 umbrella formula (bundles Widgets/Network/
