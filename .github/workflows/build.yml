@@ -1514,7 +1514,11 @@ jobs:
             "-DLICENSEFILE=$(Get-Location)\LICENSE" "-DICONFILE=$(Get-Location)\resources\icons\app-icon.ico" `
             "-DOUTFILE=$(Get-Location)\zephyrftp-windows-x64-setup-native.exe" `
             tools\windows-installer.nsi
-          if ($LASTEXITCODE -ne 0) { Write-Host "::error::makensis failed"; exit 1 }
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::makensis failed - listing available stubs for diagnosis"
+            Get-ChildItem "C:\Program Files (x86)\NSIS\Stubs" -ErrorAction SilentlyContinue
+            exit 1
+          }
 
       # Real native install/launch/uninstall - no wine/Xvfb emulation
       # quirks at all, the whole point of this job existing. Matches the
