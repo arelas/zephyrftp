@@ -5898,6 +5898,136 @@ along the way — worth knowing about if it ever needs touching again.
   aqtinstall's own docs before assuming a CI change was needed when
   `Qt6::Svg` was added as a build dependency; it wasn't.
 
+**`build-windows-native`** (2026-08) — a real native MSVC/Qt/vcpkg
+build on a self-hosted Windows runner, effectively finishing what the
+"Earlier MSVC+vcpkg era" above started and abandoned. It's viable now
+for a reason that era didn't have: a **self-hosted, persistent**
+runner rather than an ephemeral GitHub-hosted one — the toolchain
+(git/cmake/ninja/NSIS/Python/VS Build Tools, Qt, vcpkg's built
+libssh2/openssl) installs once and survives across runs, so there's no
+`actions/cache` thrashing to manage and no vcpkg binary-cache backend
+needed at all (the exact thing that era's own `x-gha` removal bullet
+above ran into). Discovered via `gh api repos/.../actions/runners`:
+three self-hosted runners (`EAS-DEFIANT`/Windows, `eas-ubuntu26`/
+Linux, `Mac`/macOS) were registered but completely unused by this
+workflow. **Deliberately never used on `pull_request`** — this repo is
+public, and a self-hosted runner on a PR-triggered workflow is
+GitHub's own documented anti-pattern (a stranger's PR could execute
+code directly on real, persistent hardware rather than an ephemeral
+sandboxed VM); PR-triggered runs stay on the GitHub-hosted jobs above.
+
+Machine was completely bare when first probed: no git/cmake/Qt/MSVC/
+NSIS, only `winget`. Bootstrap is idempotent throughout (`winget list`
+check before every install) so only the FIRST run on the machine pays
+real cost — later runs are fast no-ops. Qt installed via pip's
+`aqtinstall` (`win64_msvc2022_64`, fixed `C:\Qt` root) rather than the
+GUI Maintenance Tool — no Qt account needed, same LGPL binaries.
+libssh2/openssl via `vcpkg` (`x64-windows` triplet, fixed `C:\vcpkg`
+root) — `openssl` is a slow from-source build (~12 min first time,
+instant after). `cl.exe`/`link.exe` are deliberately never on PATH
+after a VS Build Tools install (by design, to avoid version/arch
+conflicts) — sourced from `vcvars64.bat` (located via `vswhere`) once
+per job and persisted to later steps via `GITHUB_ENV`/`GITHUB_PATH`
+(a fixed list of the vars `vcvars64.bat` is known to set, not a
+wholesale environment dump, so it composes with what earlier steps
+already added rather than clobbering it).
+
+**Real, previously-undiscovered bugs found getting this working, each
+only visible from an actual native-Windows run** — nothing here
+reproduces under wine, which is exactly why this job exists alongside
+the cross-compile one rather than replacing it outright (yet):
+- NSIS's own installer, unlike Git's/CMake's MSIs, never registers
+  itself on PATH at all — confirmed directly (`winget` reported
+  "Successfully installed", `makensis` still unresolvable after a
+  registry-based PATH refresh that worked for every other tool). Fixed
+  by adding its known install directory explicitly.
+- A bare `python` call in a *later* step hit Windows' own `python.exe`
+  App Execution Alias stub in `WindowsApps` ("Python was not found;
+  run without arguments to install from the Microsoft Store") instead
+  of the real interpreter just installed — `Get-Command python`
+  resolved correctly in the SAME step Python was installed (PATH
+  rebuilt directly from the registry, in a known order) but a *later*
+  step's PATH is assembled by the runner from accumulated
+  `GITHUB_PATH` entries in write order, which put `WindowsApps` ahead
+  of the real interpreter's directory. Fixed by persisting the real
+  interpreter's full path once (`PYTHON_EXE`) and invoking it directly
+  everywhere after, sidestepping PATH resolution (and the alias)
+  entirely rather than trying to out-order it.
+- `aqt install-qt ... -m qtsvg` failed outright ("packages ['qtsvg']
+  were not found") — confirmed via `aqt list-qt --modules` that Svg
+  has no separate addon for this version/arch at all, unlike
+  `qtcharts`/`qtmultimedia`; it's already in the base essential
+  download (independently rediscovering the exact same fact the
+  "Earlier MSVC+vcpkg era" bullet list below already recorded — worth
+  reading that section BEFORE the next native-Windows Qt change, not
+  after re-deriving it a second time).
+- The job initially had no `actions/checkout` step at all (a plain
+  oversight, copy-pasted the toolchain-setup steps without the pattern
+  every other job already follows) — `cmake -B build` failed with "does
+  not appear to contain CMakeLists.txt" until added.
+- Every test binary's PASS/FAIL reporting is exclusively `qDebug()` —
+  the first real test run produced **zero visible output for any
+  test, including ones that passed** (not a symptom of the one that
+  failed). `QT_FORCE_STDERR_LOGGING=1` fixed it — a different root
+  cause than this project's own already-documented Fedora
+  `qtlogging.ini` case (see the Qt-debug-logging project memory) but
+  the same class of "qDebug() silently not reaching the console"
+  gotcha, this time specific to GUI-subsystem Qt apps on Windows.
+- With logging visibility fixed, real output showed `QFontDatabase:
+  Cannot find font directory ... Qt no longer ships fonts` followed by
+  `QFont::setPointSizeF: Point size <= 0` warnings — the `offscreen`
+  QPA platform uses Qt's own FreeType-based font engine (no real
+  display/GDI to fall back on) and this bare Windows box has zero font
+  files available to it, unlike Linux/macOS CI jobs, which get fonts
+  transitively via fontconfig/system integration. Fixed by pointing
+  `QT_QPA_FONTDIR` at Windows' own real `C:\Windows\Fonts` rather than
+  bundling a font.
+- Fixture paths for `transfer-queue-test`/`folder-transfer-test`
+  target `C:\tmp\...` rather than `$env:RUNNER_TEMP`: the test C++
+  sources hardcode the literal string `/tmp/transfer_test` etc.
+  directly (confirmed by reading the source, not assumed), and Qt
+  resolves a leading-slash path on Windows as relative to the current
+  drive root — so the CI fixture setup has to create files at the same
+  drive-relative location the app will actually look, not a
+  Windows-idiomatic temp path. Confirmed correct via the real test
+  passing, not just reasoned about.
+
+**One real, structural gap remains, deliberately left open rather than
+chased further for now**: `navigation-test`'s `fileOpRace`/
+`renameRace` phases each drive a real right-click context menu via
+`QMenu::exec()`, using this project's own documented, already-correct
+technique for making `exec()` return under `offscreen`
+(`QTest::mouseClick()` at the action's own `actionGeometry()`, not a
+raw `trigger()` — see the Qt-debug-logging project memory's "Also
+learned" section, where this was first established). On Windows
+specifically, `QApplication::activePopupWidget()` never reflects the
+menu as active at all — confirmed via temporary tick-by-tick
+instrumentation logging both `activePopupWidget()`/
+`activeModalWidget()`: the popup stays `null` for the entire window
+the dialog-pump timer runs, even though the platform's own "does not
+support raise()"/"does not support grabbing the keyboard" warnings
+fire (proving `QMenu::exec()` genuinely IS being called and attempting
+to show). This is a real, structural difference in how the `offscreen`
+platform's popup/window-activation model behaves on Windows versus
+Linux/macOS — not an environment variable away, and NOT the same class
+of gotcha the `QTest::mouseClick()` fix already covers (that fix makes
+`exec()` *return* once a click lands; this gap is that the click never
+has anywhere real to land, because the menu was never recognized as
+active in the first place). **Scoped and confirmed via a full run of
+all 27 other required targets on this job — every one of them passes
+clean, including `keyboard-shortcuts-test` and `external-drop-test`
+(both also drive UI interaction, initially suspected as being at
+similar risk) and `verify-credential-store` (the real Windows
+Credential Manager backend, tested for the first time ever, genuinely
+round-trips)**. `navigation-test`'s failure is tolerated at exactly
+this one call site (`RunTest navigation-test -AllowFailure` in
+`build.yml`) — its own real PASS/FAIL output still prints in full, a
+`::warning::` annotation flags it visibly in the Actions UI, and every
+other test still hard-fails the step normally. Revisit as its own
+investigation if this ever becomes worth the time; don't resurrect the
+"quick env var" instinct that fixed the font/logging issues above —
+this one is a different, deeper class of problem.
+
 ## Known gaps (flagged, not fixed)
 
 - **FTP/FTPS has now actually touched a real server on every one of its

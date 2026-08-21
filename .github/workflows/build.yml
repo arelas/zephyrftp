@@ -1479,6 +1479,87 @@ jobs:
 
           RunTest verify-credential-store
 
+      # Real windeployqt (unlike the cross-compile job above, which has
+      # none for that toolchain and hand-rolls tools/collect-win-runtime.sh
+      # instead) - but it only walks Qt's own frameworks/plugins, with no
+      # idea libssh2/openssl/zlib exist at all. That exact gap was already
+      # documented from this project's earlier, abandoned MSVC+vcpkg
+      # attempt (see ARCHITECTURE.md's "Earlier MSVC+vcpkg era" bullet
+      # list) - copying vcpkg's whole bin/ wholesale rather than
+      # hardcoding exact DLL filenames (OpenSSL's version-suffixed naming
+      # in particular isn't worth pinning here) sidesteps re-hitting it.
+      - name: Assemble deployable folder
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item build\zephyrftp.exe dist\
+
+          & "$env:QT_PREFIX\bin\windeployqt.exe" dist\zephyrftp.exe --release --no-translations
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::windeployqt failed"; exit 1 }
+
+          $vcpkgBin = "$env:VCPKG_ROOT\installed\x64-windows\bin"
+          $vcpkgDlls = Get-ChildItem -Path $vcpkgBin -Filter *.dll -ErrorAction SilentlyContinue
+          if (-not $vcpkgDlls -or $vcpkgDlls.Count -eq 0) {
+            Write-Host "::error::No DLLs found in $vcpkgBin - libssh2/openssl won't be deployable"
+            exit 1
+          }
+          Copy-Item $vcpkgDlls.FullName dist\
+          Write-Host "Copied $($vcpkgDlls.Count) vcpkg DLL(s): $($vcpkgDlls.Name -join ', ')"
+
+      - name: Build Windows installer
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Select-String -Path build\CMakeCache.txt -Pattern 'CMAKE_PROJECT_VERSION:STATIC=(.*)').Matches[0].Groups[1].Value
+          makensis "-DVERSION=$version" "-DDISTDIR=$(Get-Location)\dist" `
+            "-DLICENSEFILE=$(Get-Location)\LICENSE" "-DICONFILE=$(Get-Location)\resources\icons\app-icon.ico" `
+            "-DOUTFILE=$(Get-Location)\zephyrftp-windows-x64-setup-native.exe" `
+            tools\windows-installer.nsi
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::makensis failed"; exit 1 }
+
+      # Real native install/launch/uninstall - no wine/Xvfb emulation
+      # quirks at all, the whole point of this job existing. Matches the
+      # cross-compile job's own file/shortcut/registry verification
+      # shape, plus a genuine "does the app actually launch and stay
+      # running" check the wine-based job never attempted.
+      - name: Verify installer install/launch/uninstall natively
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installDir = "C:\Program Files\ZephyrFTP"
+
+          Start-Process -FilePath ".\zephyrftp-windows-x64-setup-native.exe" -ArgumentList "/S" -Wait
+
+          if (-not (Test-Path "$installDir\zephyrftp.exe")) { Write-Host "::error::zephyrftp.exe missing after install"; exit 1 }
+          if (-not (Test-Path "$installDir\uninstall.exe")) { Write-Host "::error::uninstall.exe missing after install"; exit 1 }
+          if (-not (Test-Path "$installDir\Qt6Core.dll")) { Write-Host "::error::Qt6Core.dll missing after install"; exit 1 }
+          $shortcut = Get-ChildItem -Path "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\ZephyrFTP\ZephyrFTP.lnk", `
+            "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\ZephyrFTP\ZephyrFTP.lnk" -ErrorAction SilentlyContinue
+          if (-not $shortcut) { Write-Host "::error::Start Menu shortcut missing after install"; exit 1 }
+          Write-Host "[PASS] install: files + shortcut present"
+
+          $displayVersion = (Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ZephyrFTP" -ErrorAction SilentlyContinue).DisplayVersion
+          $version = (Select-String -Path build\CMakeCache.txt -Pattern 'CMAKE_PROJECT_VERSION:STATIC=(.*)').Matches[0].Groups[1].Value
+          if ($displayVersion -ne $version) { Write-Host "::error::DisplayVersion '$displayVersion' != expected '$version'"; exit 1 }
+          Write-Host "[PASS] install: Add/Remove Programs DisplayVersion matches ($displayVersion)"
+
+          # Real launch check - genuinely start the installed exe, confirm
+          # a process shows up, then stop it. Not attempted under wine.
+          $proc = Start-Process -FilePath "$installDir\zephyrftp.exe" -PassThru
+          Start-Sleep -Seconds 3
+          $stillRunning = Get-Process -Id $proc.Id -ErrorAction SilentlyContinue
+          if (-not $stillRunning) { Write-Host "::error::zephyrftp.exe was not running 3s after launch"; exit 1 }
+          Write-Host "[PASS] launch: process genuinely running"
+          Stop-Process -Id $proc.Id -Force
+
+          Start-Process -FilePath "$installDir\uninstall.exe" -ArgumentList "/S" -Wait
+
+          if (Test-Path $installDir) { Write-Host "::error::$installDir still exists after uninstall"; exit 1 }
+          if (Get-ChildItem -Path "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\ZephyrFTP\ZephyrFTP.lnk", `
+              "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\ZephyrFTP\ZephyrFTP.lnk" -ErrorAction SilentlyContinue) {
+            Write-Host "::error::Start Menu shortcut still exists after uninstall"
+            exit 1
+          }
+          Write-Host "[PASS] uninstall: files + shortcut genuinely removed"
+
   # TEMPORARY — diagnostic probe for EAS-DEFIANT (the self-hosted Windows
   # runner), added to scope out what's actually installed there before
   # committing to a real native-Windows build job design. Only reachable
