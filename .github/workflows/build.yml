@@ -1278,6 +1278,56 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "VCPKG_TOOLCHAIN_FILE=$toolchainFile"
           Write-Host "vcpkg ready -> $vcpkgRoot (toolchain: $toolchainFile)"
 
+      # VS Build Tools deliberately does NOT put cl.exe/link.exe on PATH
+      # (by design, to avoid conflicts between multiple installed VS
+      # versions/architectures) - the standard fix is sourcing
+      # vcvars64.bat and capturing the environment it sets, same as any
+      # "Developer Command Prompt" does. That capture only lives in THIS
+      # step's own process by default; explicitly persisted below via
+      # GITHUB_ENV (fixed var list vcvars64.bat is known to set, not a
+      # full-environment dump) and GITHUB_PATH (only the NEW directories,
+      # so it composes with what earlier steps already added instead of
+      # overwriting PATH wholesale) so every later step in this job
+      # inherits a working MSVC environment too.
+      - name: Enter MSVC developer environment
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstallPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vsInstallPath) { Write-Host "::error::No VS install found with the C++ (VC.Tools) component"; exit 1 }
+
+          $vcvarsPath = Join-Path $vsInstallPath "VC\Auxiliary\Build\vcvars64.bat"
+          if (-not (Test-Path $vcvarsPath)) { Write-Host "::error::vcvars64.bat not found at $vcvarsPath"; exit 1 }
+
+          $envLines = cmd /c "`"$vcvarsPath`" && set"
+          $envMap = @{}
+          foreach ($line in $envLines) {
+            if ($line -match '^([^=]+)=(.*)$') { $envMap[$matches[1]] = $matches[2] }
+          }
+
+          foreach ($key in @("INCLUDE", "LIB", "LIBPATH", "WindowsSdkDir", "WindowsSDKVersion",
+                             "WindowsSDKLibVersion", "VCToolsInstallDir", "VCToolsVersion",
+                             "VCINSTALLDIR", "VSINSTALLDIR", "UniversalCRTSdkDir", "UCRTVersion",
+                             "Platform", "VisualStudioVersion")) {
+            if ($envMap.ContainsKey($key)) {
+              Add-Content -Path $env:GITHUB_ENV -Value "$key=$($envMap[$key])"
+            }
+          }
+
+          $oldPathDirs = $env:PATH -split ';'
+          $newPathDirs = ($envMap["Path"] -split ';') | Where-Object { $_ -and ($oldPathDirs -notcontains $_) }
+          foreach ($d in $newPathDirs) { Add-Content -Path $env:GITHUB_PATH -Value $d }
+
+          # Sanity-check in THIS process too, not just trusting the
+          # persisted vars will work for later steps.
+          $env:INCLUDE = $envMap["INCLUDE"]
+          $env:LIB = $envMap["LIB"]
+          $env:PATH = $envMap["Path"]
+          $clCmd = Get-Command cl -ErrorAction SilentlyContinue
+          if (-not $clCmd) { Write-Host "::error::cl.exe still not found after sourcing vcvars64.bat"; exit 1 }
+          Write-Host "cl.exe -> $($clCmd.Source)"
+          Write-Host "$($newPathDirs.Count) new PATH entries added for later steps"
+
   # TEMPORARY — diagnostic probe for EAS-DEFIANT (the self-hosted Windows
   # runner), added to scope out what's actually installed there before
   # committing to a real native-Windows build job design. Only reachable
