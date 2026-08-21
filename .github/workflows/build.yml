@@ -399,17 +399,26 @@ jobs:
       # (dpkg-shlibdeps needs both to compute real runtime dependencies
       # from the actual linked binary) — not needed for the plain build
       # or test suite above.
+      # ccache included here — harmless on ubuntu-latest (PR path, always
+      # a cold ephemeral cache, no real benefit) but a genuine win on the
+      # self-hosted runner: HOME (and so ~/.cache/ccache, ccache's own
+      # default) persists across runs there, unlike an ephemeral
+      # GitHub-hosted VM, so repeated builds of largely-unchanged source
+      # actually reuse cached object files instead of recompiling from
+      # scratch every single run.
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
             cmake build-essential qt6-base-dev qt6-svg-dev libssh2-1-dev libssl-dev libsecret-1-dev pkg-config \
-            dpkg-dev file
+            dpkg-dev file ccache
 
       - uses: actions/checkout@v7
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        run: >
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build app
         run: cmake --build build --target zephyrftp -- -j$(nproc)
@@ -429,6 +438,9 @@ jobs:
           keyboard-shortcuts-test
           external-drop-test
           -- -j$(nproc)
+
+      - name: ccache stats
+        run: ccache -s
 
       # Runs directly, no wine/xvfb — these are native Linux binaries, and
       # confirmed directly in a genuinely headless container (no X/Wayland
@@ -599,8 +611,25 @@ jobs:
     # provision-docker-linux above is correctly skipped (not needed)
     # in that branch rather than failing the needs: check.
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted", "Linux"]') }}
+    # CCACHE_DIR at job level so every step's compile invocation picks it
+    # up automatically — points inside the container at the path
+    # container.volumes below bind-mounts from the host, not ccache's own
+    # in-container default (which would just live in the throwaway
+    # container filesystem and never actually persist between runs).
+    env:
+      CCACHE_DIR: /ccache
     container:
       image: fedora:44
+      # /ccache bind-mounts a HOST directory — the container's own
+      # filesystem is thrown away every run, so without this ccache
+      # would never see a warm cache no matter how it's configured
+      # inside the container. On the PR/ubuntu-latest path this just
+      # binds an empty, ephemeral directory (harmless, no real caching
+      # benefit there — the whole VM is thrown away after the job
+      # anyway); the real persistence only happens on the self-hosted
+      # runner, where /opt/zephyrftp-ccache survives between runs.
+      volumes:
+        - /opt/zephyrftp-ccache/linux-rpm:/ccache
 
     steps:
       # git isn't in the base fedora image (same gap build-windows's own
@@ -612,12 +641,14 @@ jobs:
         run: |
           dnf install -y --setopt=install_weak_deps=False \
             git cmake gcc-c++ qt6-qtbase-devel qt6-qtsvg-devel \
-            libssh2-devel openssl-devel libsecret-devel pkgconf-pkg-config rpm-build file
+            libssh2-devel openssl-devel libsecret-devel pkgconf-pkg-config rpm-build file ccache
 
       - uses: actions/checkout@v7
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        run: >
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build app
         run: cmake --build build --target zephyrftp -- -j$(nproc)
@@ -637,6 +668,9 @@ jobs:
           keyboard-shortcuts-test
           external-drop-test
           -- -j$(nproc)
+
+      - name: ccache stats
+        run: ccache -s
 
       # Same reasoning as build-linux's own test-suite step: a genuinely
       # headless container, no wine/xvfb needed for native Linux
@@ -732,8 +766,13 @@ jobs:
       (github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'build-linux-appimage')
     # Same non-PR-only self-hosted pattern as build-linux-rpm above.
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted", "Linux"]') }}
+    # Same ccache reasoning as build-linux-rpm above.
+    env:
+      CCACHE_DIR: /ccache
     container:
       image: debian:12
+      volumes:
+        - /opt/zephyrftp-ccache/linux-appimage:/ccache
 
     steps:
       # git isn't in the base debian image (same gap build-windows's own
@@ -747,12 +786,14 @@ jobs:
           apt-get update -qq
           apt-get install -y -qq \
             git cmake build-essential qt6-base-dev qt6-svg-dev libssh2-1-dev libssl-dev libsecret-1-dev \
-            pkg-config wget file libgl1-mesa-dev
+            pkg-config wget file libgl1-mesa-dev ccache
 
       - uses: actions/checkout@v7
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        run: >
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build app
         run: cmake --build build --target zephyrftp -- -j$(nproc)
@@ -772,6 +813,9 @@ jobs:
           keyboard-shortcuts-test
           external-drop-test
           -- -j$(nproc)
+
+      - name: ccache stats
+        run: ccache -s
 
       # Same reasoning as build-linux-rpm's own test-suite step: a
       # distinct distro's toolchain (and here, a distinctly OLDER Qt,
