@@ -293,10 +293,16 @@ jobs:
           cp -r build-win/styles dist/
           cp -r build-win/tls dist/
 
+      # Named "-mingw-legacy", not the canonical "zephyrftp-windows-x64",
+      # since build-windows-native is now primary (2026-08-21) — this job
+      # still runs its full build/test/package/wine-verify cycle
+      # unchanged, kept as a held-back safety net for a few more releases
+      # rather than removed outright, but `release` below no longer ships
+      # its output. See build-windows-native's own upload steps.
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
         with:
-          name: zephyrftp-windows-x64
+          name: zephyrftp-windows-x64-mingw-legacy
           path: dist/
           if-no-files-found: error
 
@@ -365,10 +371,12 @@ jobs:
           echo "[PASS] uninstall: files + shortcut genuinely removed"
           wineserver -k -w || true
 
+      # See the "Upload build artifact" step above — renamed for the same
+      # reason, held-back reserve rather than the shipped asset.
       - name: Upload installer artifact
         uses: actions/upload-artifact@v7
         with:
-          name: zephyrftp-windows-installer
+          name: zephyrftp-windows-installer-mingw-legacy
           path: zephyrftp-windows-x64-setup.exe
           if-no-files-found: error
 
@@ -1726,6 +1734,20 @@ jobs:
           Copy-Item $vcpkgDlls.FullName dist\
           Write-Host "Copied $($vcpkgDlls.Count) vcpkg DLL(s): $($vcpkgDlls.Name -join ', ')"
 
+      # Canonical "zephyrftp-windows-x64" name — this job is now the
+      # primary Windows release source (2026-08-21), having proven itself
+      # through a real tagged release (v0.8.13) plus repeated full-fleet
+      # green runs. build-windows (MinGW/wine cross-compile) still builds
+      # and verifies in parallel as a held-back safety net, but uploads
+      # under "-mingw-legacy" names now so it no longer collides with or
+      # feeds the actual shipped release asset.
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: zephyrftp-windows-x64
+          path: dist/
+          if-no-files-found: error
+
       # Upstream NSIS ships ZERO amd64 stub support at all (confirmed
       # directly by extracting both the official zip and the winget-
       # installed setup.exe - only x86-ansi/x86-unicode in either). A
@@ -1813,6 +1835,23 @@ jobs:
             exit 1
           }
           Write-Host "[PASS] uninstall: files + shortcut genuinely removed"
+
+      # Canonical "zephyrftp-windows-installer" name/filename — same
+      # primary-vs-held-back swap as the "Upload build artifact" step
+      # above. Copied to the canonical filename rather than renaming the
+      # original: the "-native.exe" name is still referenced directly by
+      # the verification step just above and the local-deploy step just
+      # below, and changing it there for no reason risks a silent typo in
+      # either.
+      - name: Copy installer to canonical release filename
+        run: Copy-Item zephyrftp-windows-x64-setup-native.exe zephyrftp-windows-x64-setup.exe
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: zephyrftp-windows-installer
+          path: zephyrftp-windows-x64-setup.exe
+          if-no-files-found: error
 
       # Keeps a real, always-current build on this machine for manual
       # testing — David is often on this exact box (EAS-WINRUNNER)
@@ -1946,8 +1985,15 @@ jobs:
   # sync-browsing-test's own setup (a real navigateTo() race, fixed in
   # that test file with a retry helper). Restored here once both were
   # confirmed fixed on real CI.
+  # build-windows-native is the primary Windows source as of 2026-08-21
+  # (see its own upload-artifact steps) — added here so release actually
+  # blocks on it, not just on the held-back build-windows. build-windows
+  # stays in this list too even though its artifacts are no longer
+  # downloaded below: still a meaningful safety-net gate while it's held
+  # in reserve, since a regression there is worth blocking a release over
+  # even if it isn't what ships.
   release:
-    needs: [build-windows, build-linux, build-linux-rpm, build-linux-appimage, build-macos]
+    needs: [build-windows, build-windows-native, build-linux, build-linux-rpm, build-linux-appimage, build-macos]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     # Confirmed necessary directly from a real failed run, not
