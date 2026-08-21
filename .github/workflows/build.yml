@@ -1328,6 +1328,39 @@ jobs:
           Write-Host "cl.exe -> $($clCmd.Source)"
           Write-Host "$($newPathDirs.Count) new PATH entries added for later steps"
 
+      - name: Configure
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_TOOLCHAIN_FILE" `
+            -DCMAKE_PREFIX_PATH="$env:QT_PREFIX"
+
+      - name: Build app
+        run: cmake --build build --target zephyrftp -- -j $env:NUMBER_OF_PROCESSORS
+
+      # Same target list every other job in this workflow builds, plus
+      # verify-credential-store — this native job is the first ever able
+      # to run it for real (writes to the real Windows Credential Manager,
+      # the exact backend CredentialStore's Windows implementation talks
+      # to; the wine-based cross-compile job above has no real Windows
+      # Credential Manager to write to at all, so it was never included
+      # there), matching the same precedent build-macos already
+      # established for the real macOS Keychain.
+      - name: Build test suite
+        run: >
+          cmake --build build --target
+          smoke-test transfer-queue-test site-store-test app-settings-test trust-prompt-test navigation-test
+          transfer-pause-test file-operations-test folder-transfer-test
+          conflict-resolution-test ftp-parsing-test protocol-selection-test sort-and-commands-test remote-to-remote-test
+          move-entry-test edit-session-test queue-persistence-test transfer-concurrency-test bandwidth-throttle-test sync-browsing-test verify-credential-store
+          compare-sync-test
+          script-runner-test
+          checksum-verification-test
+          connection-history-test
+          recursive-delete-test
+          keyboard-shortcuts-test
+          external-drop-test
+          -- -j $env:NUMBER_OF_PROCESSORS
+
   # TEMPORARY — diagnostic probe for EAS-DEFIANT (the self-hosted Windows
   # runner), added to scope out what's actually installed there before
   # committing to a real native-Windows build job design. Only reachable
