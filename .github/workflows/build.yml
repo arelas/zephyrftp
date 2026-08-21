@@ -1214,8 +1214,8 @@ jobs:
 
             & $env:PYTHON_EXE -m aqt install-qt windows desktop $qtVersion $qtArch -m qtsvg -O C:\Qt
             if ($LASTEXITCODE -ne 0) {
-              Write-Host "::error::aqt install-qt failed (exit $LASTEXITCODE) - see 'aqt list-qt windows desktop' output below for available versions"
-              & $env:PYTHON_EXE -m aqt list-qt windows desktop
+              Write-Host "::error::aqt install-qt failed (exit $LASTEXITCODE) - see the module list below for the real addon name"
+              & $env:PYTHON_EXE -m aqt list-qt windows desktop --modules $qtVersion $qtArch
               exit 1
             }
           }
