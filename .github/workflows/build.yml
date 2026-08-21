@@ -1328,6 +1328,8 @@ jobs:
           Write-Host "cl.exe -> $($clCmd.Source)"
           Write-Host "$($newPathDirs.Count) new PATH entries added for later steps"
 
+      - uses: actions/checkout@v7
+
       - name: Configure
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
