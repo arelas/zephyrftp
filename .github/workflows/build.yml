@@ -1154,6 +1154,20 @@ jobs:
             $cmd = Get-Command $tool -ErrorAction SilentlyContinue
             if ($cmd) {
               Write-Host "$tool -> $($cmd.Source)"
+              # Bare "python" is unreliable across steps: Windows' own
+              # python.exe App Execution Alias in WindowsApps (present on
+              # PATH by default for every user, to support the "install
+              # from the Store" nag) can end up ordered before the real
+              # interpreter once PATH is rebuilt from GITHUB_PATH in a
+              # LATER step, even though Get-Command resolves correctly
+              # right here — confirmed directly (a later step's bare
+              # `python -m pip ...` hit the Store-nag stub while this
+              # exact Get-Command call found the real one). Persist the
+              # real, full path so later steps never depend on PATH
+              # ordering for python at all.
+              if ($tool -eq "python") {
+                Add-Content -Path $env:GITHUB_ENV -Value "PYTHON_EXE=$($cmd.Source)"
+              }
             } else {
               Write-Host "::error::$tool still not found after install/PATH refresh"
               $failed = $true
@@ -1193,13 +1207,15 @@ jobs:
           if (Test-Path "$qtDir\bin\qmake.exe") {
             Write-Host "Qt $qtVersion ($qtArch) already installed at $qtDir, skipping."
           } else {
-            python -m pip install --upgrade --quiet aqtinstall
+            # Full path, not bare "python" - see the bootstrap step's own
+            # comment for why bare python is unreliable across steps.
+            & $env:PYTHON_EXE -m pip install --upgrade --quiet aqtinstall
             if ($LASTEXITCODE -ne 0) { Write-Host "::error::pip install aqtinstall failed"; exit 1 }
 
-            python -m aqt install-qt windows desktop $qtVersion $qtArch -m qtsvg -O C:\Qt
+            & $env:PYTHON_EXE -m aqt install-qt windows desktop $qtVersion $qtArch -m qtsvg -O C:\Qt
             if ($LASTEXITCODE -ne 0) {
               Write-Host "::error::aqt install-qt failed (exit $LASTEXITCODE) - see 'aqt list-qt windows desktop' output below for available versions"
-              python -m aqt list-qt windows desktop
+              & $env:PYTHON_EXE -m aqt list-qt windows desktop
               exit 1
             }
           }
