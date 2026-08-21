@@ -1829,6 +1829,14 @@ jobs:
       # destination no longer in dist\ too, not just an additive copy);
       # its own exit codes are 0-7 for "succeeded" in various forms and
       # only 8+ means a real failure, unlike a normal 0-only convention.
+      # The explicit `exit 0` at the end is required, not decorative:
+      # PowerShell's $LASTEXITCODE isn't reset by the later cmdlets
+      # (Copy-Item/Write-Host aren't external processes), so it still
+      # holds robocopy's own non-zero-but-successful code (commonly 1,
+      # "files copied") when this step ends — confirmed directly, this
+      # failed the step on a real run despite the deploy itself
+      # genuinely succeeding (its own "Deployed to..." message printed
+      # right before the step was marked failed).
       - name: Deploy latest known-good build for local testing
         run: |
           robocopy dist "C:\ZephyrFTP-Latest" /MIR /NFL /NDL /NJH /NJS
@@ -1838,6 +1846,7 @@ jobs:
           }
           Copy-Item zephyrftp-windows-x64-setup-native.exe "C:\ZephyrFTP-Latest-Setup.exe" -Force
           Write-Host "Deployed to C:\ZephyrFTP-Latest\ (app) and C:\ZephyrFTP-Latest-Setup.exe (installer)"
+          exit 0
 
   # TEMPORARY — diagnostic probe for Mac (the self-hosted macOS runner),
   # checking for Homebrew/existing deps and passwordless sudo before
