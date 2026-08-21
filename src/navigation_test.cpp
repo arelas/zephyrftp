@@ -269,6 +269,15 @@ int main(int argc, char *argv[])
     auto *dialogPump = new QTimer(&app);
     dialogPump->setInterval(5);
     QObject::connect(dialogPump, &QTimer::timeout, &app, [&]() {
+        // TEMPORARY diagnostic - remove before committing for real.
+        QWidget *rawPopup = QApplication::activePopupWidget();
+        QWidget *rawModal = QApplication::activeModalWidget();
+        static int tick = 0;
+        if (tick++ < 200) {
+            qDebug() << "[diag] tick" << tick
+                      << "popup=" << (rawPopup ? rawPopup->metaObject()->className() : "null")
+                      << "modal=" << (rawModal ? rawModal->metaObject()->className() : "null");
+        }
         if (auto *popup = qobject_cast<QMenu *>(QApplication::activePopupWidget())) {
             for (QAction *action : popup->actions()) {
                 if (action->text() == "New File...") {
