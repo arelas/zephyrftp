@@ -51,6 +51,7 @@ on:
           - build-linux-appimage
           - build-macos
           - probe-windows
+          - probe-linux
 
 jobs:
   build-windows:
@@ -1596,6 +1597,36 @@ jobs:
             exit 1
           }
           Write-Host "[PASS] uninstall: files + shortcut genuinely removed"
+
+  # TEMPORARY — diagnostic probe for eas-ubuntu26 (the self-hosted Linux
+  # runner), checking for Docker/podman before deciding whether
+  # build-linux-rpm/build-linux-appimage (both container: jobs) can move
+  # there too, alongside plain build-linux. Only reachable via
+  # `gh workflow run build.yml --ref main -f job=probe-linux` (never on
+  # push/tag/pull_request/`job=all`) — remove once no longer needed.
+  probe-linux:
+    if: github.event_name == 'workflow_dispatch' && inputs.job == 'probe-linux'
+    runs-on: [self-hosted, Linux]
+    steps:
+      - name: Diagnose available toolchain
+        run: |
+          set +e
+          echo "=== OS release ==="
+          cat /etc/os-release 2>/dev/null || echo "NOT FOUND"
+          echo "=== docker ==="
+          command -v docker && docker --version && docker info 2>&1 | head -5
+          echo "=== podman ==="
+          command -v podman && podman --version
+          echo "=== apt-get / dnf ==="
+          command -v apt-get; command -v dnf
+          echo "=== sudo (passwordless?) ==="
+          sudo -n true 2>&1 && echo "passwordless sudo OK" || echo "sudo needs a password or unavailable"
+          echo "=== disk space ==="
+          df -h /
+          echo "=== whoami / groups ==="
+          whoami
+          groups
+          exit 0
 
   # TEMPORARY — diagnostic probe for EAS-DEFIANT (the self-hosted Windows
   # runner), added to scope out what's actually installed there before
