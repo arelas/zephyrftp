@@ -946,6 +946,21 @@ jobs:
           external-drop-test
           -- -j$(sysctl -n hw.ncpu)
 
+      # TEMPORARY EXPERIMENT — verify-credential-store fails on the
+      # self-hosted Mac with "User interaction is not allowed" from
+      # SecKeychainCopySettings, and every session/login/display cause
+      # has been ruled out (correct LaunchAgent, real auto-login, real
+      # reboot, lid open, boot-race-ruled-out via a live kickstart
+      # restart). Testing whether an unsigned binary getting a fresh,
+      # unrecognizable identity on every CI build is actually the real
+      # cause instead — ad-hoc signing gives it a stable-ish local
+      # identity. Remove this step if it turns out to make no
+      # difference (ruling the theory out cleanly), or make it
+      # permanent (with a real explanation, not this "experiment"
+      # framing) if it does.
+      - name: EXPERIMENT - ad-hoc codesign verify-credential-store
+        run: codesign --force -s - build/verify-credential-store
+
       # Native binaries on native hardware, same reasoning as
       # build-linux's own test-suite step: no wine/xvfb needed. Same
       # fixture setup, same list, same order as every other job, plus
