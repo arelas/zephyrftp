@@ -6080,6 +6080,76 @@ than guessed around:
    process, confirm it's still alive 3 seconds later, stop it) that the
    wine-based job never attempted.
 
+**`build-macos` on a self-hosted Mac runner (2026-08-21) — wired up the
+same way, and everything works except one real, structural, exhaustively
+root-caused gap.** Real hardware (bare-metal 2023 MacBook Pro, arm64),
+wired to the same non-PR-only self-hosted pattern as `build-linux`/
+`build-windows-native`. Two real setup issues found before the app's own
+tests even ran:
+- The runner's own GitHub Actions agent had been installed from the
+  `osx-x64` package on genuinely Apple Silicon hardware — the whole
+  process ran under Rosetta translation the entire time (confirmed via
+  `sysctl.proc_translated: 1` alongside `hw.optional.arm64: 1`, and a
+  second, corroborating signal: Homebrew's own package-index cache
+  filename lacked the `arm64_` prefix it has on a genuinely native
+  install). Fixed by reinstalling the runner from the correct
+  `osx-arm64` package — reverified via the same `sysctl` check
+  (`proc_translated: 0`) before trusting it.
+- `cmake` isn't in this job's own `brew install` list at all — it was
+  never needed before because GitHub-hosted `macos-latest` ships it
+  preinstalled in the runner image. A genuinely bare self-hosted Mac has
+  no such image; `cmake: command not found` on the very first real run
+  here. Fixed by adding it to the list (harmless on `macos-latest` too,
+  where it's just a fast no-op alongside the one already on PATH).
+
+**`verify-credential-store` fails on this specific runner with
+`SecKeychainCopySettings: User interaction is not allowed` — a real,
+persistent gap, exhaustively root-caused rather than guessed past, and
+currently tolerated (`|| echo "::warning::..."` around just that one
+call, everything else in the step stays strict `set -e`).** Six real
+fix-and-reverify cycles, each a genuine hypothesis tested against actual
+hardware, not speculation stacked on speculation:
+1. Suspected a stale runner-service session predating a config change —
+   ruled out: identical failure after a real reboot.
+2. Suspected the runner was a LaunchDaemon (system-level, no GUI/
+   keychain access ever) rather than a LaunchAgent — ruled out:
+   confirmed correctly placed at
+   `~/Library/LaunchAgents/actions.runner.*.plist`.
+3. Suspected a VM without a properly-attached virtual display (a
+   documented cause of exactly this error on macOS CI, since WindowServer
+   sometimes won't grant a real graphic-access session without one) —
+   ruled out: this is bare metal.
+4. Suspected clamshell mode (lid closed, no external display — the
+   laptop equivalent of the same VM/headless issue) — ruled out: lid
+   open, display genuinely on, confirmed directly.
+5. Suspected a launchd boot-time race (the LaunchAgent's `RunAtLoad`
+   firing a moment before loginwindow finishes flagging the session as
+   interactive, a state that would persist for that process's entire
+   lifetime regardless of later reboots) — ruled out: forcing a live
+   restart with `launchctl kickstart -k
+   gui/<uid>/actions.runner.arelas-zephyrftp.Mac` while already
+   actively logged in produced the identical error.
+6. Suspected unsigned-binary identity churn — newer macOS versions
+   restricting Keychain access for binaries with no stable code-signing
+   identity, meaning every fresh CI build looks like a brand-new,
+   never-approved app to the Keychain ACL system — tested directly with
+   a real ad-hoc `codesign --force -s -` experiment on the test binary
+   before it runs. Ruled out: byte-for-byte identical failure either
+   way; the experiment step was reverted afterward.
+
+**None of the standard causes for this class of macOS CI issue apply
+here.** Worth remembering as a genuinely open question if this ever
+gets revisited — the next candidate, if anyone wants to keep digging,
+would likely be something CredentialStore's own macOS backend does when
+constructing its `SecItemAdd`/`SecItemCopyMatching` queries (an
+explicit `kSecUseDataProtectionKeychain` mismatch, or an ACL/
+`SecAccess` configuration issue specific to how a *new* keychain item's
+initial access group gets set up) rather than anything about the
+runner's environment — every environmental cause remotely diagnosable
+without deep Keychain-API-level debugging has now been exhausted.
+Every other test target on this job passes clean, including a real
+full Qt6 Homebrew build from scratch on native arm64.
+
 ## Known gaps (flagged, not fixed)
 
 - **FTP/FTPS has now actually touched a real server on every one of its
