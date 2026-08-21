@@ -52,6 +52,7 @@ on:
           - build-macos
           - probe-windows
           - probe-linux
+          - probe-macos
 
 jobs:
   build-windows:
@@ -1597,6 +1598,39 @@ jobs:
             exit 1
           }
           Write-Host "[PASS] uninstall: files + shortcut genuinely removed"
+
+  # TEMPORARY — diagnostic probe for Mac (the self-hosted macOS runner),
+  # checking for Homebrew/existing deps and passwordless sudo before
+  # deciding how build-macos's own dependency-install step needs to
+  # change (or not) to run there. Only reachable via
+  # `gh workflow run build.yml --ref main -f job=probe-macos` (never on
+  # push/tag/pull_request/`job=all`) — remove once no longer needed.
+  probe-macos:
+    if: github.event_name == 'workflow_dispatch' && inputs.job == 'probe-macos'
+    runs-on: [self-hosted, macOS]
+    steps:
+      - name: Diagnose available toolchain
+        run: |
+          set +e
+          echo "=== OS version ==="
+          sw_vers
+          echo "=== arch ==="
+          uname -m
+          echo "=== Homebrew ==="
+          command -v brew && brew --version
+          echo "=== qt/libssh2/openssl/cmake already present? ==="
+          for pkg in cmake qmake6 qmake; do
+            command -v $pkg >/dev/null 2>&1 && echo "$pkg: $(command -v $pkg)" || echo "$pkg: NOT FOUND"
+          done
+          brew list --versions qt libssh2 openssl@3 pkg-config dylibbundler create-dmg 2>&1
+          echo "=== sudo (passwordless?) ==="
+          sudo -n true 2>&1 && echo "passwordless sudo OK" || echo "sudo needs a password or unavailable"
+          echo "=== disk space ==="
+          df -h /
+          echo "=== whoami / groups ==="
+          whoami
+          groups
+          exit 0
 
   # TEMPORARY — diagnostic probe for eas-ubuntu26 (the self-hosted Linux
   # runner), checking for Docker/podman before deciding whether
