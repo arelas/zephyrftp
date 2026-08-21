@@ -6,6 +6,40 @@ project doesn't yet promise strict [Semantic Versioning](https://semver.org/)
 guarantees — it's pre-1.0 (see [Known limitations](README.md#known-limitations)
 in the README), so anything may still change between 0.x releases.
 
+## [0.8.14] — Roomier first-run defaults, fixed toolbar position persistence
+
+### Changed
+
+- **First-run window size increased to 1280×900** (from 1100×780),
+  with correspondingly larger file panes — the previous default
+  showed only 4 items before scrolling; the new one shows around a
+  dozen. Only affects a genuinely fresh install (or a reset
+  `settings.json`) — anyone with an existing window layout keeps
+  whatever they already have, same as always.
+- **Commands and Transfers panes rebalanced on first run** — both
+  used to default to an identical 200px tall, but Commands still read
+  as visibly larger than Transfers despite being pixel-equal, since
+  its single welcome line leaves almost the whole pane as
+  undifferentiated blank space where Transfers' tab bar and column
+  header break things up. Commands now defaults to 140px, sized to
+  actually look balanced rather than just measure equal.
+- **File pane columns re-tuned on first run**: Name expanded (200→280)
+  to better fit real filenames, Modified tightened (155→140) to just
+  what a full timestamp needs, Permissions left as-is (already close
+  to its own minimum), Size given a bit more breathing room (78→90).
+
+### Fixed
+
+- **The Main and Quick Connect toolbars' position, floating, and
+  visibility state now actually persists across restarts.** Previously
+  silently failed to save at all — Qt requires each toolbar to have
+  its own internal identifier to track this, which neither ever had
+  (visible as a `QMainWindow::saveState(): 'objectName' not set for
+  QToolBar` warning on every close, easy to miss since nothing else
+  about it failed loudly). Harmless in practice for most people, since
+  both toolbars already default to a sensible docked position — but a
+  real gap for anyone who'd ever floated or repositioned either one.
+
 ## [0.8.13] — CI now builds on self-hosted runners
 
 ### Changed
@@ -2763,6 +2797,7 @@ nobody mistakes silence for a claim of correctness:
   real FTP server
 
 [Unreleased]: https://github.com/arelas/zephyrftp/compare/v0.8.4...HEAD
+[0.8.14]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.14
 [0.8.13]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.13
 [0.8.12]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.12
 [0.8.11]: https://github.com/arelas/zephyrftp/releases/tag/v0.8.11

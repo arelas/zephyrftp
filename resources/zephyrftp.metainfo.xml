@@ -62,16 +62,21 @@
   <url type="vcs-browser">https://github.com/arelas/zephyrftp</url>
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/arelas/zephyrftp/v0.8.13/docs/screenshots/dual-pane-browsing.png</image>
+      <image>https://raw.githubusercontent.com/arelas/zephyrftp/v0.8.14/docs/screenshots/dual-pane-browsing.png</image>
       <caption>Dual-pane browsing, connected to a real SFTP server</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/arelas/zephyrftp/v0.8.13/docs/screenshots/active-transfer.png</image>
+      <image>https://raw.githubusercontent.com/arelas/zephyrftp/v0.8.14/docs/screenshots/active-transfer.png</image>
       <caption>A real transfer in progress in the Transfers panel</caption>
     </screenshot>
   </screenshots>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.8.14" date="2026-08-21">
+      <description>
+        <p>Roomier first-run window/pane defaults, rebalanced Commands/Transfers panes, tighter file-list columns, and a fix so toolbar position actually persists across restarts.</p>
+      </description>
+    </release>
     <release version="0.8.13" date="2026-08-21">
       <description>
         <p>No application changes in this release — CI infrastructure only, moving Windows/Linux/macOS builds onto self-hosted runners.</p>
