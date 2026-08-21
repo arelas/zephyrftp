@@ -1878,6 +1878,9 @@ jobs:
           command -v apt-get; command -v dnf
           echo "=== sudo (passwordless?) ==="
           sudo -n true 2>&1 && echo "passwordless sudo OK" || echo "sudo needs a password or unavailable"
+          echo "=== CPU / RAM ==="
+          nproc
+          free -h
           echo "=== disk space ==="
           df -h /
           echo "=== whoami / groups ==="
