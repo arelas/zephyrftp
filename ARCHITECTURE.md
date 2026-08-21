@@ -6028,6 +6028,58 @@ investigation if this ever becomes worth the time; don't resurrect the
 "quick env var" instinct that fixed the font/logging issues above —
 this one is a different, deeper class of problem.
 
+**Packaging (`windeployqt` + `vcpkg`'s DLLs + NSIS installer + a real
+native install/launch/uninstall check) worked on the first real attempt
+for everything except the installer itself** — `windeployqt` handles
+Qt's own DLLs/plugins the MinGW cross-compile job has no equivalent
+tool for; `vcpkg`'s whole `installed\x64-windows\bin\` gets copied
+wholesale for libssh2/openssl/zlib (`windeployqt` has no idea they
+exist at all, the same real gap this project's earlier abandoned
+MSVC+vcpkg attempt already hit — see its own bullet list above). The
+NSIS step needed two real iterations, though, both root-caused rather
+than guessed around:
+1. **Official NSIS ships zero `amd64-unicode` stub support at all** —
+   confirmed directly by extracting both the plain `nsis-3.12.zip` and
+   the `setup.exe` winget installed; neither has anything but
+   `x86-ansi`/`x86-unicode` in its `Stubs/` directory.
+   `windows-installer.nsi`'s own `Target amd64-unicode` directive
+   (needed since this project ships 64-bit only) has no official source
+   to build against.
+2. A first attempt vendored the amd64-unicode stubs from Fedora's own
+   `mingw64-nsis` package (the exact package `build-windows`'s
+   cross-compile job already depends on, license `Zlib AND CPL-1.0`) —
+   this let `makensis` succeed, but the resulting installer **crashed**
+   (`STATUS_ACCESS_VIOLATION`, `0xC0000005`) the moment it actually ran
+   on real Windows, before creating so much as its install directory.
+   Root-caused via web research rather than more blind iteration:
+   SourceForge NSIS bug #1198 — official NSIS's own amd64-unicode
+   implementation doesn't support callbacks, and `MUI2.nsh`'s
+   `MUI_PAGE_STARTMENU` macro (this script's Start Menu folder page)
+   uses exactly one. Wine's looser emulation tolerates it (the
+   cross-compile job's own installer, from the identical class of
+   Fedora-built stub, passes wine-based verification every release);
+   real Windows does not. Genuinely surprising given the earlier
+   assumption that "Fedora's package works, so its stub binaries must
+   be fine anywhere" — they're fine for producing an installer that
+   *wine* can run, not one real Windows can.
+3. Fixed for real with the [negrutiu/nsis](https://github.com/negrutiu/nsis)
+   fork via its own purpose-built
+   [negrutiu/nsis-install](https://github.com/negrutiu/nsis-install)
+   GitHub Action (`arch: amd64`, pinned to an exact commit SHA rather
+   than a floating tag — supply-chain hygiene for a third-party action,
+   though it only ever runs on non-PR triggers same as everything else
+   in this job) — a genuine native `amd64` NSIS build, not another
+   cross-compiled repackaging of the same broken official
+   implementation, so it doesn't hit bug #1198 at all. The vendored
+   Fedora stub files were removed once this was confirmed working; don't
+   resurrect that approach if this ever needs revisiting.
+4. Install/launch/uninstall verification passed cleanly once the
+   installer itself stopped crashing — same file/shortcut/registry
+   checks the wine-based job already does, plus a genuine "does the
+   installed app actually launch and stay running" check (start the
+   process, confirm it's still alive 3 seconds later, stop it) that the
+   wine-based job never attempted.
+
 ## Known gaps (flagged, not fixed)
 
 - **FTP/FTPS has now actually touched a real server on every one of its
