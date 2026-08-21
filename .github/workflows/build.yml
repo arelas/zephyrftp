@@ -50,6 +50,7 @@ on:
           - build-linux-rpm
           - build-linux-appimage
           - build-macos
+          - provision-docker-linux
           - probe-linux
           - probe-macos
 
@@ -537,9 +538,67 @@ jobs:
   # for the same reason: this is the exact release this pipeline was
   # developed and verified against, bumped deliberately rather than
   # silently drifting on `latest`.
+  # Docker on eas-linrunner, for build-linux-rpm/build-linux-appimage
+  # below — both use `container:`, and a job's container is set up by
+  # the runner BEFORE any of that job's own steps run, so Docker has to
+  # already exist on the machine before either job even starts; unlike
+  # every other self-hosted bootstrap in this file, this can't be a step
+  # INSIDE the job that needs it. Separate job, both depend on it via
+  # `needs:`. Same non-PR-only safety rule as everything else self-hosted
+  # in this file — installing Docker as a stranger's PR payload would be
+  # exactly the anti-pattern that rule exists to prevent.
+  provision-docker-linux:
+    if: github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'build-linux-rpm' || inputs.job == 'build-linux-appimage' || inputs.job == 'provision-docker-linux')
+    runs-on: [self-hosted, Linux]
+    steps:
+      # Ubuntu's own docker.io package rather than Docker's official apt
+      # repo — this box is Ubuntu 26.04 ("resolute"), new enough that
+      # Docker's own external repo may not have caught up with a signed
+      # release for that exact codename yet; docker.io from Ubuntu's own
+      # repos sidesteps that risk entirely and is plenty for running
+      # fedora:44/debian:12 build containers.
+      - name: Ensure Docker is installed and usable
+        run: |
+          set -e
+          if ! command -v docker >/dev/null 2>&1; then
+            echo "Installing docker.io..."
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq docker.io
+          else
+            echo "docker already installed: $(docker --version)"
+          fi
+          sudo systemctl enable --now docker
+
+          # usermod's new group only takes effect for a NEW login/process
+          # - the already-running runner service (and this job, forked
+          # from it) won't see it until the runner service itself
+          # restarts, which can't happen mid-job without killing this
+          # job too. Added anyway for whenever that next happens
+          # naturally (reboot, service restart, runner auto-update).
+          # Same-run fix: relax the socket directly so THIS run's steps
+          # and the very next container: job on this runner work right
+          # now — already equivalent in practice to the passwordless
+          # root sudo this account already has.
+          sudo usermod -aG docker "$(whoami)" || true
+          sudo chmod 666 /var/run/docker.sock
+
+          echo "=== docker info (no sudo) ==="
+          docker info
+          echo "=== real container run, not just install ==="
+          docker run --rm hello-world
+
   build-linux-rpm:
-    if: github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'build-linux-rpm'
-    runs-on: ubuntu-latest
+    needs: [provision-docker-linux]
+    if: |
+      always() &&
+      (needs.provision-docker-linux.result == 'success' || needs.provision-docker-linux.result == 'skipped') &&
+      (github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'build-linux-rpm')
+    # self-hosted (eas-linrunner) for push/tag/workflow_dispatch, same
+    # non-PR-only pattern as build-linux — PR-triggered runs stay on
+    # ubuntu-latest, which already has Docker preinstalled, so
+    # provision-docker-linux above is correctly skipped (not needed)
+    # in that branch rather than failing the needs: check.
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted", "Linux"]') }}
     container:
       image: fedora:44
 
@@ -666,8 +725,13 @@ jobs:
   # including the real, one-at-a-time missing-library gaps
   # tools/build-appimage.sh's own comments explain.
   build-linux-appimage:
-    if: github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'build-linux-appimage'
-    runs-on: ubuntu-latest
+    needs: [provision-docker-linux]
+    if: |
+      always() &&
+      (needs.provision-docker-linux.result == 'success' || needs.provision-docker-linux.result == 'skipped') &&
+      (github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'build-linux-appimage')
+    # Same non-PR-only self-hosted pattern as build-linux-rpm above.
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted", "Linux"]') }}
     container:
       image: debian:12
 
