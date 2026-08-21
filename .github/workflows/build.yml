@@ -395,6 +395,21 @@ jobs:
     # libsecret-1-dev is CredentialStore's Linux backend (the OS
     # keychain SiteManagerDialog's "Save password" checkbox writes to).
     steps:
+      # All jobs on eas-linrunner share the SAME host workspace directory
+      # for this repo, and build-linux-rpm/build-linux-appimage run as
+      # root INSIDE their fedora:44/debian:12 containers — anything they
+      # write to that shared directory (build/ artifacts especially)
+      # ends up root-owned on the host. This job runs as the plain
+      # runner user, not root, so actions/checkout's own clean/reset
+      # step fails outright ("Permission denied") on whatever the last
+      # container job left behind — confirmed directly, not assumed,
+      # from a real failed run here. `sudo chown` (passwordless sudo is
+      # configured on this runner) reclaims it before checkout ever
+      # touches the directory, rather than trying to work around
+      # checkout's own cleanup logic.
+      - name: Reclaim workspace ownership (a previous container job may have left root-owned files)
+        run: sudo chown -R "$(id -u):$(id -g)" .
+
       # dpkg-dev + file are only for the cpack -G DEB step further down
       # (dpkg-shlibdeps needs both to compute real runtime dependencies
       # from the actual linked binary) — not needed for the plain build
@@ -632,6 +647,15 @@ jobs:
         - /opt/zephyrftp-ccache/linux-rpm:/ccache
 
     steps:
+      # Defensive symmetry with build-linux's own reclaim step: this job
+      # runs as root inside the container, which can normally read/
+      # write another job's files on the shared host workspace
+      # regardless of ownership anyway, but reclaiming explicitly costs
+      # nothing and keeps the workspace's ownership state predictable
+      # for whichever job runs next.
+      - name: Reclaim workspace ownership (a previous job may have left differently-owned files)
+        run: chown -R root:root . 2>/dev/null || true
+
       # git isn't in the base fedora image (same gap build-windows's own
       # comment already flags); rpm-build + file are only for the cpack
       # -G RPM step further down (rpmbuild's own dependency scanner
@@ -775,6 +799,10 @@ jobs:
         - /opt/zephyrftp-ccache/linux-appimage:/ccache
 
     steps:
+      # Same defensive symmetry as build-linux-rpm's own reclaim step.
+      - name: Reclaim workspace ownership (a previous job may have left differently-owned files)
+        run: chown -R root:root . 2>/dev/null || true
+
       # git isn't in the base debian image (same gap build-windows's own
       # comment already flags for fedora); libgl1-mesa-dev provides the
       # OpenGL headers CMake's find_package(OpenGL) needs at build time
