@@ -1539,9 +1539,17 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $installDir = "C:\Program Files\ZephyrFTP"
 
-          Start-Process -FilePath ".\zephyrftp-windows-x64-setup-native.exe" -ArgumentList "/S" -Wait
+          $installProc = Start-Process -FilePath ".\zephyrftp-windows-x64-setup-native.exe" -ArgumentList "/S" -Wait -PassThru
+          Write-Host "installer process exit code: $($installProc.ExitCode)"
 
-          if (-not (Test-Path "$installDir\zephyrftp.exe")) { Write-Host "::error::zephyrftp.exe missing after install"; exit 1 }
+          if (-not (Test-Path "$installDir\zephyrftp.exe")) {
+            Write-Host "::error::zephyrftp.exe missing after install - diagnosing"
+            Write-Host "Contents of ${installDir}:"
+            Get-ChildItem $installDir -ErrorAction SilentlyContinue -Recurse
+            Write-Host "Contents of C:\Program Files\ (top level):"
+            Get-ChildItem "C:\Program Files" -ErrorAction SilentlyContinue
+            exit 1
+          }
           if (-not (Test-Path "$installDir\uninstall.exe")) { Write-Host "::error::uninstall.exe missing after install"; exit 1 }
           if (-not (Test-Path "$installDir\Qt6Core.dll")) { Write-Host "::error::Qt6Core.dll missing after install"; exit 1 }
           $shortcut = Get-ChildItem -Path "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\ZephyrFTP\ZephyrFTP.lnk", `
