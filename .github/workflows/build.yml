@@ -50,7 +50,6 @@ on:
           - build-linux-rpm
           - build-linux-appimage
           - build-macos
-          - probe-windows
           - probe-linux
           - probe-macos
 
@@ -1665,69 +1664,6 @@ jobs:
             command -v $pkg >/dev/null 2>&1 && echo "$pkg: $(command -v $pkg)" || echo "$pkg: NOT FOUND"
           done
           dpkg -l | grep -E "qt6-base-dev|qt6-svg-dev|libssh2-1-dev|libssl-dev|libsecret-1-dev" 2>/dev/null || echo "none of the qt6/libssh2/openssl/libsecret dev packages found via dpkg"
-          exit 0
-
-  # TEMPORARY — diagnostic probe for EAS-DEFIANT (the self-hosted Windows
-  # runner), added to scope out what's actually installed there before
-  # committing to a real native-Windows build job design. Only reachable
-  # via `gh workflow run build.yml --ref main -f job=probe-windows`
-  # (never on push/tag/pull_request/`job=all`) — remove this job once the
-  # real native build-windows-native job replaces it.
-  probe-windows:
-    if: github.event_name == 'workflow_dispatch' && inputs.job == 'probe-windows'
-    runs-on: [self-hosted, Windows]
-    steps:
-      - name: Diagnose available toolchain
-        run: |
-          $ErrorActionPreference = 'Continue'
-          function Probe($label, $cmdName, $versionArgs) {
-            Write-Host "=== $label ==="
-            $cmd = Get-Command $cmdName -ErrorAction SilentlyContinue
-            if ($cmd) {
-              Write-Host "found: $($cmd.Source)"
-              if ($versionArgs) {
-                try { & $cmdName @versionArgs 2>&1 | Write-Host } catch { Write-Host "(version check failed: $_)" }
-              }
-            } else {
-              Write-Host "NOT FOUND"
-            }
-          }
-
-          Write-Host "=== OS ==="
-          [System.Environment]::OSVersion.VersionString
-          Write-Host "=== PowerShell ==="
-          $PSVersionTable.PSVersion
-
-          Probe "git" "git" @("--version")
-          Probe "cmake" "cmake" @("--version")
-          Probe "ninja" "ninja" @("--version")
-          Probe "qmake (Qt)" "qmake" @("--version")
-          Probe "cl.exe" "cl" $null
-          Probe "makensis (NSIS)" "makensis" $null
-          Probe "vcpkg" "vcpkg" @("version")
-          Probe "choco" "choco" @("--version")
-          Probe "winget" "winget" @("--version")
-
-          Write-Host "=== Qt install roots (common locations) ==="
-          Get-ChildItem -Path "C:\Qt" -ErrorAction SilentlyContinue
-          Get-ChildItem -Path "C:\" -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*Qt*" }
-
-          Write-Host "=== Visual Studio (vswhere) ==="
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          if (Test-Path $vswhere) { & $vswhere -latest -products * -format json } else { Write-Host "vswhere not found" }
-          Get-ChildItem -Path "${env:ProgramFiles}\Microsoft Visual Studio" -ErrorAction SilentlyContinue
-          Get-ChildItem -Path "${env:ProgramFiles(x86)}\Microsoft Visual Studio" -ErrorAction SilentlyContinue
-
-          Write-Host "=== VCPKG_ROOT env ==="
-          $env:VCPKG_ROOT
-
-          Write-Host "=== Runner work dir / disk space ==="
-          Get-PSDrive -PSProvider FileSystem
-
-          Write-Host "=== Full PATH ==="
-          $env:PATH -split ';'
-
-          Write-Host "=== Done (always exits 0 - diagnostic only) ==="
           exit 0
 
   # Only runs on version tags (v1.0.0 etc.) — attaches both platform
