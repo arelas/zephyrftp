@@ -1363,6 +1363,84 @@ jobs:
           external-drop-test
           -- -j $env:NUMBER_OF_PROCESSORS
 
+      # Native binaries on native hardware — no wine/xvfb needed, unlike
+      # the cross-compile job above. Fixture paths deliberately target
+      # C:\tmp\... rather than $env:RUNNER_TEMP: the test C++ sources
+      # themselves hardcode the literal string "/tmp/transfer_test" etc.
+      # (confirmed directly by reading transfer_queue_test.cpp and
+      # folder_transfer_test.cpp, not assumed) — Qt resolves a leading-
+      # slash path on Windows as relative to the current drive root, so
+      # "/tmp/transfer_test" becomes C:\tmp\transfer_test at runtime. If
+      # transfer-queue-test or folder-transfer-test fail here, that
+      # resolution assumption is the first thing to check against the
+      # real failure output, not a symptom of something else.
+      - name: Run test suite
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-Location build
+          $env:QT_QPA_PLATFORM = "offscreen"
+
+          function RunTest($name) {
+            Write-Host "::group::run_test $name"
+            & ".\$name.exe"
+            $rc = $LASTEXITCODE
+            Write-Host "$name exit code: $rc"
+            Write-Host "::endgroup::"
+            if ($rc -ne 0) { exit $rc }
+          }
+
+          RunTest smoke-test
+
+          Remove-Item -Recurse -Force "C:\tmp\transfer_test" -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path "C:\tmp\transfer_test\src_dir", "C:\tmp\transfer_test\dst_dir" | Out-Null
+          $bytes = New-Object byte[] 500000
+          (New-Object System.Random).NextBytes($bytes)
+          [System.IO.File]::WriteAllBytes("C:\tmp\transfer_test\src_dir\testfile.bin", $bytes)
+          RunTest transfer-queue-test
+
+          RunTest site-store-test
+          RunTest app-settings-test
+          RunTest trust-prompt-test
+
+          RunTest navigation-test
+          RunTest transfer-pause-test
+          RunTest file-operations-test
+
+          Remove-Item -Recurse -Force "C:\tmp\folder_transfer_test" -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path `
+            "C:\tmp\folder_transfer_test\src\myfolder\subdir1", `
+            "C:\tmp\folder_transfer_test\src\myfolder\subdir2\nested", `
+            "C:\tmp\folder_transfer_test\src\myfolder\emptydir", `
+            "C:\tmp\folder_transfer_test\dst" | Out-Null
+          [System.IO.File]::WriteAllText("C:\tmp\folder_transfer_test\src\myfolder\a.txt", "hi from a`n")
+          [System.IO.File]::WriteAllText("C:\tmp\folder_transfer_test\src\myfolder\subdir1\b.txt", "hi from b`n")
+          [System.IO.File]::WriteAllText("C:\tmp\folder_transfer_test\src\myfolder\subdir1\c.txt", "hi from c`n")
+          [System.IO.File]::WriteAllText("C:\tmp\folder_transfer_test\src\myfolder\subdir2\nested\d.txt", "hi from d`n")
+          RunTest folder-transfer-test
+
+          RunTest conflict-resolution-test
+          RunTest ftp-parsing-test
+
+          RunTest protocol-selection-test
+
+          RunTest sort-and-commands-test
+          RunTest remote-to-remote-test
+          RunTest move-entry-test
+          RunTest edit-session-test
+          RunTest queue-persistence-test
+          RunTest transfer-concurrency-test
+          RunTest bandwidth-throttle-test
+          RunTest sync-browsing-test
+          RunTest compare-sync-test
+          RunTest script-runner-test
+          RunTest checksum-verification-test
+          RunTest connection-history-test
+          RunTest recursive-delete-test
+          RunTest keyboard-shortcuts-test
+          RunTest external-drop-test
+
+          RunTest verify-credential-store
+
   # TEMPORARY — diagnostic probe for EAS-DEFIANT (the self-hosted Windows
   # runner), added to scope out what's actually installed there before
   # committing to a real native-Windows build job design. Only reachable
