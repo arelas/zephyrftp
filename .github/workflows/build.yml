@@ -1294,10 +1294,21 @@ jobs:
           $ErrorActionPreference = 'Stop'
 
           function EnsureWinget($id, $overrideArgs) {
-            winget list --id $id -e | Out-Null
+            # --source winget pinned explicitly on every call - some IDs
+            # (Microsoft.PowerShell confirmed directly on this machine)
+            # exist in BOTH the community "winget" source and the
+            # "msstore" source, and an ambiguous match forces winget to
+            # search msstore too before it can proceed; on this box that
+            # search itself fails outright (a certificate error talking
+            # to the Store API, unrelated to anything these packages
+            # need). None of what this bootstrap installs needs the
+            # Store at all, so skip that ambiguity/failure path entirely
+            # rather than special-case just the one ID that happened to
+            # surface it.
+            winget list --id $id -e --source winget | Out-Null
             if ($LASTEXITCODE -ne 0) {
               Write-Host "Installing $id..."
-              $wingetArgs = @('install', '--id', $id, '-e', '--silent',
+              $wingetArgs = @('install', '--id', $id, '-e', '--source', 'winget', '--silent',
                               '--accept-package-agreements', '--accept-source-agreements')
               if ($overrideArgs) { $wingetArgs += @('--override', $overrideArgs) }
               winget @wingetArgs
