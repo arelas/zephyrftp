@@ -1688,6 +1688,10 @@ jobs:
           sw_vers
           echo "=== arch ==="
           uname -m
+          echo "=== real hardware arch vs. this process's arch (Rosetta check) ==="
+          echo "hw.optional.arm64 (1 = real Apple Silicon hardware): $(sysctl -n hw.optional.arm64 2>&1)"
+          echo "sysctl.proc_translated (1 = THIS process is running under Rosetta): $(sysctl -n sysctl.proc_translated 2>&1)"
+          file $(which env) 2>&1
           echo "=== Homebrew ==="
           command -v brew && brew --version
           echo "=== qt/libssh2/openssl/cmake already present? ==="
