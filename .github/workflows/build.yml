@@ -384,14 +384,17 @@ jobs:
     # now works, so this job's existing `sudo apt-get install` step needs
     # no changes at all to run here.
     #
-    # Build parallelism capped at -j4, not -j$(nproc) (=8 on this box):
-    # eas-linrunner runs two runner instances (eas-linrunner,
-    # eas-linrunner-2) so two of these three Linux jobs can run
-    # concurrently instead of queuing behind each other — but they share
-    # the SAME 8 cores / ~7.2GB RAM. Two simultaneous -j8 Qt6 builds
-    # would oversubscribe both; -j4 apiece approximates full utilization
-    # when two jobs really do land at once, without either one starving
-    # the other. Same reasoning applies to build-linux-rpm/
+    # Build parallelism capped at -j8, not -j$(nproc) (=16 on this box
+    # as of 2026-08-21, after David bumped it from 8 cores/~7.2GB to 16
+    # cores/~15GB specifically to give this headroom): eas-linrunner
+    # runs two runner instances (eas-linrunner, eas-linrunner-2) so two
+    # of these three Linux jobs can run concurrently instead of queuing
+    # behind each other, sharing the SAME underlying hardware. -j8
+    # apiece means two concurrent jobs together approximate full
+    # 16-core utilization without either starving the other (was -j4
+    # apiece against the original 8-core/7.2GB box — re-derive this
+    # value again if the hardware changes further, don't assume it
+    # stays right). Same reasoning applies to build-linux-rpm/
     # build-linux-appimage below — all three changed together.
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted", "Linux"]') }}
     # Native build, not a container — no cross-compile toolchain needed,
@@ -446,7 +449,7 @@ jobs:
           -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build app
-        run: cmake --build build --target zephyrftp -- -j4
+        run: cmake --build build --target zephyrftp -- -j8
 
       - name: Build test suite
         run: >
@@ -462,7 +465,7 @@ jobs:
           recursive-delete-test
           keyboard-shortcuts-test
           external-drop-test
-          -- -j4
+          -- -j8
 
       - name: ccache stats
         run: ccache -s
@@ -685,7 +688,7 @@ jobs:
           -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build app
-        run: cmake --build build --target zephyrftp -- -j4
+        run: cmake --build build --target zephyrftp -- -j8
 
       - name: Build test suite
         run: >
@@ -701,7 +704,7 @@ jobs:
           recursive-delete-test
           keyboard-shortcuts-test
           external-drop-test
-          -- -j4
+          -- -j8
 
       - name: ccache stats
         run: ccache -s
@@ -834,7 +837,7 @@ jobs:
           -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build app
-        run: cmake --build build --target zephyrftp -- -j4
+        run: cmake --build build --target zephyrftp -- -j8
 
       - name: Build test suite
         run: >
@@ -850,7 +853,7 @@ jobs:
           recursive-delete-test
           keyboard-shortcuts-test
           external-drop-test
-          -- -j4
+          -- -j8
 
       - name: ccache stats
         run: ccache -s
