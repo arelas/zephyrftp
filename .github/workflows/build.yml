@@ -1310,6 +1310,17 @@ jobs:
             }
           }
 
+          # PowerShell 7 (pwsh) - every step in this job after this one
+          # was written and tested against pwsh specifically, not legacy
+          # Windows PowerShell 5.1. This bootstrap step itself still ran
+          # under legacy powershell.exe just now (confirmed directly:
+          # pwsh doesn't exist yet at the moment THIS step starts, so the
+          # runner can't have picked it), and its own script stays 5.1-
+          # compatible for exactly that reason - but once pwsh installs
+          # and its directory lands on PATH (via the refresh below),
+          # every LATER step should pick it up automatically, same as it
+          # already does on EAS-DEFIANT.
+          EnsureWinget "Microsoft.PowerShell" $null
           EnsureWinget "Git.Git" $null
           EnsureWinget "Kitware.CMake" $null
           EnsureWinget "Ninja-build.Ninja" $null
